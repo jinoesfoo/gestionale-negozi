@@ -1,0 +1,3 @@
+# Fine riga LF per tutti i file di testo: gli script .sh girano su bash e sui server Linux,
+# e su Windows core.autocrlf=true li trasformerebbe in CRLF a ogni clone.
+* text=auto eol=lf

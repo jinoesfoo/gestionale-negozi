@@ -1,0 +1,7 @@
+node_modules/
+.next/
+dist/
+.env*
+!.env*.example
+.claude/compito-corrente.json
+.claude/settings.local.json
