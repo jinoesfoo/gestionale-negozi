@@ -204,7 +204,8 @@ is_secret_file() {
   case "$1" in
     *..*) ;;                                     # con ".." le eccezioni qui sotto non valgono
     env.example/*|*/env.example/*) return 1 ;;  # file di ambiente fittizi (infra/env.example/, FON-T06)
-    /srv/app/.env) return 1 ;;                   # sul server contiene solo i tag delle immagini (01 §CI/CD)
+    /srv/app/.env|versions.env|*/versions.env) return 1 ;;   # contengono solo i tag delle immagini (01 §CI/CD)
+    /srv/app/env|/srv/app/env/) return 0 ;;     # la cartella dei file di ambiente del server, intera
   esac
   local base; base="$(basename "$1")"
   case "$base" in

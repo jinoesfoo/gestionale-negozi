@@ -359,13 +359,23 @@ rsync_lunga() { # opzioni lunghe di rsync ammesse
   esac
   return 1
 }
-segreti_remoti() { # $1 comando che gira sul server: non deve nominare i file di ambiente con i segreti
-  local riga w
+segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segreti (file di ambiente, variabili dei processi)
+  local riga w s prec=""
+  printf '%s' "$1" | grep -Eq 'printenv|/environ|process\.env|os\.environ|getenv|ENV\[' && \
+    block "il comando sul server stamperebbe le variabili d'ambiente, che contengono i segreti: non si usa."
   while IFS= read -r riga; do
-    [ "${riga%%$'\t'*}" = W ] || continue
-    w="${riga#W$'\t'}"; w="${w#*$'\t'}"
+    [ "${riga%%$'\t'*}" = W ] || { prec=""; continue; }
+    w="${riga#W$'\t'}"; s="${w%%$'\t'*}"; w="${w#*$'\t'}"
+    [[ "$s" == *d* ]] && block "nel comando sul server niente variabili né \$(…): il server le espanderebbe con i suoi valori, che possono essere segreti. Scrivi i valori per intero."
+    [[ "$s" == *g* || "$s" == *b* ]] && block "nel comando sul server niente caratteri jolly fuori dagli apici ('$w'): potrebbero arrivare ai file di ambiente. Scrivi i nomi per intero."
+    case "$w" in
+      env) block "il comando sul server stamperebbe le variabili d'ambiente ('env'), che contengono i segreti: non si usa." ;;
+      inspect) case "$prec" in image|manifest) ;; *) block "docker inspect sul server mostrerebbe le variabili d'ambiente dei container, che contengono i segreti: non si usa." ;; esac ;;
+      /srv/app/env|/srv/app/env/*) block "il comando sul server tocca la cartella dei file di ambiente ('$w'): quei file li legge e li scrive solo l'utente." ;;
+    esac
+    prec="$w"
     [[ "$w" == *.example* ]] && continue
-    [[ "$w" == *.env* || "$w" == */env/* ]] && is_secret_file "$w" && \
+    [[ "$w" == *.env* || "$w" == */env/* || "$w" == env/* ]] && is_secret_file "$w" && \
       block "il comando sul server nomina un file di ambiente con i segreti ('$w'): quei file li legge e li scrive solo l'utente."
   done < <(printf '%s' "$1" | awk -f "$TOKENIZER")
   return 0
@@ -399,10 +409,17 @@ analizza_ssh() { # $1 indice, $2 programma. ssh, scp e rsync girano fuori dalla 
     [ -n "$qui_testo" ] && segreti_remoti "$qui_testo"     # ssh test <<< '…': anche quello gira sul server
     return 0
   fi
-  local k
+  local k p ultimo_k=$(( ${#pos[@]} - 1 ))
   for k in "${!pos[@]}"; do
     a="${pos[$k]}"
-    [[ "$a" =~ ^([^/@:]+@)?[A-Za-z0-9._-]+: ]] && host_ok "${a%%:*}"
+    [[ "$a" =~ ^([^/@:]+@)?[A-Za-z0-9._-]+: ]] || continue
+    host_ok "${a%%:*}"
+    [ "${#pos[@]}" -ge 2 ] && [ "$k" -eq "$ultimo_k" ] && continue   # la destinazione sul server: lì non si legge nulla
+    p="${a#*:}"; p="${p%/}"                                       # una sorgente sul server: non deve portare con sé i segreti
+    [ -z "$p" ] && block "copiare tutta la cartella dell'utente del server ('$a') prenderebbe anche le sue credenziali: copia solo i file che servono."
+    [[ "$p" == *[*?[]* ]] && block "nei percorsi del server niente caratteri jolly ('$a'): scrivi i nomi per intero."
+    [[ "$p" == / || "/srv/app/env" == "$p" || "/srv/app/env" == "$p"/* ]] && \
+      block "la copia comprenderebbe la cartella dei file di ambiente del server ('$a'): quei file li gestisce solo l'utente. Copia solo le cartelle che servono."
   done
   if [ "${#pos[@]}" -ge 2 ]; then   # destinazione locale (copia dal server o copia locale): è una scrittura
     a="${pos[-1]}"; [[ "$a" =~ ^([^/@:]+@)?[A-Za-z0-9._-]+: ]] || scrive "$a" "${psg[-1]}"
@@ -522,7 +539,7 @@ analizza_scritture() { # $1 indice, $2 programma
           wget) case "$a" in -O|--output-document|-P|--directory-prefix) scrive "${argv[$((j+1))]:-}" "${segni[$((j+1))]}"; j=$((j+1)) ;; esac ;;
           tar) case "$a" in -C|--directory) tdir="${argv[$((j+1))]:-}"; j=$((j+1)) ;; --directory=*) tdir="${a#*=}" ;; --extract|--get) tx=1 ;; --*) ;; *x*) tx=1 ;; esac ;;
           unzip) case "$a" in -d) tdir="${argv[$((j+1))]:-}"; j=$((j+1)) ;; esac ;;
-          python|python3|node|deno|bun|php) case "$a" in -c|-e|--eval|-r) codice_in_linea "${argv[$((j+1))]:-}"; j=$((j+1)) ;; esac ;;
+          python|python3|node|deno|bun|php) case "$a" in -c|-e|--eval|-r|-p|--print) codice_in_linea "${argv[$((j+1))]:-}"; j=$((j+1)) ;; esac ;;
         esac ;;
       *) pos+=("$a"); psg+=("${segni[$j]}") ;;
     esac
@@ -578,12 +595,21 @@ cambia_cartella() { # $1 indice di cd o pushd
   CWD="$(risolvi "${argv[$j]}")"
   return 0
 }
-legge_stdin() { # $1 indice di una shell o di un interprete: vero se non ha né uno script né il codice in un argomento
-  local j
+legge_stdin() { # $1 indice, $2 programma (shell o interprete): vero se non ha né uno script né il codice in un argomento
+  local j a opz=""
+  case "$2" in   # le opzioni che prendono un valore: il valore non è lo script
+    bash|sh|zsh|dash|ksh) opz=' -o +o -O +O --rcfile --init-file ' ;;
+    python|python3) opz=' -W -X ' ;;
+    node|deno|bun) opz=' -r --require --import --loader --experimental-loader ' ;;
+    perl) opz=' -I -M -x ' ;;
+    ruby) opz=' -I -r ' ;;
+    php) opz=' -d -c -z ' ;;
+  esac
   for ((j=$1+1; j<n; j++)); do
-    case "${argv[$j]}" in
+    a="${argv[$j]}"
+    case "$a" in
       -s|-) return 0 ;;
-      -*) continue ;;
+      -*|+*) [[ "$opz" == *" $a "* ]] && j=$((j+1)); continue ;;
       *) return 1 ;;
     esac
   done
@@ -671,14 +697,14 @@ analizza_da() { # $1 indice del nome del comando in argv
           salva="$CWD"; analizza_testo "${argv[$((j+1))]}"; CWD="$salva"; return 0
         fi
       done
-      if legge_stdin "$i"; then   # i comandi arrivano da stdin: da un heredoc (il record H) o da una stringa, altrimenti no
+      if legge_stdin "$i" "$prog"; then   # i comandi arrivano da stdin: da un heredoc (il record H) o da una stringa, altrimenti no
         [ "$hd_qui" = 1 ] && return 0
         [ -n "$qui_testo" ] && { salva="$CWD"; analizza_testo "$qui_testo"; CWD="$salva"; return 0; }
         block "una shell che legge i comandi da stdin (da una pipe o da un file con <) non si controlla: scrivi i comandi per intero, o esegui lo script per nome (bash <file>)."
       fi
       return 0 ;;
     python|python3|node|deno|bun|perl|ruby|php)
-      if legge_stdin "$i"; then   # il codice arriva da stdin: da un heredoc (lo controlla codice_in_linea, record H) o da una stringa
+      if legge_stdin "$i" "$prog"; then   # il codice arriva da stdin: da un heredoc (lo controlla codice_in_linea, record H) o da una stringa
         if [ "$hd_qui" != 1 ]; then
           [ -n "$qui_testo" ] || block "un interprete che legge il codice da stdin (da una pipe o da un file con <) non si controlla: esegui lo script per nome."
           codice_in_linea "$qui_testo"

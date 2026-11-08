@@ -116,7 +116,10 @@ Se una delle risposte è diversa, fermati e non iniziare compiti.
 
 ## 8. Si parte
 
-Prima del primo compito, nella parte sul collegamento a GitHub: la protezione di `main` (nessuna spinta diretta, pull request obbligatoria con la CI verde) e un'identità per Claude che non può unire le pull request. Senza, un programma scritto apposta potrebbe spingere su `main` con le tue credenziali (`docs/due-postazioni.md`, «Limiti»).
+Prima del primo compito, nella parte sul collegamento a GitHub:
+- la protezione di `main`: nessuna spinta diretta, pull request obbligatoria. La CI verde come controllo obbligatorio si aggiunge dopo l'unione di FON-T01, che crea il primo `ci.yml`: prima non c'è nessuna CI, e le pull request di FON-T07a, DOM-T01 e OPS-T03 non si potrebbero unire;
+- un'identità per Claude che non può unire le pull request. Senza, un programma scritto apposta potrebbe spingere su `main` con le tue credenziali (`docs/due-postazioni.md`, «Limiti»);
+- prima del primo rilascio `v*` (FON-T08), l'ambiente `production` di GitHub con l'approvazione obbligatoria, che crei tu: se manca, GitHub lo crea da solo al primo rilascio, senza approvazione.
 
 - joo: `INIZIA FON-T01`
 - yoo: `INIZIA FON-T07a`
