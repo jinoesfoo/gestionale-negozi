@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Stop: in fase codice, revisione e chiusura Claude non può chiudere la risposta con controlli rossi.
+# Senza jq common.sh esce con 2 prima del controllo di stop_hook_active: lo Stop girerebbe all'infinito.
+# Gli altri hook bloccano già tutto, quindi qui si lascia passare.
+command -v jq >/dev/null 2>&1 || exit 0
 source "$(dirname "$0")/common.sh"
 
 input="$(cat)"

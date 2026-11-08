@@ -29,7 +29,7 @@ Documento di riferimento a monte: "Progetto tecnico — Fase 0: piattaforma" (ve
 
 La colonna "Dipende da" vale per le aree nel loro insieme, con un'eccezione: i compiti DOM-T01, DOM-T02 (area 06), OPS-T03 e OPS-T01a (area 08) si eseguono **dentro** l'ordine dell'area 01, come descritto qui sotto, anche se le loro aree dipendono da aree successive; sono compiti di infrastruttura che non usano nulla delle aree 02–07.
 
-Si procede nell'ordine della tabella, con un'eccezione obbligatoria: nell'area 01, dopo FON-T07a (preparazione di base dei server), si eseguono DOM-T01 e DOM-T02 (DNS, record email, immagine Caddy, certificato; DOM-T02 installa anche `/srv/app/infra`, `/srv/app/.env`, `/srv/app/deploy-env`, `env/caddy.env` (con i file di ambiente degli altri servizi creati vuoti) e lo script `/srv/app/dc`, e avvia il Caddy di bootstrap con Compose, così lo stato ACME sta da subito nel volume `app_caddy_data`) poi OPS-T03 (unità di archivio e credenziali: con Hetzner un bucket non si sposta tra progetti, quindi i progetti separati vanno creati prima di qualsiasi bucket) e OPS-T01a (immagine PostgreSQL, bucket dei backup nel suo progetto, `pgbackrest-init`, script `backup.sh`, timer notturni dei backup), poi FON-T07b (che aggiorna `CADDY_TAG`, completa i file di ambiente ed esegue anche il primo backup completo), FON-T08 e FON-T10. Per l'avvio iniziale, le variabili di Stripe, Sentry, email e fornitore SDI possono avere valori segnaposto riconoscibili (che iniziano con `placeholder`): lo schema delle variabili li accetta, le funzioni che li userebbero rispondono con un errore chiaro, e `/api/health` ne segnala la presenza con il campo booleano `placeholders` (FON-009); si sostituiscono nei compiti che li usano (BIL-T01, BIL-T11, OPS-T04, FON-T10), sempre prima del collaudo. Unica eccezione: `STRIPE_SECRET_KEY` in `migrate.env` dei server è una vera chiave `sk_test_` fin dal primo avvio (01 §Variabili d'ambiente: la usa `admin:purge-test-shops`); il segnaposto vale lì solo in sviluppo e CI.
+Si procede nell'ordine della tabella (con una sola postazione; con due vale la sezione «Esecuzione su due postazioni» più sotto), con un'eccezione obbligatoria: nell'area 01, dopo FON-T07a (preparazione di base dei server), si eseguono DOM-T01 e DOM-T02 (DNS, record email, immagine Caddy, certificato; DOM-T02 installa anche `/srv/app/infra`, `/srv/app/.env`, `/srv/app/deploy-env`, `env/caddy.env` (con i file di ambiente degli altri servizi creati vuoti) e lo script `/srv/app/dc`, e avvia il Caddy di bootstrap con Compose, così lo stato ACME sta da subito nel volume `app_caddy_data`) poi OPS-T03 (unità di archivio e credenziali: con Hetzner un bucket non si sposta tra progetti, quindi i progetti separati vanno creati prima di qualsiasi bucket) e OPS-T01a (immagine PostgreSQL, bucket dei backup nel suo progetto, `pgbackrest-init`, script `backup.sh`, timer notturni dei backup), poi FON-T07b (che aggiorna `CADDY_TAG`, completa i file di ambiente ed esegue anche il primo backup completo), FON-T08 e FON-T10. Per l'avvio iniziale, le variabili di Stripe, Sentry, email e fornitore SDI possono avere valori segnaposto riconoscibili (che iniziano con `placeholder`): lo schema delle variabili li accetta, le funzioni che li userebbero rispondono con un errore chiaro, e `/api/health` ne segnala la presenza con il campo booleano `placeholders` (FON-009); si sostituiscono nei compiti che li usano (BIL-T01, BIL-T11, OPS-T04, FON-T10), sempre prima del collaudo. Unica eccezione: `STRIPE_SECRET_KEY` in `migrate.env` dei server è una vera chiave `sk_test_` fin dal primo avvio (01 §Variabili d'ambiente: la usa `admin:purge-test-shops`); il segnaposto vale lì solo in sviluppo e CI.
 
 ## Compiti della fase 0
 
@@ -46,24 +46,37 @@ Si procede nell'ordine della tabella, con un'eccezione obbligatoria: nell'area 0
 | ADM | T01, T03, T07 | 3 |
 | OPS | T01a, T01b, T03, T04, T08, T09, T11 | 7 |
 
-Ordine di esecuzione: FON-T01, FON-T03, FON-T06, FON-T07a, DOM-T01, DOM-T02, OPS-T03, OPS-T01a, FON-T07b, FON-T08, FON-T10, poi NEG, ACC, MOD, BIL, ADM (ADM-T01 può essere anticipato subito dopo ACC per avere il pannello prima di Stripe), OPS (OPS-T01b, T04, T08, T09, T11), collaudo.
+Ordine di esecuzione con una sola postazione: FON-T01, FON-T03, FON-T06, FON-T07a, DOM-T01, DOM-T02, OPS-T03, OPS-T01a, FON-T07b, FON-T08, FON-T10, poi NEG, ACC, MOD, BIL, ADM (ADM-T01 può essere anticipato subito dopo ACC per avere il pannello prima di Stripe), OPS (OPS-T01b, T04, T08, T09, T11), collaudo.
 
 ### Esecuzione su due postazioni (8/11/2026)
 
-Lo sviluppo si fa su due computer, **joo** (applicazione e database, l'unica postazione che scrive migrazioni) e **yoo** (server, rilasci, operatività, più NEG-T04, BIL-T01 e MOD-T03). L'ordine di ciascuna postazione e i compiti dell'altra che deve aspettare stanno in `.claude/hooks/corsie.txt`; le ragioni e le regole contro le sovrapposizioni in `docs/due-postazioni.md`. Ogni dipendenza scritta nei compiti resta rispettata. Rispetto all'ordine qui sopra cambia questo:
+Lo sviluppo si fa su due computer, **joo** (applicazione e database, l'unica postazione che scrive migrazioni) e **yoo** (server, rilasci, operatività, più NEG-T04, BIL-T01 e MOD-T03). L'ordine di ciascuna postazione e i compiti dell'altra che deve aspettare stanno in `.claude/hooks/corsie.txt`; le ragioni e le regole contro le sovrapposizioni in `docs/due-postazioni.md`. Ogni dipendenza scritta nei compiti resta rispettata, come ha verificato una revisione indipendente (8/11/2026). Rispetto all'ordine qui sopra cambia questo:
 
-- **OPS-T03 prima di DOM-T02.** Non dipende da nessun compito: resta prima di ogni bucket e prima di OPS-T01a, come chiede la sua nota.
-- **FON-T10 prima di FON-T07b e FON-T08.** Gli servono solo FON-T06 e i record di DOM-T01 (la prova manuale dell'email). L'ordine qui sopra aveva un'inversione: il job di `test:int` di FON-T08 chiama `ensureQueues()`, che nasce in FON-T10.
-- **NEG-T05 e NEG-T09 prima di NEG-T04**, che va a yoo (instradamento, vicino a Caddy e ai domini). NEG-T04 aspetta NEG-T02 per `resolve_host` e FON-T07b per `/api/health/echo-headers`. ACC-T03, che prova il 404 del proxy su `/api/auth/*`, aspetta NEG-T04.
+- **FON-T07a, DOM-T01 e OPS-T03 in parallelo con FON-T01, FON-T03 e FON-T06.** Il lavoro sui server non usa il codice. OPS-T03 non dipende da nessun compito e resta prima di ogni bucket e prima di OPS-T01a, come chiede la sua nota. FON-T01 non fa il commit iniziale: il repository parte dal commit «Specifiche e metodo».
+- **FON-T10 prima di FON-T07b e FON-T08**, che lo aspettano. Gli servono FON-T03, FON-T06 e i record di DOM-T01. L'ordine qui sopra aveva un'inversione: il job di `test:int` di FON-T08 chiama `ensureQueues()`, che nasce in FON-T10. Così il primo avvio sui server (FON-T07b) gira già con il worker vero.
+- **NEG-T04 a yoo** (instradamento, vicino a Caddy e ai domini), in parallelo con NEG-T05 e NEG-T09. Aspetta NEG-T02 per `resolve_host` e FON-T07b per `/api/health/echo-headers`. ACC-T01 aspetta NEG-T04, perché il controllo di `Origin` che prova (NEG-011) lo applica il proxy; ACC-T03 prova anche il 404 del proxy su `/api/auth/*`.
 - **ADM-T01 e ADM-T07 subito dopo ACC**, prima di MOD e BIL. L'anticipo di ADM-T01 era già ammesso; ADM-T07 non dipende da MOD né da BIL e crea le tabelle operative che servono a OPS-T01b.
 - **BIL-T01 e MOD-T03 a yoo**: non hanno migrazioni. BIL-T02 aspetta BIL-T01 (listino e libreria `stripe`), BIL-T06 aspetta MOD-T03.
+- **OPS-T01b dopo BIL-T02**, perché `ops:row-counts` conta anche `subscriptions` (OPS-004).
 - **OPS-T04 prima di OPS-T08**, perché i due compiti non aggiungano dipendenze nello stesso momento.
+- **Le prove di integrazione entrano in CI con FON-T08.** I compiti di joo che lo precedono le eseguono in locale in `/chiudi-compito`, e la pull request di FON-T08 fa girare l'intera serie (`docs/due-postazioni.md`, «Le prove di integrazione prima di FON-T08»).
 
-Regole di struttura per le due postazioni, che fanno parte dei compiti indicati:
+Regole per le due postazioni, che fanno parte dei compiti indicati (dettagli e motivi in `docs/due-postazioni.md`, «Regole di struttura», «Il server di test condiviso», «Stripe»):
 
-- **FON-T06:** ogni comando del CLI ha il suo file `src/cli/commands/<nome>.ts`. FON-T06 crea subito tutti quelli previsti dalle specifiche come segnaposto con uscita 64, e l'elenco in `src/cli.ts` non cambia più.
-- **FON-T07a:** `infra/README.md` nasce con una sezione per ogni procedura citata nelle specifiche, intitolata con il compito che la scrive.
-- **FON-T10:** i gestori dei lavori si registrano in `src/server/jobs/` (un file per lavoro e un registro), non in `src/worker.ts`.
+- **FON-T01:** `src/config/platform.ts` nasce con tutte le chiavi citate nelle specifiche; dopo, ogni compito cambia solo la riga della propria. FON-T01 non crea `infra/README.md`.
+- **FON-T06:** ogni comando del CLI ha il suo file `src/cli/commands/<nome>.ts`. FON-T06 crea subito tutti quelli previsti dalle specifiche come segnaposto con uscita 64, e l'elenco in `src/cli.ts` non cambia più. La regola ESLint sul client del proprietario ammette anche `src/cli/commands/**`.
+- **FON-T07a:** `infra/README.md` nasce con una sezione per ogni procedura citata nelle specifiche e, dove contribuiscono più compiti, una sottosezione per compito, intitolata con il suo ID.
+- **FON-T10:** i gestori dei lavori si registrano in `src/server/jobs/` (un file per lavoro e un registro), non in `src/worker.ts`. Il [VERIFICA] su Brevo si annota soltanto: un'eventuale modifica del Caddyfile la fa yoo. Il controllo manuale dei record DNS e l'email di prova si fanno in locale, senza il server.
+- **NEG-T02:** crea in `src/server/db/` il wrapper `resolveHost()`, che usa il proxy di NEG-T04.
+- **OPS-T01a:** l'immagine PostgreSQL parte anche in sviluppo senza le variabili `PGBACKREST_*`.
+- **FON-T08:**
+  - i flussi di rilascio hanno un gruppo di concorrenza e `deploy.sh` prende un blocco con `flock`;
+  - la variabile del repository `TEST_DEPLOY_HOLD` ferma i rilasci sul server di test, e un avvio a mano rilascia uno SHA scelto;
+  - prima di `pull` e `migrate`, `deploy.sh` controlla che sui server ci siano tutte le variabili degli esempi;
+  - la prova con `KNOWN_HOSTS` sbagliato usa un segreto di prova separato;
+  - la pull request di prova di FON-005 sta su un ramo `prova-*`.
+- **BIL-T01:** crea il client Stripe con la versione API fissata e `seedStripe(stripe, plans)`, riusabile da BIL-T05; dopo l'unione fa lo `stripe:seed` sulle sandbox dei due server. Ogni postazione di sviluppo ha la sua sandbox Stripe (05 §Ogni ambiente usa una propria sandbox).
+- **OPS-T09:** aggiornamenti automatici delle dipendenze raggruppati, con `open-pull-requests-limit: 1`.
 
 ## Convenzioni di scrittura
 

@@ -31,19 +31,22 @@ write_state() { # $1 task, $2 fase, $3 voce del registro (facoltativa, altriment
 # Vale la tabella su origin/main, uguale per le due postazioni; la copia locale solo se main non c'è.
 # (cd e MSYS_NO_PATHCONV: su Windows Git Bash storpierebbe "origin/main:percorso" credendolo un elenco di percorsi)
 corsie() { (cd "$PROJECT_DIR" 2>/dev/null && MSYS_NO_PATHCONV=1 git show origin/main:.claude/hooks/corsie.txt 2>/dev/null) || cat "$CORSIE_FILE" 2>/dev/null; }
-corsia_riga() { # $1 ID senza distinguere maiuscole -> riga della tabella
-  corsie | awk -F'|' -v id="$1" 'BEGIN { id = toupper(id) } /^[[:space:]]*(#|$)/ { next } toupper($1) == id { print; exit }'
+corsie_pulite() { # senza commenti (anche in coda alla riga), senza spazi, senza righe vuote
+  corsie | awk '{ sub(/#.*/, ""); gsub(/[[:space:]]/, ""); if ($0 != "") print }'
+}
+corsia_riga() { # $1 ID senza distinguere maiuscole -> prima riga della tabella con quell'ID
+  corsie_pulite | awk -F'|' -v id="$1" 'BEGIN { id = toupper(id) } toupper($1) == id { print; exit }'
 }
 corsia_di() { corsia_riga "$1" | cut -d'|' -f2; }
 compiti_prima() { # $1 ID -> compiti della stessa postazione che lo precedono
-  corsie | awk -F'|' -v id="$1" 'BEGIN { id = toupper(id) } /^[[:space:]]*(#|$)/ { next }
-    { lane[NR] = $2; ids[NR] = $1; if (toupper($1) == id) { me = NR } }
+  corsie_pulite | awk -F'|' -v id="$1" 'BEGIN { id = toupper(id) }
+    { lane[NR] = $2; ids[NR] = $1; if (toupper($1) == id && !me) { me = NR } }
     END { if (me) for (i = 1; i < me; i++) if (lane[i] == lane[me]) print ids[i] }'
 }
 aggiorna_main() { GIT_TERMINAL_PROMPT=0 timeout 30 git -C "$PROJECT_DIR" fetch -q origin main >/dev/null 2>&1; }
 ha_origin_main() { git -C "$PROJECT_DIR" rev-parse -q --verify origin/main >/dev/null 2>&1; }
 sul_main() { # $1 ID -> vero se la sua casella è spuntata nelle specifiche di origin/main (pull request unita)
-  git -C "$PROJECT_DIR" grep -q -F -e "- [x] **$1**" origin/main -- specs >/dev/null 2>&1
+  git -C "$PROJECT_DIR" grep -q -i -F -e "- [x] **$1**" origin/main -- specs >/dev/null 2>&1
 }
 
 # Su Windows (Git Bash) i percorsi arrivano come C:\..., c:/... o /c/... e il file system
@@ -61,11 +64,40 @@ to_slash() {
   fi
   printf '%s' "$p"
 }
-PROJECT_DIR_SLASH="$(to_slash "$PROJECT_DIR")"
+
+# Risolve ".", ".." e le barre doppie senza toccare il disco: "specs/../.claude/postazione"
+# non deve sembrare un file di specs/. Un ".." che resta (percorso relativo) lo blocca file-guard.
+norm_path() {
+  local p="$1" lead="" seg parts out=()
+  case "$p" in
+    [a-zA-Z]:/*) lead="${p:0:3}"; p="${p:3}" ;;
+    /*) lead="/" ;;
+  esac
+  IFS=/ read -ra parts <<< "$p"
+  for seg in "${parts[@]}"; do
+    case "$seg" in
+      ''|.) ;;
+      ..) if [ "${#out[@]}" -gt 0 ] && [ "${out[-1]}" != ".." ]; then out=("${out[@]:0:${#out[@]}-1}")
+          elif [ -z "$lead" ]; then out+=(".."); fi ;;
+      *) out+=("$seg") ;;
+    esac
+  done
+  local IFS=/; printf '%s%s' "$lead" "${out[*]}"
+}
+# Forma canonica: su Linux realpath -m risolve anche i collegamenti simbolici (docs/src -> ../src)
+canon_path() {
+  local p; p="$(to_slash "$1")"
+  if [ "$ON_WINDOWS" = 0 ] && command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "$p" 2>/dev/null || norm_path "$p"
+  else
+    norm_path "$p"
+  fi
+}
+PROJECT_DIR_SLASH="$(canon_path "$PROJECT_DIR")"
 
 # Percorso relativo alla radice del progetto
 rel_path() {
-  local p; p="$(to_slash "$1")"
+  local p; p="$(canon_path "$1")"
   case "$p" in
     "$PROJECT_DIR_SLASH"/*) echo "${p:${#PROJECT_DIR_SLASH}+1}" ;;
     /*|[a-z]:/*) echo "$p" ;;

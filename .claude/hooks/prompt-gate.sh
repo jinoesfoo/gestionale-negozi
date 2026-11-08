@@ -5,7 +5,7 @@ source "$(dirname "$0")/common.sh"
 
 input="$(cat)"
 prompt="$(echo "$input" | jq -r '.prompt // ""')"
-first_line="$(echo "$prompt" | head -n1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+first_line="$(echo "$prompt" | head -n1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/[[:space:]][[:space:]]*/ /g')"
 upper="$(echo "$first_line" | tr '[:lower:]' '[:upper:]')"
 
 task="$(current_task)"
@@ -33,7 +33,7 @@ case "$upper" in
     avviso=""
     aggiorna_main || avviso="Attenzione: git fetch non è riuscito, il controllo usa l'ultima copia nota di origin/main. "
     if ! ha_origin_main; then
-      say "Manca origin/main: prima va fatto il passo 0 di AVVIO.md (repository su GitHub). Il compito NON è iniziato."
+      say "Manca origin/main: prima va fatto il passo 2 di AVVIO.md (repository su GitHub). Il compito NON è iniziato."
       exit 0
     fi
     riga="$(corsia_riga "$new_task")"
@@ -59,7 +59,7 @@ case "$upper" in
       exit 0
     fi
     write_state "$id" "piano"
-    say "${avviso}Compito $id iniziato sulla postazione $me. Fase: piano. Prima di tutto, con la cartella di lavoro pulita: git switch -c $(echo "$id" | tr '[:upper:]' '[:lower:]') origin/main. Poi leggi costituzione, docs/due-postazioni.md e area del compito, scrivi il piano e fermati per l'approvazione."
+    say "${avviso}Compito $id iniziato sulla postazione $me. Fase: piano. Prima di tutto, con la cartella di lavoro pulita (a parte il registro di questa postazione): git switch --no-track -c $(echo "$id" | tr '[:upper:]' '[:lower:]') origin/main, poi pnpm install se esiste package.json. Poi leggi costituzione, docs/due-postazioni.md e area del compito, scrivi il piano e fermati per l'approvazione."
     ;;
   APPROVO)
     case "$fase" in
@@ -95,8 +95,14 @@ case "$upper" in
     ;;
   CHIUSO)
     if [ "$fase" = "chiusura" ]; then
-      LOG_TASK="$task" write_state "" "nessuno" "nessuno (chiuso)"
-      say "Compito $task chiuso. Unisci la pull request su GitHub quando la CI è verde: finché non è su main questa postazione non può iniziare il compito successivo. Poi /stato."
+      avviso=""
+      aggiorna_main || avviso="Attenzione: git fetch non è riuscito, il controllo usa l'ultima copia nota di origin/main. "
+      if sul_main "$task"; then
+        LOG_TASK="$task" write_state "" "nessuno" "nessuno (chiuso)"
+        say "${avviso}Compito $task chiuso: è su main. Usa /stato per vedere il prossimo."
+      else
+        say "${avviso}CHIUSO si scrive dopo l'unione: la casella di $task non risulta ancora spuntata su main. Unisci la pull request su GitHub quando la CI è verde, poi scrivi di nuovo CHIUSO. Se la CI è rossa, scrivi TORNA AL CODICE. La fase NON è cambiata."
+      fi
     else
       say "CHIUSO vale solo in fase chiusura (fase attuale: $fase)."
     fi
@@ -104,7 +110,7 @@ case "$upper" in
   ABBANDONA)
     if [ -n "$task" ]; then
       LOG_TASK="$task" write_state "" "nessuno" "nessuno (abbandonato)"
-      say "Compito $task abbandonato. Le modifiche restano nel ramo: decidi tu se tenerle. Finché non è su main, i compiti che lo seguono restano bloccati."
+      say "Compito $task abbandonato. Le modifiche restano nella cartella di lavoro, senza commit: decidi tu se tenerle. Finché il compito non è su main, i compiti che lo seguono restano bloccati."
     fi
     ;;
   APPROVO*|CHIUSO*|ABBANDONA*|"TORNA AI TEST"*|"TORNA AL PIANO"*|"TORNA AL CODICE"*)

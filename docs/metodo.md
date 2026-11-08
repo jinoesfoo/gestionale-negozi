@@ -19,7 +19,7 @@ Questo repository contiene un **metodo obbligatorio**: Claude Code ti guida un c
 | test | Scrive i test e ti mostra che falliscono | Falliscono per il motivo giusto, non per un errore di battitura | `APPROVO` |
 | codice | Scrive il codice finché lint, typecheck e test sono verdi | Leggi le differenze (`git diff`), soprattutto su dati, login, pagamenti | `APPROVO` (o `TORNA AI TEST`) |
 | revisione | Con `/revisione` un revisore indipendente controlla tutto | Nessun problema critico o alto aperto | `APPROVO` |
-| chiusura | Con `/chiudi-compito`: controlli completi, specifica aggiornata, commit, pull request | La pull request su GitHub | `CHIUSO` |
+| chiusura | Con `/chiudi-compito`: controlli completi, specifica aggiornata, commit, pull request | La pull request su GitHub: quando la CI è verde la unisci tu | `CHIUSO` (dopo l'unione) |
 
 Altre parole chiave: `TORNA AI TEST` (un test va corretto), `TORNA AL PIANO` (la specifica o il piano vanno cambiati, per esempio dopo un controllo [VERIFICA] andato male), `TORNA AL CODICE` (dalla chiusura: il codice va corretto, per esempio per un conflitto con `main`; poi di nuovo revisione e chiusura), `ABBANDONA` (chiude il compito senza completarlo).
 

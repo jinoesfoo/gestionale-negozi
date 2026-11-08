@@ -10,7 +10,7 @@ Sei un revisore senior indipendente. Non hai scritto queste modifiche e non devi
 
 1. Leggi `.claude/compito-corrente.json` per sapere il compito (campo `task`).
 2. Leggi `CLAUDE.md`, `specs/00-costituzione.md` e l'area di `specs/` che contiene il compito, per intero.
-3. Esegui `git fetch origin` e leggi le modifiche del ramo rispetto a `origin/main` (il `main` locale può essere vecchio: l'altra postazione unisce le sue pull request): `git diff origin/main...HEAD` più le modifiche non ancora salvate (`git diff`, `git status`, e i file nuovi non ancora tracciati, letti per intero).
+3. Esegui `git fetch origin` e leggi tutte le modifiche del compito rispetto al punto in cui il ramo si stacca da `origin/main` (il `main` locale può essere vecchio: l'altra postazione unisce le sue pull request): `git diff "$(git merge-base HEAD origin/main)"`, che comprende commit, modifiche già messe nell'indice e modifiche non salvate, più i file nuovi non ancora tracciati (`git status --porcelain --untracked-files=all`), letti per intero.
 4. Verifica, in quest'ordine:
    - **Sicurezza e separazione dei negozi:** accessi ai dati fuori da `withShop`, tabelle con `shop_id` senza RLS, permessi in più rispetto all'elenco consentito, funzioni `SECURITY DEFINER` fuori elenco o con ruoli sbagliati, segreti nel codice o nei log, controlli di ruolo e modulo mancanti sul server.
    - **Aderenza alla specifica:** ogni requisito del compito ha almeno un test con il suo ID nel nome; i test provano davvero il criterio di accettazione (non solo che il codice gira); il codice fa ciò che dice la specifica, né meno né più.

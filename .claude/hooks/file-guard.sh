@@ -11,6 +11,11 @@ rel="$(rel_path "$path")"
 
 block() { echo "BLOCCATO dal metodo di lavoro: $*" >&2; exit 2; }
 
+# 0. Un ".." rimasto dopo la normalizzazione è un percorso relativo che esce dalla cartella: niente scorciatoie
+case "$rel" in
+  ..|../*|*/../*|*/..) block "il percorso '$path' contiene '..': usa il percorso diretto del file." ;;
+esac
+
 # 1. Segreti: mai leggere o scrivere i file di ambiente reali
 if is_secret_file "$rel"; then
   block "'$rel' contiene segreti e non si legge né si modifica. Usa il file *.example corrispondente."
@@ -22,7 +27,7 @@ fi
 # 2. Il file di stato lo cambia solo l'utente con le parole chiave
 case "$rel" in
   .claude/compito-corrente.json|.claude/hooks/*|.claude/settings.json|.claude/postazione|.claude/registro-compiti*)
-    block "'$rel' fa parte del metodo e non si modifica. La fase cambia solo quando l'utente scrive INIZIA <ID>, APPROVO, TORNA AI TEST, CHIUSO; postazione, corsie e registro li cambia solo l'utente."
+    block "'$rel' fa parte del metodo e non si modifica. La fase cambia solo con le parole chiave dell'utente (INIZIA <ID>, APPROVO, TORNA AI TEST, TORNA AL PIANO, TORNA AL CODICE, CHIUSO, ABBANDONA); postazione, corsie e registro li cambia solo l'utente."
     ;;
 esac
 
