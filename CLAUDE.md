@@ -6,7 +6,7 @@ Progetto: piattaforma SaaS multi-negozio (gestionale, moduli e siti per negozi i
 
 Ogni modifica al codice avviene dentro un **compito** delle specifiche (`specs/`), che attraversa cinque fasi in ordine. Il tuo compito, oltre a scrivere codice, è **guidare l'utente** attraverso le fasi e non saltarne nessuna.
 
-La fase corrente sta in `.claude/compito-corrente.json` (campi `task` e `fase`). **Leggilo all'inizio di ogni risposta.** Non puoi modificarlo: lo cambiano solo le parole chiave che scrive l'utente (vedi tabella). Gli hook in `.claude/hooks/` bloccano le azioni non permesse nella fase corrente: se un'azione viene bloccata, non cercare di aggirare il blocco, spiega all'utente cosa serve per proseguire.
+La fase corrente sta nella cartella di stato degli hook, fuori dal progetto: la vedi nel messaggio `[Metodo]` che gli hook aggiungono a ogni messaggio dell'utente, oppure con `bash .claude/hooks/mostra-stato.sh`. **Tienine conto in ogni risposta.** Non puoi modificarla: lo cambiano solo le parole chiave che scrive l'utente (vedi tabella). Gli hook in `.claude/hooks/` bloccano le azioni non permesse nella fase corrente: se un'azione viene bloccata, non cercare di aggirare il blocco, spiega all'utente cosa serve per proseguire.
 
 | Fase | Cosa fai | Cosa NON puoi fare | Per passare alla fase successiva l'utente scrive |
 |---|---|---|---|
@@ -53,13 +53,15 @@ Comandi del metodo: `/stato` (dove siamo e qual è il prossimo compito), `/revis
 lint, typecheck e tutti i test passano, i nuovi test coprono i requisiti del compito, la revisione non ha problemi critici o alti aperti, la casella del compito è spuntata nella specifica, ogni deviazione dalla specifica è stata scritta nella specifica e la pull request è aperta.
 
 ## 6. Due postazioni (yoo e joo)
-Il progetto si sviluppa su due computer. Il nome di questa postazione sta in `.claude/postazione`; chi fa cosa, e perché, sta in `docs/due-postazioni.md`, da leggere prima di ogni piano.
+Il progetto si sviluppa su due computer. Il nome di questa postazione, la fase e la copia del registro stanno fuori dal progetto, nella cartella di stato degli hook (`~/.local/state/gestionale-negozi/`); chi fa cosa, e perché, sta in `docs/due-postazioni.md`, da leggere prima di ogni piano.
+- I tuoi comandi girano nella sandbox di Claude Code: in `.claude/` e fuori dal progetto non scrivi. Alcuni comandi girano fuori dalla sandbox (`docs/due-postazioni.md`, «Protezione del metodo»), ma per loro valgono gli stessi divieti. Se un comando che serve al compito fallisce per la sandbox, non cercare un'altra strada: dillo all'utente.
+- Dalla fine della fase test gli hook tengono l'impronta dei test: un test cambiato, con qualunque comando, ferma `APPROVO` e il commit. I file del metodo (hook, impostazioni, comandi del metodo, `CLAUDE.md`) si confrontano con il commit a ogni parola chiave.
 - Ogni compito è di una sola postazione (`.claude/hooks/corsie.txt`, vale la copia su `main`). `INIZIA` rifiuta i compiti dell'altra postazione e quelli i cui compiti precedenti o prerequisiti non sono ancora su `main`.
 - Primo passo del piano: `git switch --no-track -c <id-in-minuscolo> origin/main`, con la cartella di lavoro pulita a parte il registro di questa postazione (l'hook ha appena fatto `git fetch`), poi `pnpm install` se esiste `package.json`.
 - Migrazioni, elenco dei permessi e fixture di `src/server/db/isolation/` li scrive solo joo. Se un compito di yoo ne ha bisogno, fermati e dillo all'utente.
 - Non modificare i file esistenti che appartengono all'altra postazione (tabella «Proprietà dei file»), tranne le eccezioni pianificate scritte lì. Se ti serve farlo, fermati e dillo all'utente: diventa una correzione dell'altra postazione.
 - Prima di chiedere `APPROVO` in fase codice, allinea il ramo a `main`: `git fetch origin`; se `origin/main` è avanzato, `git stash push -u`, `git merge --ff-only origin/main`, `git stash pop`. Poi risolvi i conflitti, esegui `pnpm install` se sono cambiate le dipendenze e rilancia lint, typecheck e test.
 - Una pull request di compito aperta alla volta fra le due postazioni: lo controlla `/chiudi-compito`. Le pull request le unisce l'utente.
-- I comandi verso i server (`ssh`, `scp`, `rsync`) si usano solo nelle fasi codice, revisione e chiusura di un compito; sul server di test segui le regole di «Il server di test condiviso» in `docs/due-postazioni.md`. Sulla produzione chiedi conferma all'utente prima di ogni comando che cambia qualcosa.
+- I comandi verso i server (`ssh`, `scp`, `rsync`) si usano solo nelle fasi codice, revisione e chiusura di un compito, e solo con i nomi `test` e `prod` della configurazione SSH; per `prod` Claude Code chiede conferma all'utente a ogni comando. Sul server di test segui le regole di «Il server di test condiviso» in `docs/due-postazioni.md`.
 - Le variabili d'ambiente nuove vanno nella descrizione della pull request: sui server le aggiunge yoo (o l'utente) prima dell'unione. Niente segreti fra le postazioni via git o chat; i segreti di GitHub li scrive l'utente.
 - Se il prossimo compito è bloccato, proponi il lavoro d'attesa della sezione «Quando aspetti» di `docs/due-postazioni.md`, senza toccare il codice.

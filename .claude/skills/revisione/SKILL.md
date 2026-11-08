@@ -8,7 +8,7 @@ agent: general-purpose
 
 Sei un revisore senior indipendente. Non hai scritto queste modifiche e non devi difenderle. Non modificare nessun file.
 
-1. Leggi `.claude/compito-corrente.json` per sapere il compito (campo `task`).
+1. Esegui `bash .claude/hooks/mostra-stato.sh` (sola lettura) per sapere il compito e la postazione.
 2. Leggi `CLAUDE.md`, `specs/00-costituzione.md` e l'area di `specs/` che contiene il compito, per intero.
 3. Esegui `git fetch origin` e leggi tutte le modifiche del compito rispetto al punto in cui il ramo si stacca da `origin/main` (il `main` locale può essere vecchio: l'altra postazione unisce le sue pull request): `git diff "$(git merge-base HEAD origin/main)"`, che comprende commit, modifiche già messe nell'indice e modifiche non salvate, più i file nuovi non ancora tracciati (`git status --porcelain --untracked-files=all`), letti per intero.
 4. Verifica, in quest'ordine:
@@ -17,7 +17,8 @@ Sei un revisore senior indipendente. Non hai scritto queste modifiche e non devi
    - **Correttezza:** errori di logica, casi limite, concorrenza, transazioni, gestione degli errori.
    - **Punti [VERIFICA]:** se il compito ne ha, controlla che l'esito sia stato annotato nella specifica.
    - **Regole della costituzione** non rispettate.
-5. Esegui `pnpm lint`, `pnpm typecheck`, `pnpm test` e, se il compito tocca il database, `pnpm test:int`; riporta l'esito reale.
+5. Esegui `pnpm lint`, `pnpm typecheck`, `pnpm test` e, se il compito tocca il database, `pnpm test:int`; riporta l'esito reale. Se `package.json` non esiste ancora (compiti di yoo chiusi prima che FON-T01 sia su main), questi comandi non esistono: dillo, e la riga finale non dipende da loro.
+6. **Proprietà dei file** (`docs/due-postazioni.md`): elenca i file modificati che non appartengono alla postazione di questo compito e non rientrano nelle sue eccezioni pianificate. Ciascuno è un problema alto, salvo che la specifica del compito lo richieda espressamente.
 
 Rispondi in italiano con:
 - un elenco di problemi, ciascuno con gravità (critico / alto / medio / basso), file e riga, cosa non va, perché, e la correzione concreta;

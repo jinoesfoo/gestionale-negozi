@@ -24,12 +24,10 @@ fi
 # Le letture sono sempre permesse (tranne i segreti)
 [ "$tool" = "Read" ] && exit 0
 
-# 2. Il file di stato lo cambia solo l'utente con le parole chiave
-case "$rel" in
-  .claude/compito-corrente.json|.claude/hooks/*|.claude/settings.json|.claude/postazione|.claude/registro-compiti*)
-    block "'$rel' fa parte del metodo e non si modifica. La fase cambia solo con le parole chiave dell'utente (INIZIA <ID>, APPROVO, TORNA AI TEST, TORNA AL PIANO, TORNA AL CODICE, CHIUSO, ABBANDONA); postazione, corsie e registro li cambia solo l'utente."
-    ;;
-esac
+# 2. I file del metodo (tutta .claude/, CLAUDE.md, le impostazioni di Claude Code, la cartella di stato) li cambia solo l'utente
+if protetto "$rel"; then
+  block "'$rel' fa parte del metodo e non si modifica. La fase cambia solo con le parole chiave dell'utente (INIZIA <ID>, APPROVO, TORNA AI TEST, TORNA AL PIANO, TORNA AL CODICE, CHIUSO, ABBANDONA); hook, impostazioni, postazione, corsie e registro li cambia solo l'utente."
+fi
 
 # 3. Specifiche e documenti: sempre modificabili
 is_free_file "$rel" && exit 0

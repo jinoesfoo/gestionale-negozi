@@ -5,7 +5,7 @@ Il progetto si sviluppa su due computer Ubuntu, ciascuno con il suo ruolo. Quest
 ## In breve
 
 - **joo fa l'applicazione e il database**: 25 compiti. È l'unica postazione che scrive migrazioni.
-- **yoo fa i server e tutto quello che li circonda**: 14 compiti, poi il collaudo. Tre dei 14 sono compiti di codice che non toccano il database: NEG-T04, BIL-T01, MOD-T03.
+- **yoo fa i server e tutto quello che li circonda**: 14 compiti, poi il collaudo. Tre dei 14 sono compiti di codice dell'applicazione senza migrazioni: NEG-T04, BIL-T01, MOD-T03.
 - Ogni compito appartiene a una sola postazione. Gli hook lo fanno rispettare: `INIZIA` rifiuta un compito dell'altra postazione, e anche un compito i cui prerequisiti non sono ancora su `main`.
 - Le due postazioni si parlano solo attraverso GitHub: un compito è «fatto» quando la sua pull request è unita su `main` e la sua casella risulta spuntata lì. Fuori da git condividono due cose, il server di test e gli account esterni, con le regole delle sezioni «Il server di test condiviso» e «Stripe».
 - Stima: **26 turni invece di 39** (un turno è un compito; i compiti hanno durate diverse, il conto serve a vedere le attese).
@@ -74,10 +74,10 @@ L'ordine è quello di `.claude/hooks/corsie.txt`. Vale la copia su `main`, ugual
 | 7 | NEG-T04 | Instradamento: `src/proxy.ts` | NEG-T02 |
 | 8 | FON-T08 | CI completa e rilasci automatici | NEG-T09 |
 | 9 | BIL-T01 | Listino e prodotti Stripe | ACC-T03 |
-| 10 | OPS-T09 | Intestazioni di sicurezza, controllo delle dipendenze | ACC-T04 (il cookie `__Host-known`) |
-| 11 | MOD-T03 | Menu e controllo dei moduli | MOD-T02 |
-| 12 | OPS-T01b | Registrazione dei backup, copia specchio | BIL-T02 (`ops:row-counts` conta anche `subscriptions`) |
-| 13 | OPS-T04 | Controllo approfondito, metriche, Sentry | BIL-T11 |
+| 10 | MOD-T03 | Menu e controllo dei moduli | MOD-T02 |
+| 11 | OPS-T01b | Registrazione dei backup, copia specchio | BIL-T02 (`ops:row-counts` conta anche `subscriptions`) |
+| 12 | OPS-T04 | Controllo approfondito, metriche, Sentry | BIL-T11 |
+| 13 | OPS-T09 | Intestazioni di sicurezza, controllo delle dipendenze | — (viene dopo OPS-T04: la CSP deve ammettere l'host di Sentry) |
 | 14 | OPS-T11 | Documenti, procedure, condizioni | OPS-T08 |
 | — | Collaudo | Prove di `specs/09-collaudo.md` | tutto |
 
@@ -100,17 +100,16 @@ turno   joo                          yoo
 8       ACC-T01                      FON-T08
 9       ACC-T03                      (attesa)
 10      ACC-T04                      BIL-T01
-11      ACC-T05                      OPS-T09
-12-16   ACC-T06 … MOD-T02            (attesa)
+11-16   ACC-T05 … MOD-T02            (attesa)
 17      BIL-T02                      MOD-T03
 18      BIL-T05                      OPS-T01b
 19-22   BIL-T06 … BIL-T11            (attesa)
 23      ADM-T03                      OPS-T04
-24      OPS-T08                      (attesa)
+24      OPS-T08                      OPS-T09
 25      —                            OPS-T11
 ```
 
-joo non aspetta mai, **se yoo consegna in tempo i sei compiti che joo attende**: DOM-T01, NEG-T04, FON-T08, BIL-T01, MOD-T03, OPS-T04. Per yoo questi vengono prima di tutto il resto. yoo invece ha circa 12 turni di attesa: si riempiono con il lavoro della sezione «Quando aspetti».
+joo non aspetta mai, **se yoo consegna in tempo i sei compiti che joo attende**: DOM-T01, NEG-T04, FON-T08, BIL-T01, MOD-T03, OPS-T04. Dentro l'ordine della corsia di yoo questi hanno la precedenza: appena uno è libero, si fa quello, senza perdere tempo. yoo invece ha circa 12 turni di attesa: si riempiono con il lavoro della sezione «Quando aspetti».
 
 ## Perché le postazioni non si sovrappongono
 
@@ -133,7 +132,7 @@ joo non aspetta mai, **se yoo consegna in tempo i sei compiti che joo attende**:
 | Configurazioni di ESLint, Vitest, TypeScript, `tsup.config.ts` | — |
 | `tests/` dei propri compiti | `tests/` dei propri compiti, `infra/scripts/check-*` |
 
-I file dei comandi del CLI (`src/cli/commands/<nome>.ts`) sono del compito che scrive quel comando, anche se il segnaposto lo crea FON-T06.
+I file dei comandi del CLI (`src/cli/commands/<nome>.ts`) sono del compito che scrive quel comando, anche se il segnaposto lo crea FON-T06. **Tutto ciò che non compare in tabella è di joo.** `/revisione` elenca i file modificati che non appartengono alla postazione del compito e non sono nelle sue eccezioni.
 
 **Condivisi**, solo con aggiunte piccole e sempre dopo l'allineamento:
 - `package.json` e `pnpm-lock.yaml`;
@@ -147,18 +146,18 @@ Su `pnpm-lock.yaml` un conflitto si risolve rigenerandolo con `pnpm install`.
 **Eccezioni pianificate:**
 
 - **NEG-T04** (yoo) tocca la configurazione di Playwright, crea i suoi negozi di prova con un aiuto proprio in `tests/e2e/`, idempotente e con pulizia finale (non riusa `src/server/db/isolation/fixtures.ts`, che joo sta scrivendo), e usa `resolveHost()`, che NEG-T02 crea in `src/server/db/`. Intanto joo può essere su NEG-T05 o NEG-T09, che non toccano questi file; ACC-T01 aspetta NEG-T04.
-- **FON-T07b e FON-T08** (yoo) completano gli esempi delle variabili creati da joo. FON-T07b aspetta FON-T10 e FON-T08 aspetta NEG-T09: i compiti di joo che aggiungono variabili sono già uniti. ACC-T04, che ne aggiunge una, aspetta FON-T08.
+- **FON-T07b e FON-T08** (yoo) completano gli esempi delle variabili creati da joo. FON-T01 crea schemi ed esempi con tutte le variabili della tabella di 01 §Variabili d'ambiente, tranne tre che nascono più tardi: `EMAIL_PROVIDER` (FON-T10, che FON-T07b aspetta), `AUTH_RATE_LIMIT_TEST_ALLOW_IP` (ACC-T04, che aspetta FON-T08) e le variabili SDI dell'app (BIL-T11, molto dopo). Così, mentre yoo completa gli esempi, nessun compito di joo vi aggiunge righe.
 - **I compiti di joo con una procedura manuale** la scrivono nella propria sezione di `infra/README.md`, preparata da FON-T07a, senza righe in comune con yoo. Sono ACC-T04 (`admin:reset-2fa`), NEG-T09 (rotazione di `SHOP_SECRETS_KEY`), BIL-T02 e BIL-T11 (impostazioni del Dashboard Stripe).
 - **BIL-T01** (yoo):
   - aggiunge la dipendenza `stripe` e crea il client Stripe con la versione API fissata (`src/server/billing/stripe-client.ts`);
   - espone `seedStripe(stripe, plans)`, che BIL-T05 riusa nei suoi test senza toccare il comando;
   - dopo l'unione, questi file sono di joo;
   - aspetta ACC-T03: i compiti di joo che seguono non prevedono nuove dipendenze fino a BIL-T09, e BIL-T02, il primo che usa `stripe`, aspetta BIL-T01.
-- **OPS-T09** (yoo) tocca `src/proxy.ts`, il Caddyfile, `.github/`, i propri test e, del layout radice, solo il nonce sugli script. Un difetto che il suo e2e trova nei cookie (`src/server/auth/`) o in altre pagine non lo corregge: diventa una correzione di joo. Lo stesso per una vulnerabilità segnalata da `pnpm audit`: si corregge a parte, non nel compito che la scopre.
+- **OPS-T09** (yoo) tocca `src/proxy.ts`, il Caddyfile, `.github/`, i propri test e, del layout radice, solo il nonce sugli script. Viene dopo OPS-T04, così la CSP ammette l'host vero di Sentry; intanto joo fa OPS-T08, che non tocca questi file. Un difetto che il suo e2e trova nei cookie (`src/server/auth/`) o in altre pagine non lo corregge: diventa una correzione di joo. Lo stesso per una vulnerabilità segnalata da `pnpm audit` (sezione «Pull request automatiche delle dipendenze»).
 - **MOD-T03** (yoo) tocca il layout e il menu del gestionale, le funzioni di accesso ai moduli in `src/modules/` e `tests/architecture/access-boundary.test.ts`. joo intanto fa BIL-T02 e BIL-T05, che non li toccano, e BIL-T06 aspetta MOD-T03.
 - **OPS-T04** (yoo) tocca questi file:
   - aggiunge un file nuovo in `src/server/db/` per le letture del controllo approfondito;
-  - mette Sentry in `src/worker.ts`, `src/instrumentation.ts`, `next.config.*` e nel layout radice, una riga ciascuno;
+  - mette Sentry in `src/worker.ts`, `src/instrumentation.ts`, `next.config.*` e nel layout radice, con le sole modifiche che servono a Sentry, elencate nella pull request;
   - scrive il valore di `sentryProjectUrl` in `src/config/platform.ts`, solo quella riga.
 
   joo intanto fa ADM-T03, che non li tocca, e OPS-T08 aspetta OPS-T04.
@@ -168,45 +167,96 @@ Su `pnpm-lock.yaml` un conflitto si risolve rigenerandolo con `pnpm install`.
 
 Fanno parte dei compiti indicati (`specs/README.md`, «Esecuzione su due postazioni»).
 
-- **FON-T01 (joo):** `src/config/platform.ts` nasce con tutte le chiavi citate nelle specifiche e i loro valori iniziali. Dopo, ogni compito cambia solo la riga della propria chiave. FON-T01 non crea `infra/README.md`, che nasce in FON-T07a, e non fa il commit iniziale: il repository parte già dal commit «Specifiche e metodo».
+- **FON-T01 (joo):**
+  - `src/config/platform.ts` nasce con tutte le chiavi citate nelle specifiche e i loro valori iniziali; dopo, ogni compito cambia solo la riga della propria chiave;
+  - `src/config/env.ts` e gli esempi nascono con tutte le variabili di 01 §Variabili d'ambiente, tranne `EMAIL_PROVIDER` (FON-T10), `AUTH_RATE_LIMIT_TEST_ALLOW_IP` (ACC-T04) e le variabili SDI dell'app (BIL-T11);
+  - FON-T01 non crea `infra/README.md`, che nasce in FON-T07a, e non fa il commit iniziale: il repository parte già dal commit «Specifiche e metodo».
+- **FON-T07a (yoo):** la prova del `docker pull` di un'immagine privata del repository si fa con un'immagine di prova pubblicata a mano su GHCR (per esempio `gestionale-negozi-prova`) e cancellata dopo la prova: a quel punto non esiste ancora nessuna immagine del progetto.
 - **FON-T06 (joo): un file per comando del CLI.** `src/cli.ts` elenca da subito tutti i comandi previsti dalle specifiche. Ognuno punta al proprio file `src/cli/commands/<nome>.ts`, creato come segnaposto che termina con il codice 64 («non ancora disponibile»). Dopo, ogni compito modifica solo il file del proprio comando, mai l'elenco. La regola ESLint sul client del proprietario ammette anche `src/cli/commands/**`. I comandi li scrivono otto compiti delle due postazioni: ACC-T04, ADM-T01, ADM-T03, BIL-T01, BIL-T07, BIL-T09, OPS-T01b, OPS-T04.
 - **FON-T07a (yoo): `infra/README.md` a sezioni.** Il file nasce con una sezione per ogni procedura citata nelle specifiche e, dove contribuiscono più compiti, una sottosezione per compito, con il suo ID nel titolo. Esempi: impostazioni del Dashboard Stripe per BIL-T01, BIL-T02 e BIL-T11; rotazione dei segreti per NEG-T09 e OPS-T11. Ogni compito scrive solo nella sua.
 - **FON-T10 (joo):**
   - i lavori in background si registrano in `src/server/jobs/` (un file per lavoro e un registro), non in `src/worker.ts`, che resta corto: avvio, `ensureQueues()`, registrazione, arresto;
-  - il [VERIFICA] su Brevo lo annota soltanto: un'eventuale modifica del matcher nel Caddyfile la fa yoo;
+  - il [VERIFICA] su Brevo lo annota soltanto: un'eventuale modifica del matcher nel Caddyfile la fa FON-T07b, che aspetta FON-T10 e aggiorna comunque `CADDY_TAG`;
   - il controllo manuale dei record DNS e l'email di prova si fanno da joo, in locale, con la chiave Brevo vera. Non serve il server.
 - **NEG-T02 (joo):** crea in `src/server/db/` il wrapper `resolveHost()` di `resolve_host`, che il proxy di NEG-T04 usa.
 - **OPS-T01a (yoo):** l'immagine PostgreSQL deve partire anche in sviluppo senza le variabili `PGBACKREST_*`, perché joo la usa ogni giorno con `compose.dev.yml`. È una prova in più del compito.
-- **FON-T08 (yoo):** i flussi di rilascio e `deploy.sh` seguono la sezione «Il server di test condiviso». Il nome di progetto `app-dev` in `compose.dev.yml` fa ricreare a joo i volumi locali una volta: va detto nella pull request. La prova con `KNOWN_HOSTS` sbagliato si fa con un segreto di prova separato, mai alterando quello vero. La pull request di prova di FON-005 sta su un ramo `prova-*` e si chiude subito dopo la verifica.
-- **OPS-T09 (yoo):** gli aggiornamenti automatici delle dipendenze sono raggruppati, con `open-pull-requests-limit: 1`.
+- **FON-T08 (yoo):** i flussi di rilascio, `deploy.sh` e `/srv/app/dc` seguono la sezione «Il server di test condiviso». Il nome di progetto `app-dev` in `compose.dev.yml` fa ricreare a joo i volumi locali una volta: va detto nella pull request. La prova con `KNOWN_HOSTS` sbagliato si fa con un segreto di prova separato, mai alterando quello vero. La pull request di prova di FON-005 sta su un ramo `prova-*` e si chiude subito dopo la verifica.
+- **OPS-T09 (yoo):** gli aggiornamenti automatici delle dipendenze riguardano solo npm e GitHub Actions (non le immagini Docker, che cambiano solo con un compito), sono raggruppati, con `open-pull-requests-limit: 1`, e comprendono gli aggiornamenti di sicurezza.
 - **Registro delle approvazioni: un file per postazione**, `.claude/registro-compiti-yoo.log` e `.claude/registro-compiti-joo.log`. Così le unioni non si scontrano mai sul registro.
+
+## Protezione del metodo
+
+Gli hook da soli non bastano: un filtro che legge il testo dei comandi si può sempre aggirare con una forma nuova, e un file di impostazioni locale potrebbe spegnerli. Per questo il metodo ha quattro livelli, configurati in `.claude/settings.json`.
+
+1. **La sandbox di Claude Code** (Linux, con bubblewrap). I comandi di Claude girano isolati.
+   - Possono scrivere solo nella cartella del progetto, nella cartella temporanea e nelle cache di pnpm e npm.
+   - Dentro il progetto non possono toccare gli hook, le impostazioni, i comandi del metodo e tutta `.claude/`.
+   - Non possono uscire dalla sandbox (`allowUnsandboxedCommands: false`).
+   - Se la sandbox manca, Claude Code non parte (`failIfUnavailable: true`).
+   - La rete è chiusa, tranne GitHub, il registro di npm, Stripe e Brevo; un sito nuovo chiede il permesso.
+2. **I divieti delle impostazioni.** Lo strumento Monitor e PowerShell sono vietati. Con Edit e Write non si scrive in `.claude/`, in `CLAUDE.md`, nelle impostazioni dell'utente o nella cartella di stato. Ogni comando verso il server `prod` chiede conferma all'utente.
+3. **Gli hook**, che si fermano se si rompono (`onFailure: block`). Uno script mancante o in errore blocca, invece di lasciar passare. `bash-guard.sh` scompone ogni comando come lo legge la shell e ne controlla scritture, git, gh, server e volumi di Docker.
+4. **I controlli sul contenuto**, che si accorgono di una modifica qualunque comando l'abbia fatta:
+   - alla fine della fase test gli hook salvano l'impronta dei test. Se un test cambia dopo, `APPROVO` e il commit si fermano e dicono quale; non conta un test arrivato identico da `main` con l'allineamento;
+   - a ogni parola chiave gli hook confrontano con il commit i file del metodo (hook, impostazioni, comandi del metodo, `CLAUDE.md`). Se sono cambiati, nessuna fase avanza;
+   - controllano anche le impostazioni locali (`.claude/settings.local.json`) e il registro, che deve coincidere con la copia tenuta dagli hook.
+
+**Fase, postazione e copia del registro** stanno fuori dal progetto, in `~/.local/state/gestionale-negozi/<progetto>/`, dove i comandi nella sandbox non possono scrivere. Il nome della postazione lo scrive l'utente con `imposta-postazione.sh`, dal suo terminale.
+
+**I comandi che girano fuori dalla sandbox.** Alcuni comandi non funzionano isolati e sono esclusi dalla sandbox (`excludedCommands`):
+- Docker;
+- `ssh`, `scp` e `rsync`;
+- i comandi che usano il database o il server di sviluppo: `pnpm test:int`, `pnpm test:e2e`, `pnpm dev`, `pnpm worker`, `pnpm db:migrate`, `pnpm cli`;
+- le operazioni di git che riscrivono file di `.claude/` cambiando ramo o unendo (`switch`, `checkout`, `merge`, `stash`, `pull`, `restore`, `reset` e simili).
+
+Per questi comandi restano gli hook e i controlli sul contenuto. Verso i server si va solo con i nomi `test` e `prod` della configurazione SSH (`AVVIO.md`), così vale la conferma per la produzione.
 
 ## Il server di test condiviso
 
 Da FON-T08 ogni unione su `main`, di joo o di yoo, arriva da sola sul server di test. Per questo FON-T08 prevede:
 
-1. **Un rilascio alla volta.** `deploy-test.yml` e `deploy-prod.yml` hanno un gruppo di concorrenza (`concurrency`, senza annullare il rilascio in corso), e `deploy.sh` prende un blocco con `flock`. Due unioni ravvicinate si mettono in fila; tra i test di FON-T08 c'è anche questo.
-2. **Il fermo dei rilasci.** Una variabile del repository, `TEST_DEPLOY_HOLD`: quando è attiva, il flusso costruisce e pubblica l'immagine, ma non la mette sul server e non le dà il tag `tested-`. In più, un avvio a mano (`workflow_dispatch`) mette sul server di test l'immagine di uno SHA scelto, anche di un ramo.
-3. **Il controllo delle variabili.** Prima di `pull` e `migrate`, `deploy.sh` confronta i nomi delle variabili in `/srv/app/env/*.env` con quelli di `infra/env.example/*.env` dell'immagine. Se ne manca uno si ferma e lo nomina, senza stampare valori.
+1. **Un'operazione alla volta sul server.** `deploy.sh`, `/srv/app/dc` e gli script dei timer (backup, copia specchio, metriche) prendono tutti lo stesso blocco con `flock -w`, così un rilascio aspetta la fine di un backup e viceversa. `deploy.sh` scrive `infra/` e `.env` in modo atomico (cartella temporanea, poi `mv`). Tra i test di FON-T08: un rilascio lanciato durante un backup aspetta.
+2. **Un rilascio alla volta su GitHub.** La costruzione dell'immagine sta fuori dai gruppi di concorrenza, così ogni SHA unito ha la sua immagine. Il rilascio usa due gruppi separati, `deploy-test` e `deploy-prod`, senza annullare quello in corso: un rilascio in produzione in attesa di approvazione non ferma il server di test.
+3. **Il fermo dei rilasci.** C'è una variabile del repository, `TEST_DEPLOY_HOLD`.
+   - Quando è attiva, il flusso costruisce e pubblica l'immagine, ma non la mette sul server di test e non le dà il tag `tested-`.
+   - Un avvio a mano (`workflow_dispatch`) mette sul server di test l'immagine di uno SHA scelto, anche di un ramo.
+   - Le immagini Caddy e PostgreSQL di uno SHA che non è su `main` prendono un tag `<tag>-<sha7>`, scritto solo nel `.env` del server di test. I tag ufficiali di `infra/versions.env` li pubblica soltanto `main`.
+4. **Il controllo delle variabili.** Prima di `pull` e `migrate`, `deploy.sh` confronta i nomi delle variabili dei cinque file dei servizi in `/srv/app/env/` (`app`, `worker`, `migrate`, `postgres`, `caddy`) con quelli di `infra/env.example/` dell'immagine.
+   - Se ne manca uno si ferma e lo nomina, senza stampare valori.
+   - Le variabili facoltative sono segnate negli esempi con `# facoltativa` e non si controllano.
+   - Le variabili che non devono mai stare in un file di ambiente (`STRIPE_LIVE_SECRET_KEY`, `ROLES_ALLOW_CREATEDB`) non si chiedono mai.
+   - I file di un solo server, come `backup-mirror.env`, restano fuori dal confronto.
 
 Le regole:
 
-- **Quando yoo lavora sul server di test** (FON-T07b, BIL-T01 per lo `stripe:seed` sui server, OPS-T01b, OPS-T04), attiva il fermo, mette sul server l'immagine del suo ramo con l'avvio a mano e fa le sue prove. In `docs/verifiche/<id>.md` scrive quali prove ha fatto con il fermo attivo e quali restano da fare dopo l'unione. Alla fine toglie il fermo e rilancia il rilascio di `main`. Le prove in produzione (per esempio la copia specchio di OPS-T01b) si fanno dopo l'unione, con un rilascio `v*`.
-- **Quando un compito di joo aggiunge una variabile d'ambiente**, la pull request lo dice. Prima di unirla, yoo o l'utente la scrive sui server; se ci si dimentica, è il controllo di `deploy.sh` a fermare il rilascio, indicando quale variabile manca.
-- Un rilascio di joo che fallisce per uno stato del server che joo non vede (per esempio un'app spenta da yoo per una prova) non è un errore del compito di joo: si guarda con yoo prima di toccare il codice.
+- **Quando yoo lavora sul server di test** dentro un compito, da FON-T08 in poi: OPS-T01b, OPS-T04, OPS-T09 (Caddyfile) e il collaudo.
+  - Attiva il fermo solo quando non c'è un rilascio in corso.
+  - Allinea il ramo a `main`, mette sul server l'immagine del suo ramo con l'avvio a mano e fa le sue prove.
+  - In `docs/verifiche/<id>.md` scrive quali prove ha fatto con il fermo attivo e quali restano da fare dopo l'unione.
+  - Toglie il fermo solo **dopo** l'unione, poi rilancia il rilascio di `main`. Toglierlo prima farebbe sparire dal server gli script e i timer del ramo.
+- **Prima di FON-T08** non ci sono rilasci automatici: FON-T07b lavora tutto a mano, come dice la sua specifica.
+- **I rilasci in produzione** (tag `v*`) li decide e li crea l'utente. Le prove in produzione di un compito (per esempio la copia specchio di OPS-T01b) si fanno dopo il primo rilascio `v*` che lo contiene.
+- **Operazioni sui server dopo l'unione.** Un compito che deve agire sul server dopo l'unione lo fa prima di `CHIUSO`: in chiusura i comandi verso i server sono ancora permessi. È il caso di BIL-T01, che fa lo `stripe:seed` sul server di test con l'immagine di `main` appena rilasciata. La nota in `docs/verifiche/<id>.md` parte con il commit del compito successivo della stessa postazione.
+- **Variabili e valori dei server.** Un compito di joo che aggiunge una variabile d'ambiente, o che richiede di sostituire un valore segnaposto sui server, lo scrive nella pull request: per esempio le variabili SDI di BIL-T11, o `STRIPE_WEBHOOK_SECRET`. Prima dell'unione yoo o l'utente scrive il valore sui server; i segreti li scrive l'utente. Se ci si dimentica, è il controllo di `deploy.sh` a fermare il rilascio, indicando quale variabile manca.
+- **Un rilascio di joo che fallisce** per uno stato del server che joo non vede (per esempio un'app spenta da yoo per una prova) non è un errore del compito di joo: si guarda con yoo prima di toccare il codice.
 
 ## Stripe: una sandbox per postazione
 
 `specs/05-abbonamenti-stripe.md` vuole una sandbox Stripe per ogni ambiente. Con due computer gli ambienti di sviluppo sono due, quindi le sandbox sono quattro: **sviluppo-joo**, **sviluppo-yoo**, server di test, produzione. Ciascuna ha le sue chiavi, il suo `stripe listen` e il suo `STRIPE_PORTAL_CONFIGURATION_ID`. Così i test di una postazione non spostano i prezzi o le configurazioni del portale mentre girano quelli dell'altra.
 
-Lo `stripe:seed` sulle sandbox dei due server, dopo l'unione di BIL-T01, lo fa yoo, insieme a `STRIPE_PORTAL_CONFIGURATION_ID` in `app.env`. Fa parte di BIL-T01 e va scritto in `docs/verifiche/bil-t01.md`.
+Le sandbox dei due server le prepara yoo, dentro BIL-T01, dopo l'unione e prima di `CHIUSO`:
+- lo `stripe:seed`, con `STRIPE_PORTAL_CONFIGURATION_ID` in `app.env`;
+- gli endpoint dei webhook con l'elenco completo degli eventi di 05 §Webhook, compresi `refund.updated` e `refund.failed`;
+- le impostazioni del Dashboard.
+
+`STRIPE_WEBHOOK_SECRET` lo scrive l'utente sui server. Sul server di produzione tutto questo si fa dopo il primo rilascio `v*` che contiene BIL-T01. Va scritto in `docs/verifiche/bil-t01.md`.
 
 ## Il giro di un compito
 
 1. `/stato` dice il prossimo compito di questa postazione, oppure che cosa si aspetta e da chi.
 2. L'utente scrive `INIZIA <ID>`. L'hook controlla corsia e prerequisiti su `origin/main`.
 3. **Piano.** Primo passo: `git switch --no-track -c <id> origin/main` (l'hook ha già fatto `git fetch`), poi `pnpm install` se esiste `package.json`. La cartella di lavoro dev'essere pulita, a parte il registro di questa postazione. Poi la costituzione, questa pagina e l'area del compito.
-4. **Test** e **codice**, come in `docs/metodo.md`. I comandi verso i server si usano solo dalla fase codice in poi.
+4. **Test** e **codice**, come in `docs/metodo.md`. All'`APPROVO` che chiude la fase test gli hook salvano l'impronta dei test: da lì un test cambiato ferma `APPROVO` e il commit. I comandi verso i server si usano solo dalla fase codice in poi.
 5. **Allineamento, prima di chiedere `APPROVO` in fase codice.** `git fetch origin`; se `origin/main` è andato avanti, `git stash push -u`, `git merge --ff-only origin/main`, `git stash pop`. Poi si risolvono i conflitti (il codice in questa fase si può correggere), `pnpm install` se sono cambiate le dipendenze, e si rilanciano lint, typecheck e test. Se il conflitto è in un test, ci si ferma: l'utente scrive `TORNA AI TEST`.
 6. **Revisione** con `/revisione`.
 7. **Chiusura** con `/chiudi-compito`. Controlla che non ci sia una pull request aperta di un compito dell'altra postazione, si riallinea, rifà i controlli, spunta la casella, fa il commit e apre la pull request.
@@ -237,20 +287,26 @@ La manutenzione dei server (aggiornamenti, prova di ripristino mensile dopo OPS-
 
 ## Compiti nuovi e cambi di corsia
 
-Un compito nuovo si scrive prima nella specifica. Poi l'utente aggiunge una riga in `.claude/hooks/corsie.txt` (Claude non può): `ID|postazione|prerequisiti dell'altra postazione`, nel punto della corsia in cui va eseguito. La regola per scegliere: **se il compito tocca il database, è di joo**. Lo stesso vale per spostare un compito. La modifica conta per tutte e due le postazioni solo quando è su `main`.
+Un compito nuovo si scrive prima nella specifica. Poi l'utente aggiunge una riga in `.claude/hooks/corsie.txt` (Claude non può): `ID|postazione|prerequisiti dell'altra postazione`, nel punto della corsia in cui va eseguito. La regola per scegliere: **se il compito cambia lo schema del database (migrazioni, permessi, elenco consentito, fixture di `src/server/db/isolation/`), è di joo**. Lo stesso vale per spostare un compito. La modifica conta per tutte e due le postazioni solo quando è su `main`.
 
 ## Pull request automatiche delle dipendenze
 
 Da OPS-T09 un aggiornamento automatico apre ogni settimana una pull request sulle dipendenze, raggruppata, una alla volta. Non blocca `/chiudi-compito`, che conta solo le pull request dei compiti. Uniscila solo quando non è aperta nessuna pull request di compito. Dopo l'unione, ciascuna postazione si allinea come al punto 5 del giro.
 
+**Se `pnpm audit` diventa rosso** per una vulnerabilità nuova, estranea al compito, la pull request del compito resta ferma. La correzione non si fa dentro il compito:
+- arriva dall'aggiornamento di sicurezza automatico, che l'utente unisce per primo; poi la pull request del compito si riallinea;
+- se una versione corretta non esiste ancora, decide l'utente, per esempio con un'eccezione dichiarata e datata nella configurazione di `pnpm audit`.
+
 ## Le prove di integrazione prima di FON-T08
 
-Fino a FON-T08 la CI non esegue `pnpm test:int`. I compiti di joo che arrivano prima (FON-T10, NEG-T01, NEG-T02, NEG-T05, NEG-T09) li eseguono in locale, in `/chiudi-compito`, dove sono obbligatori per ogni compito che tocca il database. La pull request di FON-T08 fa girare l'intera serie sul `main` di quel momento. Succedeva già con l'ordine originale per FON-T03 e i compiti successivi; qui riguarda anche l'area NEG.
+Fino a FON-T08 la CI non esegue `pnpm test:int`. I compiti di joo che possono essere uniti prima (FON-T10, NEG-T01, NEG-T02, NEG-T05, NEG-T09, ACC-T01, ACC-T03) li eseguono in locale, in `/chiudi-compito`, dove sono obbligatori per ogni compito che tocca il database. La pull request di FON-T08 fa girare l'intera serie sul `main` di quel momento. Succedeva già con l'ordine originale per FON-T03 e i compiti successivi; qui riguarda anche l'area NEG.
 
 ## Limiti
 
-- Gli hook sono stati provati su Windows, con Git Bash, sia nella forma Windows sia in una simulazione del comportamento Linux. Non sono stati provati su un Ubuntu vero: per questo la prima installazione su ogni computer comprende una prova (`AVVIO.md`, punto 6).
-- Gli hook controllano Claude, non l'utente: chi modifica i file a mano o unisce una pull request senza CI può rompere le regole.
-- I controlli sui comandi riconoscono i modi comuni di scrivere un file, non tutti. Un programma lanciato da terminale, per esempio uno script, `prettier --write`, `eslint --fix` o `vitest -u`, può ancora modificare file che il metodo protegge. La difesa resta la lettura delle differenze e la revisione.
-- Il controllo «una pull request di compito alla volta» lo fa `/chiudi-compito` nel momento in cui apre la pull request: se le due postazioni la aprono nello stesso istante, possono passare entrambe (vedi «Se qualcosa va storto»).
-- La protezione di `main` su GitHub e le regole di unione si decidono con il collegamento a GitHub. Finché non ci sono, l'unica barriera contro una spinta diretta su `main` è l'hook.
+- **Provato in simulazione, non su un Ubuntu vero.** Gli hook sono stati provati su Windows, con Git Bash, sia nella forma Windows sia in una simulazione del comportamento Linux. La sandbox e le regole delle impostazioni non si possono provare qui, perché esistono solo su Linux. Per questo la prima installazione su ogni computer comprende una prova (`AVVIO.md`, punto 6).
+- **Gli hook controllano Claude, non l'utente.** Chi modifica i file a mano, o unisce una pull request senza CI, può rompere le regole.
+- **I comandi fuori dalla sandbox hanno pieno accesso.** Sono quelli elencati in «Protezione del metodo»: Docker, ssh, i comandi del database e le operazioni di git che cambiano ramo. Lo stesso vale per i programmi che lanciano, compresi i test. Su questi comandi vigilano gli hook, e i controlli sul contenuto scoprono le modifiche a test e file del metodo all'`APPROVO` o al commit successivo.
+  - Quello che i controlli sul contenuto non possono scoprire: un programma scritto apposta, e lanciato fuori dalla sandbox, potrebbe cambiare la fase nella cartella di stato. Per farlo servirebbe codice scritto con quello scopo, e si vedrebbe nelle differenze che l'utente legge a ogni `APPROVO`.
+- **Strumenti che riscrivono file.** Nella sandbox, un programma come `prettier --write`, `eslint --fix` o `vitest -u` può modificare file del progetto, compresi i test. Se tocca un test dopo la fase test, se ne accorge il controllo dell'impronta.
+- **Due pull request nello stesso istante.** Il controllo «una pull request di compito alla volta» lo fa `/chiudi-compito` nel momento in cui apre la pull request. Se le due postazioni la aprono nello stesso istante, possono passare entrambe (vedi «Se qualcosa va storto»).
+- **`main` su GitHub.** La protezione di `main` e le regole di unione si decidono con il collegamento a GitHub. Finché non ci sono, contro una spinta diretta su `main` vigila solo l'hook.

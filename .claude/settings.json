@@ -1,19 +1,77 @@
 {
   "permissions": {
-    "deny": ["PowerShell"]
+    "deny": [
+      "PowerShell",
+      "Monitor",
+      "Edit(/.claude/**)",
+      "Edit(/CLAUDE.md)",
+      "Edit(~/.claude/settings.json)",
+      "Edit(~/.claude/settings.local.json)",
+      "Edit(~/.claude/CLAUDE.md)",
+      "Edit(~/.local/state/gestionale-negozi/**)"
+    ],
+    "ask": [
+      "Bash(ssh *prod*)",
+      "Bash(scp *prod:*)",
+      "Bash(rsync *prod:*)",
+      "Bash(sftp *prod*)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com",
+        "registry.npmjs.org",
+        "api.stripe.com",
+        "api.brevo.com"
+      ]
+    },
+    "filesystem": {
+      "allowWrite": ["~/.local/share/pnpm", "~/.cache", "~/.npm"]
+    },
+    "excludedCommands": [
+      "docker *",
+      "ssh *",
+      "scp *",
+      "rsync *",
+      "sftp *",
+      "pnpm test:int *",
+      "pnpm test:e2e *",
+      "pnpm dev *",
+      "pnpm worker *",
+      "pnpm db:migrate *",
+      "pnpm cli *",
+      "git switch *",
+      "git checkout *",
+      "git merge *",
+      "git stash *",
+      "git pull *",
+      "git restore *",
+      "git reset *",
+      "git cherry-pick *",
+      "git revert *",
+      "git am *",
+      "git apply *"
+    ]
   },
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh" }
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh", "onFailure": "block" }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/prompt-gate.sh" }
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/prompt-gate.sh", "onFailure": "block" }
         ]
       }
     ],
@@ -21,13 +79,13 @@
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit|Read",
         "hooks": [
-          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/file-guard.sh" }
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/file-guard.sh", "onFailure": "block" }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/bash-guard.sh" }
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/bash-guard.sh", "onFailure": "block" }
         ]
       }
     ],

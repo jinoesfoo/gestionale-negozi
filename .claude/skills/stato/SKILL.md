@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 Mostra all'utente lo stato del lavoro, in italiano, in modo breve. Non modificare nessun file.
 
-1. Leggi `.claude/postazione` (`yoo` o `joo`) e `.claude/compito-corrente.json` (se esiste): riporta postazione, compito e fase aperti. Se la postazione manca, dillo: l'utente esegue una volta `bash .claude/hooks/imposta-postazione.sh yoo` (oppure `joo`).
+1. Esegui `bash .claude/hooks/mostra-stato.sh` (sola lettura: postazione, compito e fase stanno nella cartella di stato degli hook, fuori dal progetto) e riporta postazione, compito e fase aperti. Se la postazione manca, dillo: l'utente esegue una volta, nel suo terminale, `bash .claude/hooks/imposta-postazione.sh yoo` (oppure `joo`).
 2. Esegui `git fetch origin main`. Se non riesce, dillo e prosegui con l'ultima copia nota di `origin/main`.
 3. Leggi la tabella delle corsie **di main**, la stessa che usano gli hook: `git show origin/main:.claude/hooks/corsie.txt`. Per ogni compito: la postazione, l'ordine (l'ordine delle righe di quella postazione) e i prerequisiti dell'altra postazione. Le parti dopo `#` sono commenti.
 4. Un compito è **fatto** quando la sua casella è spuntata nelle specifiche di `origin/main`, cioè quando la sua pull request è stata unita: `git grep -F -e "- [x] **<ID>**" origin/main -- specs` trova la riga. Conta per ciascuna postazione i compiti fatti e quelli da fare.

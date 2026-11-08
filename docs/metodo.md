@@ -7,7 +7,7 @@ Questo repository contiene un **metodo obbligatorio**: Claude Code ti guida un c
 1. Copia nella radice del repository: `CLAUDE.md`, la cartella `.claude/` e la cartella `docs/`. La cartella `specs/` deve già esserci.
 2. Installa `jq`, che gli script usano per leggere i dati: `sudo apt install jq`
 3. Rendi eseguibili gli script: `chmod +x .claude/hooks/*.sh`
-4. Aggiungi a `.gitignore`: `.claude/compito-corrente.json`, `.claude/settings.local.json` e `.claude/postazione`. Il registro invece conviene salvarlo nel repository: è la traccia di cosa hai approvato e quando. Con due postazioni ce n'è uno per computer, `.claude/registro-compiti-<postazione>.log` (`docs/due-postazioni.md`).
+4. Aggiungi a `.gitignore`: `.claude/settings.local.json` (e, per i kit vecchi, `.claude/compito-corrente.json` e `.claude/postazione`: ora fase e postazione stanno fuori dal progetto, nella cartella di stato degli hook, `~/.local/state/gestionale-negozi/`). Il registro invece conviene salvarlo nel repository: è la traccia di cosa hai approvato e quando. Con due postazioni ce n'è uno per computer, `.claude/registro-compiti-<postazione>.log` (`docs/due-postazioni.md`).
 5. Apri Claude Code nella cartella del progetto e scrivi `/hooks`: devi vedere gli hook `SessionStart`, `UserPromptSubmit`, `PreToolUse` e `Stop`. Se non li vedi, riavvia Claude Code.
 
 ## Il ciclo di ogni compito
@@ -36,14 +36,16 @@ Le parole chiave vanno scritte **da sole sulla prima riga** del messaggio; event
 - Leggere o modificare i file `.env` con i segreti veri.
 - Fare commit fuori dalla fase chiusura, spingere su `main`, usare `--force` o `--no-verify`, `git reset --hard`.
 - Cambiare da solo la fase o modificare gli hook.
+- Modificare un test dopo la fase test, con qualunque comando: gli hook ne tengono l'impronta, e se cambia `APPROVO` e il commit si fermano.
+- Scrivere negli hook, nelle impostazioni, in `.claude/` o fuori dal progetto: oltre agli hook lo impedisce la sandbox di Claude Code (su Linux).
 
 ## Consigli
 
 - **Una sessione per compito.** Quando chiudi un compito, usa `/clear` o apri una nuova sessione prima di `INIZIA` del successivo.
 - **Leggi sempre il piano.** È il momento in cui una correzione costa meno.
 - **Non approvare quello che non hai guardato.** `APPROVO` è la tua firma: finisce nel registro.
-- Se un blocco ti sembra sbagliato (per esempio un file che dovrebbe essere modificabile in quella fase), puoi modificare tu gli script in `.claude/hooks/`: Claude non può farlo.
+- Se un blocco ti sembra sbagliato (per esempio un file che dovrebbe essere modificabile in quella fase), puoi modificare tu gli script in `.claude/hooks/`: Claude non può farlo. Poi fai commit: finché gli hook sono diversi dal commit, nessuna fase avanza.
 
 ## Limiti da conoscere
 
-Gli hook controllano le azioni di Claude, non le tue: se modifichi i file a mano in VS Code, nessuno ti ferma. I controlli sui comandi da terminale riconoscono i casi comuni (`>`, `tee`, `sed -i`), non ogni modo possibile di scrivere un file: la difesa principale resta la tua lettura delle differenze e la revisione.
+Gli hook controllano le azioni di Claude, non le tue: se modifichi i file a mano in VS Code, nessuno ti ferma. I controlli sui comandi da terminale scompongono il comando come lo legge la shell, e dietro ci sono la sandbox e i controlli sul contenuto. Restano alcuni limiti, scritti in `docs/due-postazioni.md` («Protezione del metodo» e «Limiti»): la tua lettura delle differenze e la revisione restano una difesa necessaria.

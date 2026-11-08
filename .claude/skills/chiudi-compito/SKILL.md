@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 Chiudi il compito corrente. Rispondi all'utente in italiano.
 
-1. Leggi `.claude/compito-corrente.json`. Se la fase non è `chiusura`, fermati e spiega che prima serve `APPROVO` dopo la revisione.
+1. Esegui `bash .claude/hooks/mostra-stato.sh` (sola lettura). Se la fase non è `chiusura`, fermati e spiega che prima serve `APPROVO` dopo la revisione.
 2. **Una pull request di compito alla volta.** Esegui `gh pr list --state open --json number,title,headRefName`. Contano solo i rami che hanno il nome di un compito (`^[a-z]{3}-t[0-9]{2}[ab]?$`) diverso da quello corrente: le pull request delle dipendenze e i rami di prova (`prova-*`) non contano. Se ce n'è una, fermati: l'utente la unisce o la chiude, poi rilancia `/chiudi-compito`. Così GitHub, al momento dell'unione, non trova mai due compiti in conflitto. Se la pull request di questo compito esiste già (per esempio dopo `TORNA AL CODICE`), vai avanti: al passo 9 basta spingere.
 3. **Allineamento a main.** Esegui `git fetch origin`. Se `origin/main` è andato avanti rispetto alla base del ramo (`git merge-base HEAD origin/main` diverso da `git rev-parse origin/main`):
    - se il ramo non ha ancora commit propri: `git stash push -u`, `git merge --ff-only origin/main`, `git stash pop`;

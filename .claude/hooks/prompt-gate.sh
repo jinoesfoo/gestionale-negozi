@@ -13,8 +13,18 @@ fase="$(current_phase)"
 
 say() { echo "[Metodo] $*"; }   # su UserPromptSubmit l'output finisce nel contesto di Claude
 
+# I file del metodo e il registro devono essere quelli del commit: altrimenti nessuna fase cambia
+alterati="$(metodo_modificato | tr '\n' ' ')"
+registro_alterato && alterati="$alterati${LOG_FILE#"$PROJECT_DIR"/} (diverso dalla copia degli hook in $LOG_COPY) "
+fermo_se_alterato() {
+  [ -z "${alterati// /}" ] && return 0
+  say "I file del metodo sono cambiati rispetto al commit corrente: $alterati. Finché non tornano come prima la fase NON cambia. Li rimette a posto l'utente: per un file tracciato git checkout -- <file>, per il registro la copia degli hook."
+  exit 0
+}
+
 case "$upper" in
   INIZIA\ *)
+    fermo_se_alterato
     new_task="$(echo "$upper" | awk '{print $2}')"
     if ! echo "$new_task" | grep -Eq '^[A-Z]{3}-T[0-9]{2}[AB]?$'; then
       say "ID del compito non valido: '$new_task'. Esempio: INIZIA FON-T01."
@@ -34,6 +44,11 @@ case "$upper" in
     aggiorna_main || avviso="Attenzione: git fetch non è riuscito, il controllo usa l'ultima copia nota di origin/main. "
     if ! ha_origin_main; then
       say "Manca origin/main: prima va fatto il passo 2 di AVVIO.md (repository su GitHub). Il compito NON è iniziato."
+      exit 0
+    fi
+    doppie="$(corsie_doppie)"
+    if [ -n "$doppie" ]; then
+      say "Nella tabella delle corsie su main questi compiti compaiono più di una volta: $doppie. L'utente la corregge prima di iniziare. Il compito NON è iniziato."
       exit 0
     fi
     riga="$(corsia_riga "$new_task")"
@@ -58,21 +73,33 @@ case "$upper" in
       say "${avviso}Non si può iniziare $id: questi compiti non sono ancora su main (pull request unita):$mancano. Il compito NON è iniziato. Con /stato vedi cosa fare nell'attesa."
       exit 0
     fi
+    cancella_manifesto_test
     write_state "$id" "piano"
     say "${avviso}Compito $id iniziato sulla postazione $me. Fase: piano. Prima di tutto, con la cartella di lavoro pulita (a parte il registro di questa postazione): git switch --no-track -c $(echo "$id" | tr '[:upper:]' '[:lower:]') origin/main, poi pnpm install se esiste package.json. Poi leggi costituzione, docs/due-postazioni.md e area del compito, scrivi il piano e fermati per l'approvazione."
     ;;
   APPROVO)
+    case "$fase" in piano|test|codice|revisione) fermo_se_alterato ;; esac
+    case "$fase" in codice|revisione)
+      cambiati="$(test_cambiati | tr '\n' ' ')"
+      if [ -n "${cambiati// /}" ]; then
+        say "I test sono cambiati dopo la fase test: $cambiati. In fase $fase i test non si toccano: la fase NON è cambiata. Se un test va davvero corretto, l'utente scrive TORNA AI TEST; altrimenti va rimesso com'era."
+        exit 0
+      fi ;;
+    esac
     case "$fase" in
       piano)     write_state "$task" "test";      say "Piano approvato. Fase: test. Scrivi i test dai criteri di accettazione e mostra che falliscono." ;;
-      test)      write_state "$task" "codice";    say "Test approvati. Fase: codice. Scrivi il codice finché lint, typecheck e test sono verdi. I test non si modificano." ;;
+      test)      aggiorna_main; write_state "$task" "codice"; salva_manifesto_test
+                 say "Test approvati. Fase: codice. Scrivi il codice finché lint, typecheck e test sono verdi. I test non si modificano: da adesso gli hook ne tengono l'impronta." ;;
       codice)    write_state "$task" "revisione"; say "Codice approvato. Fase: revisione. Esegui /revisione." ;;
       revisione) write_state "$task" "chiusura";  say "Revisione approvata. Fase: chiusura. Esegui /chiudi-compito." ;;
-      chiusura)  say "In fase chiusura si conclude con CHIUSO, dopo che la pull request è aperta." ;;
+      chiusura)  say "In fase chiusura si conclude con CHIUSO, dopo che la pull request è unita." ;;
       *)         say "Nessun compito aperto: non c'è nulla da approvare. Usa INIZIA <ID>." ;;
     esac
     ;;
   "TORNA AI TEST")
     if [ "$fase" = "codice" ] || [ "$fase" = "revisione" ]; then
+      fermo_se_alterato
+      cancella_manifesto_test
       write_state "$task" "test"; say "Ritorno alla fase test per $task: si possono modificare i test, non il codice."
     else
       say "TORNA AI TEST vale solo nelle fasi codice e revisione (fase attuale: $fase)."
@@ -80,6 +107,8 @@ case "$upper" in
     ;;
   "TORNA AL PIANO")
     if [ "$fase" = "test" ] || [ "$fase" = "codice" ] || [ "$fase" = "revisione" ]; then
+      fermo_se_alterato
+      cancella_manifesto_test
       write_state "$task" "piano"; say "Ritorno alla fase piano per $task: correggi la specifica e il piano, poi chiedi di nuovo APPROVO. Il lavoro già fatto resta nel ramo."
     else
       say "TORNA AL PIANO vale solo nelle fasi test, codice e revisione (fase attuale: $fase)."
@@ -87,6 +116,7 @@ case "$upper" in
     ;;
   "TORNA AL CODICE")
     if [ "$fase" = "chiusura" ]; then
+      fermo_se_alterato
       write_state "$task" "codice" "codice (torna dalla chiusura)"
       say "Ritorno alla fase codice per $task (per esempio per risolvere un conflitto con main): si corregge il codice, non i test. Dopo servono di nuovo APPROVO (revisione) e APPROVO (chiusura)."
     else
@@ -95,9 +125,11 @@ case "$upper" in
     ;;
   CHIUSO)
     if [ "$fase" = "chiusura" ]; then
+      fermo_se_alterato
       avviso=""
       aggiorna_main || avviso="Attenzione: git fetch non è riuscito, il controllo usa l'ultima copia nota di origin/main. "
       if sul_main "$task"; then
+        cancella_manifesto_test
         LOG_TASK="$task" write_state "" "nessuno" "nessuno (chiuso)"
         say "${avviso}Compito $task chiuso: è su main. Usa /stato per vedere il prossimo."
       else
@@ -109,6 +141,7 @@ case "$upper" in
     ;;
   ABBANDONA)
     if [ -n "$task" ]; then
+      cancella_manifesto_test
       LOG_TASK="$task" write_state "" "nessuno" "nessuno (abbandonato)"
       say "Compito $task abbandonato. Le modifiche restano nella cartella di lavoro, senza commit: decidi tu se tenerle. Finché il compito non è su main, i compiti che lo seguono restano bloccati."
     fi
@@ -116,6 +149,7 @@ case "$upper" in
   APPROVO*|CHIUSO*|ABBANDONA*|"TORNA AI TEST"*|"TORNA AL PIANO"*|"TORNA AL CODICE"*)
     say "Parola chiave non riconosciuta: va scritta da sola sulla prima riga del messaggio (es. 'APPROVO' e poi, a capo, eventuali note). La fase NON è cambiata (compito: ${task:-nessuno}, fase: $fase). Se l'utente ha aggiunto richieste, eseguile restando nella fase attuale." ;;
   *)
+    [ -n "${alterati// /}" ] && say "Attenzione: i file del metodo sono cambiati rispetto al commit corrente: $alterati. Dillo all'utente: finché non tornano come prima, nessuna fase può cambiare."
     if [ -n "$task" ] && [ "$fase" != "nessuno" ]; then
       say "Compito corrente: $task, fase: $fase."
     else
