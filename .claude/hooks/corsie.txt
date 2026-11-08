@@ -1,0 +1,48 @@
+# Corsie delle due postazioni (docs/due-postazioni.md). La modifica solo l'utente: Claude non può.
+# Formato: ID|postazione|prerequisiti dell'altra postazione (separati da virgole)
+# Ogni postazione esegue i suoi compiti nell'ordine delle righe: INIZIA <ID> è permesso solo
+# se i compiti precedenti della stessa postazione e i prerequisiti indicati sono già su main
+# (casella spuntata in specs/ su origin/main, cioè pull request unita).
+
+# --- joo: applicazione e database (è l'unica postazione che scrive migrazioni) ---
+FON-T01|joo|
+FON-T03|joo|
+FON-T06|joo|
+FON-T10|joo|DOM-T01
+NEG-T01|joo|
+NEG-T02|joo|
+NEG-T05|joo|
+NEG-T09|joo|
+ACC-T01|joo|
+ACC-T03|joo|NEG-T04
+ACC-T04|joo|FON-T08
+ACC-T05|joo|
+ACC-T06|joo|
+ADM-T01|joo|
+ADM-T07|joo|
+MOD-T01|joo|
+MOD-T02|joo|
+BIL-T02|joo|BIL-T01
+BIL-T05|joo|
+BIL-T06|joo|MOD-T03
+BIL-T07|joo|
+BIL-T09|joo|
+BIL-T11|joo|
+ADM-T03|joo|
+OPS-T08|joo|OPS-T04
+
+# --- yoo: server, DNS, HTTPS, backup, rilasci, monitoraggio, sicurezza, documenti, collaudo ---
+FON-T07a|yoo|
+DOM-T01|yoo|
+OPS-T03|yoo|
+DOM-T02|yoo|FON-T06
+OPS-T01a|yoo|
+FON-T07b|yoo|
+NEG-T04|yoo|NEG-T02
+FON-T08|yoo|FON-T10,NEG-T09
+BIL-T01|yoo|ACC-T03
+OPS-T09|yoo|ACC-T04
+OPS-T01b|yoo|ADM-T07
+MOD-T03|yoo|MOD-T02
+OPS-T04|yoo|BIL-T11
+OPS-T11|yoo|OPS-T08

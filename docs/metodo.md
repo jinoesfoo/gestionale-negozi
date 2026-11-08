@@ -7,7 +7,7 @@ Questo repository contiene un **metodo obbligatorio**: Claude Code ti guida un c
 1. Copia nella radice del repository: `CLAUDE.md`, la cartella `.claude/` e la cartella `docs/`. La cartella `specs/` deve già esserci.
 2. Installa `jq`, che gli script usano per leggere i dati: `sudo apt install jq`
 3. Rendi eseguibili gli script: `chmod +x .claude/hooks/*.sh`
-4. Aggiungi a `.gitignore`: `.claude/compito-corrente.json` e `.claude/settings.local.json`. Il `registro-compiti.log` invece conviene salvarlo nel repository: è la traccia di cosa hai approvato e quando.
+4. Aggiungi a `.gitignore`: `.claude/compito-corrente.json`, `.claude/settings.local.json` e `.claude/postazione`. Il registro invece conviene salvarlo nel repository: è la traccia di cosa hai approvato e quando. Con due postazioni ce n'è uno per computer, `.claude/registro-compiti-<postazione>.log` (`docs/due-postazioni.md`).
 5. Apri Claude Code nella cartella del progetto e scrivi `/hooks`: devi vedere gli hook `SessionStart`, `UserPromptSubmit`, `PreToolUse` e `Stop`. Se non li vedi, riavvia Claude Code.
 
 ## Il ciclo di ogni compito
@@ -21,7 +21,9 @@ Questo repository contiene un **metodo obbligatorio**: Claude Code ti guida un c
 | revisione | Con `/revisione` un revisore indipendente controlla tutto | Nessun problema critico o alto aperto | `APPROVO` |
 | chiusura | Con `/chiudi-compito`: controlli completi, specifica aggiornata, commit, pull request | La pull request su GitHub | `CHIUSO` |
 
-Altre parole chiave: `TORNA AI TEST` (un test va corretto), `TORNA AL PIANO` (la specifica o il piano vanno cambiati, per esempio dopo un controllo [VERIFICA] andato male), `ABBANDONA` (chiude il compito senza completarlo).
+Altre parole chiave: `TORNA AI TEST` (un test va corretto), `TORNA AL PIANO` (la specifica o il piano vanno cambiati, per esempio dopo un controllo [VERIFICA] andato male), `TORNA AL CODICE` (dalla chiusura: il codice va corretto, per esempio per un conflitto con `main`; poi di nuovo revisione e chiusura), `ABBANDONA` (chiude il compito senza completarlo).
+
+Con due computer valgono anche le regole di `docs/due-postazioni.md`: ogni compito è di una sola postazione, si inizia solo da ciò che è già su `main`, una pull request alla volta.
 
 Le parole chiave vanno scritte **da sole sulla prima riga** del messaggio; eventuali note vanno a capo. "approvo ma cambia questo" non fa avanzare la fase (Claude esegue la richiesta restando nella fase attuale).
 

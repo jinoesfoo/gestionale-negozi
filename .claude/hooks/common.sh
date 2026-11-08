@@ -4,20 +4,46 @@
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 STATE_FILE="$PROJECT_DIR/.claude/compito-corrente.json"
-LOG_FILE="$PROJECT_DIR/.claude/registro-compiti.log"
+POSTAZIONE_FILE="$PROJECT_DIR/.claude/postazione"           # yoo o joo, scritto dall'utente con imposta-postazione.sh
+CORSIE_FILE="$(dirname "${BASH_SOURCE[0]}")/corsie.txt"      # quale postazione fa ogni compito, e in che ordine
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "Hook del metodo: manca 'jq'. Installalo con: sudo apt install jq (Windows: winget install jqlang.jq, poi riavvia VS Code)" >&2
   exit 2
 fi
 
+postazione() { [ -f "$POSTAZIONE_FILE" ] && tr -d '[:space:]' < "$POSTAZIONE_FILE" | tr '[:upper:]' '[:lower:]'; }
+# Un registro per postazione: due computer che scrivono lo stesso file andrebbero in conflitto a ogni unione
+_POSTAZIONE="$(postazione)"
+LOG_FILE="$PROJECT_DIR/.claude/registro-compiti${_POSTAZIONE:+-$_POSTAZIONE}.log"
+
 current_task() { [ -f "$STATE_FILE" ] && jq -r '.task // ""' "$STATE_FILE" 2>/dev/null || echo ""; }
 current_phase() { [ -f "$STATE_FILE" ] && jq -r '.fase // "nessuno"' "$STATE_FILE" 2>/dev/null || echo "nessuno"; }
 
-write_state() { # $1 task, $2 fase
+write_state() { # $1 task, $2 fase, $3 voce del registro (facoltativa, altrimenti la fase)
   local now; now="$(date -Iseconds)"
   jq -n --arg t "$1" --arg f "$2" --arg d "$now" '{task:$t, fase:$f, aggiornato:$d}' > "$STATE_FILE"
-  echo "$now  ${1:-—}  -> ${2}" >> "$LOG_FILE"
+  echo "$now  ${LOG_TASK:-${1:-—}}  -> ${3:-$2}" >> "$LOG_FILE"
+}
+
+# Tabella delle corsie: righe "ID|postazione|prerequisiti dell'altra postazione separati da virgole".
+# L'ordine delle righe di una postazione è l'ordine in cui la postazione esegue i suoi compiti.
+# Vale la tabella su origin/main, uguale per le due postazioni; la copia locale solo se main non c'è.
+# (cd e MSYS_NO_PATHCONV: su Windows Git Bash storpierebbe "origin/main:percorso" credendolo un elenco di percorsi)
+corsie() { (cd "$PROJECT_DIR" 2>/dev/null && MSYS_NO_PATHCONV=1 git show origin/main:.claude/hooks/corsie.txt 2>/dev/null) || cat "$CORSIE_FILE" 2>/dev/null; }
+corsia_riga() { # $1 ID senza distinguere maiuscole -> riga della tabella
+  corsie | awk -F'|' -v id="$1" 'BEGIN { id = toupper(id) } /^[[:space:]]*(#|$)/ { next } toupper($1) == id { print; exit }'
+}
+corsia_di() { corsia_riga "$1" | cut -d'|' -f2; }
+compiti_prima() { # $1 ID -> compiti della stessa postazione che lo precedono
+  corsie | awk -F'|' -v id="$1" 'BEGIN { id = toupper(id) } /^[[:space:]]*(#|$)/ { next }
+    { lane[NR] = $2; ids[NR] = $1; if (toupper($1) == id) { me = NR } }
+    END { if (me) for (i = 1; i < me; i++) if (lane[i] == lane[me]) print ids[i] }'
+}
+aggiorna_main() { GIT_TERMINAL_PROMPT=0 timeout 30 git -C "$PROJECT_DIR" fetch -q origin main >/dev/null 2>&1; }
+ha_origin_main() { git -C "$PROJECT_DIR" rev-parse -q --verify origin/main >/dev/null 2>&1; }
+sul_main() { # $1 ID -> vero se la sua casella è spuntata nelle specifiche di origin/main (pull request unita)
+  git -C "$PROJECT_DIR" grep -q -F -e "- [x] **$1**" origin/main -- specs >/dev/null 2>&1
 }
 
 # Su Windows (Git Bash) i percorsi arrivano come C:\..., c:/... o /c/... e il file system

@@ -10,12 +10,12 @@ La fase corrente sta in `.claude/compito-corrente.json` (campi `task` e `fase`).
 
 | Fase | Cosa fai | Cosa NON puoi fare | Per passare alla fase successiva l'utente scrive |
 |---|---|---|---|
-| nessun compito | Proponi il prossimo compito secondo l'ordine di `specs/README.md` (usa `/stato`) | Modificare codice, test, migrazioni, infrastruttura | `INIZIA <ID>` (es. `INIZIA FON-T01`) |
+| nessun compito | Proponi il prossimo compito di questa postazione secondo `.claude/hooks/corsie.txt` (usa `/stato`, sezione 6) | Modificare codice, test, migrazioni, infrastruttura | `INIZIA <ID>` (es. `INIZIA FON-T01`) |
 | `piano` | Leggi `specs/00-costituzione.md` e **tutta** l'area del compito. Scrivi un piano: requisiti coperti, file da creare o modificare, test da scrivere, punti [VERIFICA] da controllare, dubbi e ambiguità della specifica. Per controllare i punti [VERIFICA] puoi installare le dipendenze (`pnpm add`) e leggerne la documentazione o il codice in `node_modules`, annotando l'esito nella specifica. Poi fermati e chiedi l'approvazione. | Modificare file fuori da `specs/` e `docs/` (le dipendenze installate restano) | `APPROVO` |
 | `test` | Scrivi i test dai criteri di accettazione (ogni test porta l'ID del requisito nel nome). Eseguili e mostra all'utente che **falliscono** per il motivo giusto (funzione mancante, non errore di sintassi). Poi fermati. | Modificare codice applicativo (`src/`, `drizzle/`, `infra/` tranne gli script di controllo) | `APPROVO` |
 | `codice` | Scrivi il codice minimo per far passare i test. Esegui lint, typecheck e test finché sono verdi. Se un test ti sembra sbagliato rispetto alla specifica, **fermati e chiedilo**: non modificarlo. | Modificare i test | `APPROVO` (dopo che i controlli sono verdi), `TORNA AI TEST` oppure `TORNA AL PIANO` |
 | `revisione` | Esegui `/revisione`: un revisore indipendente legge le modifiche. Riporta all'utente i problemi trovati e correggili (le correzioni al codice sono permesse; ai test solo dopo `TORNA AI TEST`). | Chiudere il compito con problemi critici o alti aperti | `APPROVO` |
-| `chiusura` | Esegui `/chiudi-compito`: controlli completi, casella spuntata nella specifica, commit e pull request. | Spingere su `main` | `CHIUSO` (dopo che la pull request è aperta) |
+| `chiusura` | Esegui `/chiudi-compito`: allineamento a main, controlli completi, casella spuntata nella specifica, commit e pull request. | Spingere su `main`; modificare file fuori da `specs/` e `docs/` | `CHIUSO` (dopo che la pull request è aperta), oppure `TORNA AL CODICE` (per esempio per un conflitto con main) |
 
 Regole di comportamento:
 - **Ad ogni fermata** di fine fase scrivi in fondo alla risposta, in grassetto, cosa deve scrivere l'utente per proseguire, e cosa deve controllare prima (es. "leggi il piano", "guarda che i test falliscano", "leggi le differenze").
@@ -49,3 +49,14 @@ Comandi del metodo: `/stato` (dove siamo e qual è il prossimo compito), `/revis
 
 ## 5. Un compito è finito quando
 lint, typecheck e tutti i test passano, i nuovi test coprono i requisiti del compito, la revisione non ha problemi critici o alti aperti, la casella del compito è spuntata nella specifica, ogni deviazione dalla specifica è stata scritta nella specifica e la pull request è aperta.
+
+## 6. Due postazioni (yoo e joo)
+Il progetto si sviluppa su due computer. Il nome di questa postazione sta in `.claude/postazione`; chi fa cosa, e perché, sta in `docs/due-postazioni.md`, da leggere prima di ogni piano.
+- Ogni compito è di una sola postazione (`.claude/hooks/corsie.txt`, vale la copia su `main`). `INIZIA` rifiuta i compiti dell'altra postazione e quelli i cui compiti precedenti o prerequisiti non sono ancora su `main`.
+- Primo passo del piano: `git switch -c <id-in-minuscolo> origin/main`, con la cartella di lavoro pulita (l'hook ha appena fatto `git fetch`).
+- Migrazioni, elenco dei permessi e fixture di `src/server/db/isolation/` li scrive solo joo. Se un compito di yoo ne ha bisogno, fermati e dillo all'utente.
+- Non modificare i file esistenti che appartengono all'altra postazione (tabella «Proprietà dei file»), tranne le eccezioni pianificate scritte lì. Se ti serve farlo, fermati e dillo all'utente.
+- Prima di chiedere `APPROVO` in fase codice, allinea il ramo a `main`: `git fetch origin`; se `origin/main` è avanzato, `git stash push -u`, `git merge --ff-only origin/main`, `git stash pop`. Poi risolvi i conflitti e rilancia lint, typecheck e test.
+- Una pull request aperta alla volta fra le due postazioni: lo controlla `/chiudi-compito`.
+- Le variabili d'ambiente nuove vanno nella descrizione della pull request: sui server le aggiunge yoo (o l'utente) prima dell'unione. Niente segreti fra le postazioni via git o chat.
+- Se il prossimo compito è bloccato, proponi il lavoro d'attesa della sezione «Quando aspetti» di `docs/due-postazioni.md`, senza toccare il codice.

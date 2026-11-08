@@ -21,8 +21,8 @@ fi
 
 # 2. Il file di stato lo cambia solo l'utente con le parole chiave
 case "$rel" in
-  .claude/compito-corrente.json|.claude/hooks/*|.claude/settings.json)
-    block "'$rel' fa parte del metodo e non si modifica. La fase cambia solo quando l'utente scrive INIZIA <ID>, APPROVO, TORNA AI TEST, CHIUSO."
+  .claude/compito-corrente.json|.claude/hooks/*|.claude/settings.json|.claude/postazione|.claude/registro-compiti*)
+    block "'$rel' fa parte del metodo e non si modifica. La fase cambia solo quando l'utente scrive INIZIA <ID>, APPROVO, TORNA AI TEST, CHIUSO; postazione, corsie e registro li cambia solo l'utente."
     ;;
 esac
 
@@ -47,7 +47,7 @@ case "$fase" in
     fi
     exit 0 ;;
   chiusura)
-    block "fase chiusura di $task: si chiudono i controlli, si spunta la specifica e si fa commit. Per altre modifiche l'utente scrive TORNA AI TEST." ;;
+    block "fase chiusura di $task: si chiudono i controlli, si spunta la specifica e si fa commit. Per altre modifiche (anche per risolvere un conflitto con main) l'utente scrive TORNA AL CODICE." ;;
   *)
     block "fase sconosciuta '$fase'. Chiedi all'utente di scrivere ABBANDONA e poi INIZIA <ID>." ;;
 esac

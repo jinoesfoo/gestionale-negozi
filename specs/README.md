@@ -48,6 +48,23 @@ Si procede nell'ordine della tabella, con un'eccezione obbligatoria: nell'area 0
 
 Ordine di esecuzione: FON-T01, FON-T03, FON-T06, FON-T07a, DOM-T01, DOM-T02, OPS-T03, OPS-T01a, FON-T07b, FON-T08, FON-T10, poi NEG, ACC, MOD, BIL, ADM (ADM-T01 può essere anticipato subito dopo ACC per avere il pannello prima di Stripe), OPS (OPS-T01b, T04, T08, T09, T11), collaudo.
 
+### Esecuzione su due postazioni (8/11/2026)
+
+Lo sviluppo si fa su due computer, **joo** (applicazione e database, l'unica postazione che scrive migrazioni) e **yoo** (server, rilasci, operatività, più NEG-T04, BIL-T01 e MOD-T03). L'ordine di ciascuna postazione e i compiti dell'altra che deve aspettare stanno in `.claude/hooks/corsie.txt`; le ragioni e le regole contro le sovrapposizioni in `docs/due-postazioni.md`. Ogni dipendenza scritta nei compiti resta rispettata. Rispetto all'ordine qui sopra cambia questo:
+
+- **OPS-T03 prima di DOM-T02.** Non dipende da nessun compito: resta prima di ogni bucket e prima di OPS-T01a, come chiede la sua nota.
+- **FON-T10 prima di FON-T07b e FON-T08.** Gli servono solo FON-T06 e i record di DOM-T01 (la prova manuale dell'email). L'ordine qui sopra aveva un'inversione: il job di `test:int` di FON-T08 chiama `ensureQueues()`, che nasce in FON-T10.
+- **NEG-T05 e NEG-T09 prima di NEG-T04**, che va a yoo (instradamento, vicino a Caddy e ai domini). NEG-T04 aspetta NEG-T02 per `resolve_host` e FON-T07b per `/api/health/echo-headers`. ACC-T03, che prova il 404 del proxy su `/api/auth/*`, aspetta NEG-T04.
+- **ADM-T01 e ADM-T07 subito dopo ACC**, prima di MOD e BIL. L'anticipo di ADM-T01 era già ammesso; ADM-T07 non dipende da MOD né da BIL e crea le tabelle operative che servono a OPS-T01b.
+- **BIL-T01 e MOD-T03 a yoo**: non hanno migrazioni. BIL-T02 aspetta BIL-T01 (listino e libreria `stripe`), BIL-T06 aspetta MOD-T03.
+- **OPS-T04 prima di OPS-T08**, perché i due compiti non aggiungano dipendenze nello stesso momento.
+
+Regole di struttura per le due postazioni, che fanno parte dei compiti indicati:
+
+- **FON-T06:** ogni comando del CLI ha il suo file `src/cli/commands/<nome>.ts`. FON-T06 crea subito tutti quelli previsti dalle specifiche come segnaposto con uscita 64, e l'elenco in `src/cli.ts` non cambia più.
+- **FON-T07a:** `infra/README.md` nasce con una sezione per ogni procedura citata nelle specifiche, intitolata con il compito che la scrive.
+- **FON-T10:** i gestori dei lavori si registrano in `src/server/jobs/` (un file per lavoro e un registro), non in `src/worker.ts`.
+
 ## Convenzioni di scrittura
 
 - **ID dei requisiti:** `AREA-NNN` (es. `NEG-004`). **ID dei compiti:** `AREA-TNN` (es. `NEG-T02`). I test citano l'ID del requisito che verificano nel nome: `it('NEG-004: ...')`. Anche gli ID dei requisiti hanno vuoti (es. non esiste BIL-015 né ACC-009: rinviati).

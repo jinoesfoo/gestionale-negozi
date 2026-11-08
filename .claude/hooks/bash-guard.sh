@@ -10,11 +10,12 @@ cmd="$(echo "$input" | jq -r '.tool_input.command // ""')"
 block() { echo "BLOCCATO dal metodo di lavoro: $*" >&2; exit 2; }
 
 # File di stato e hook: non si toccano da terminale
-if echo "$cmd" | grep -Eq 'compito-corrente\.json|registro-compiti\.log|\.claude/hooks|\.claude/settings\.json'; then
+if echo "$cmd" | grep -Eq 'compito-corrente\.json|registro-compiti|\.claude/hooks|\.claude/settings\.json|\.claude/postazione'; then
   if echo "$cmd" | grep -Eq '(>|tee|sed -i|rm |mv |cp |chmod|truncate|jq .*>)'; then
-    block "il file di stato e gli hook del metodo non si modificano da terminale."
+    block "il file di stato, la postazione, il registro e gli hook del metodo non si modificano da terminale."
   fi
 fi
+echo "$cmd" | grep -q 'imposta-postazione' && block "il nome della postazione lo imposta l'utente, a mano, una volta sola."
 
 # Segreti
 if echo "$cmd" | grep -Eq '(^|[[:space:]/])(\.env(\.[a-z]+)?|[a-z]+\.env)([[:space:]]|$)' && ! echo "$cmd" | grep -q 'example'; then
