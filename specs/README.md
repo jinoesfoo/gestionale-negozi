@@ -6,7 +6,7 @@ Documento di riferimento a monte: "Progetto tecnico — Fase 0: piattaforma" (ve
 
 ## Come si usano
 
-1. Il kit `kit-sviluppo.zip` (`CLAUDE.md`, `.claude/` e `docs/metodo.md`) viene consegnato **insieme** a queste specifiche e deve essere presente nel repository **prima di FON-T01**: senza gli hook e i comandi del metodo nessun compito si può eseguire. Prima di FON-T01, quindi, copia nella radice del repository: la cartella `specs/`, e dal kit il file `CLAUDE.md`, la cartella `.claude/` (con `.claude/hooks/*` e i comandi `/stato`, `/revisione`, `/chiudi-compito`) e `docs/metodo.md`. Poi installa `jq` (lo usano gli hook), esegui `chmod +x .claude/hooks/*.sh` e aggiungi `.claude/compito-corrente.json` e `.claude/settings.local.json` a `.gitignore`. FON-T01 include questi file nel commit iniziale.
+1. Il metodo (`CLAUDE.md`, la cartella `.claude/` con gli hook e i comandi `/stato`, `/revisione`, `/chiudi-compito`, `docs/metodo.md`) deve essere presente nel repository **prima di FON-T01**: senza gli hook e i comandi del metodo nessun compito si può eseguire. Con due postazioni (8/11/2026) il repository parte già dal commit «Specifiche e metodo», che contiene queste specifiche, il metodo, `docs/due-postazioni.md` e `AVVIO.md`: l'installazione segue `AVVIO.md`, e FON-T01 non fa un commit iniziale. Fase e postazione stanno fuori dal progetto, nella cartella di stato degli hook; il registro delle approvazioni sta in `registro/`, uno per postazione.
 2. Lavora **un'area alla volta, nell'ordine sotto**. Ogni area ha tre parti: *Requisiti* (cosa deve succedere, con criteri di accettazione), *Progetto* (come è fatto), *Compiti* (passi in ordine, ciascuno con i test che lo chiudono).
 3. Chiedi a Claude Code di eseguire un compito alla volta: "Esegui il compito FON-T03 di `specs/01-fondamenta.md`". Il compito è finito solo quando i suoi test passano e la casella è spuntata.
 4. Se durante lo sviluppo una specifica si rivela sbagliata o incompleta, **si corregge prima la specifica**, poi il codice.
@@ -33,7 +33,7 @@ Si procede nell'ordine della tabella (con una sola postazione; con due vale la s
 
 ## Compiti della fase 0
 
-39 compiti in tutto. Gli ID sono stabili: dopo la revisione del 6/11/2026 alcuni compiti sono stati accorpati o rinviati, quindi la numerazione ha dei **vuoti** (es. non esistono FON-T02, NEG-T03, ACC-T02, BIL-T08, OPS-T02); non vanno riusati.
+40 compiti in tutto (39 più COL-T01, il collaudo, che dall'8/11/2026 ha un ID come gli altri). Gli ID sono stabili: dopo la revisione del 6/11/2026 alcuni compiti sono stati accorpati o rinviati, quindi la numerazione ha dei **vuoti** (es. non esistono FON-T02, NEG-T03, ACC-T02, BIL-T08, OPS-T02); non vanno riusati.
 
 | Area | Compiti | Numero |
 |---|---|---|
@@ -45,8 +45,9 @@ Si procede nell'ordine della tabella (con una sola postazione; con due vale la s
 | DOM | T01, T02 | 2 |
 | ADM | T01, T03, T07 | 3 |
 | OPS | T01a, T01b, T03, T04, T08, T09, T11 | 7 |
+| COL | T01 (in `09-collaudo.md`) | 1 |
 
-Ordine di esecuzione con una sola postazione: FON-T01, FON-T03, FON-T06, FON-T07a, DOM-T01, DOM-T02, OPS-T03, OPS-T01a, FON-T10, FON-T07b, FON-T08, poi NEG, ACC, MOD, BIL, ADM (ADM-T01 può essere anticipato subito dopo ACC per avere il pannello prima di Stripe), OPS (OPS-T01b, T04, T08, T09, T11), collaudo.
+Ordine di esecuzione con una sola postazione: FON-T01, FON-T03, FON-T06, FON-T07a, DOM-T01, DOM-T02, OPS-T03, OPS-T01a, FON-T10, FON-T07b, FON-T08, poi NEG, ACC, MOD, BIL, ADM (ADM-T01 può essere anticipato subito dopo ACC per avere il pannello prima di Stripe), OPS (OPS-T01b, T04, T08, T09, T11), collaudo (COL-T01).
 
 ### Esecuzione su due postazioni (8/11/2026)
 
@@ -70,15 +71,19 @@ Regole per le due postazioni, che fanno parte dei compiti indicati (dettagli e m
 - **FON-T10:** i gestori dei lavori si registrano in `src/server/jobs/` (un file per lavoro e un registro), non in `src/worker.ts`. Il [VERIFICA] su Brevo si annota soltanto: un'eventuale modifica del Caddyfile la fa FON-T07b. Il controllo manuale dei record DNS e l'email di prova si fanno in locale, senza il server.
 - **NEG-T02:** crea in `src/server/db/` il wrapper `resolveHost()`, che usa il proxy di NEG-T04.
 - **OPS-T01a:** l'immagine PostgreSQL parte anche in sviluppo senza le variabili `PGBACKREST_*`.
+- **FON-T07b:** nella sua sezione di `infra/README.md` scrive la procedura del webhook dei rimbalzi per i due server (`/api/webhooks/email?k=…`, FON-011, 06 §Caddy): l'utente mette `EMAIL_WEBHOOK_TOKEN` in `app.env` e l'indirizzo del webhook nel pannello di Brevo, perché il token è un segreto. Serve alla prova C27 del collaudo.
 - **FON-T08:**
-  - `deploy.sh`, `/srv/app/dc` e gli script dei timer prendono lo stesso blocco con `flock -w`, e `deploy.sh` scrive `infra/` e `.env` in modo atomico; tra i test, un rilascio lanciato durante un backup aspetta;
+  - un'operazione alla volta sul server: il blocco con `flock -w` lo prende il processo più esterno (`deploy.sh`, gli script dei timer), che poi chiama `/srv/app/dc` con `DC_LOCKED=1`; `dc` lo prende da sé solo se `DC_LOCKED` non c'è, così non aspetta il blocco del processo che l'ha lanciato. `deploy.sh` scrive `infra/` e `.env` in modo atomico. Tra i test: un rilascio lanciato durante un backup aspetta, e un `deploy.sh` completo, che chiama `dc` con il blocco preso, non si ferma;
   - la costruzione dell'immagine sta fuori dai gruppi di concorrenza; il rilascio usa due gruppi separati, `deploy-test` e `deploy-prod`, senza annullare quello in corso;
-  - la variabile del repository `TEST_DEPLOY_HOLD` ferma i rilasci sul server di test, e un avvio a mano rilascia uno SHA scelto. Le immagini Caddy e PostgreSQL di uno SHA che non è su `main` prendono il tag `<tag>-<sha7>`, scritto solo nel `.env` del server di test; i tag ufficiali li pubblica solo `main`;
+  - la variabile del repository `TEST_DEPLOY_HOLD` ferma i rilasci sul server di test. È la condizione `if:` del job di rilascio, che ha il gruppo di concorrenza, non un passo dentro il job: con il fermo attivo il job viene saltato e non entra nel gruppo, così un'unione non può annullare un rilascio a mano in attesa (tra i test di FON-T08);
+  - un avvio a mano (`workflow_dispatch`) rilascia sul server di test uno SHA scelto, anche di un ramo. Per uno SHA che non è su `main`, l'avvio costruisce le immagini Caddy e PostgreSQL i cui file differiscono da `main`, con il tag `<tag>-<sha7>`, e prima di costruire l'immagine dell'app scrive quei tag in `infra/versions.env` (solo nella copia del job, mai nel repository): così `deploy.sh`, che riceve solo lo SHA, legge i tag giusti dall'immagine. Un avvio a mano su uno SHA di un ramo non dà mai il tag `tested-`; i tag ufficiali li pubblica solo `main`;
   - prima di `pull` e `migrate`, `deploy.sh` controlla che nei cinque file dei servizi ci siano tutte le variabili degli esempi, saltando quelle segnate `# facoltativa` e non chiedendo mai `STRIPE_LIVE_SECRET_KEY` e `ROLES_ALLOW_CREATEDB`;
   - la prova con `KNOWN_HOSTS` sbagliato usa un segreto di prova separato;
   - la pull request di prova di FON-005 sta su un ramo `prova-*`.
-- **BIL-T01:** crea il client Stripe con la versione API fissata e `seedStripe(stripe, plans)`, riusabile da BIL-T05. Dopo l'unione, prima di `CHIUSO`, prepara la sandbox del server di test: `stripe:seed`, gli endpoint dei webhook con l'elenco completo degli eventi (05 §Webhook) e le impostazioni del Dashboard. Quella di produzione si prepara dopo il primo rilascio `v*`. Ogni postazione di sviluppo ha la sua sandbox Stripe (05 §Ogni ambiente usa una propria sandbox).
-- **OPS-T09:** aggiornamenti automatici delle dipendenze solo per npm e GitHub Actions, raggruppati, con `open-pull-requests-limit: 1`, compresi gli aggiornamenti di sicurezza.
+- **BIL-T01:** crea il client Stripe con la versione API fissata e `seedStripe(stripe, plans)`, riusabile da BIL-T05. Dopo l'unione, prima di `CHIUSO`, prepara la sandbox del server di test: `stripe:seed`, gli endpoint dei webhook con l'elenco completo degli eventi (05 §Endpoint) e le impostazioni del Dashboard (05 §Impostazioni da fare nel Dashboard Stripe). Poi, con il rilascio `v*` che l'utente crea dopo l'unione, la stessa preparazione per la sandbox di produzione (vedi «Prove in produzione»). 05 §Lavoro `billing.sync` (passo 1) vuole una sandbox per ogni ambiente: con due postazioni di sviluppo le sandbox sono quattro (`docs/due-postazioni.md`, «Stripe»).
+- **Prove in produzione** (BIL-T01 per la sandbox di produzione, OPS-T01b per OPS-004 e OPS-008, OPS-T04 per il timer `host-metrics` e il controllo esterno): dopo l'unione l'utente crea un rilascio `v*` (l'ambiente `production` gli chiede l'approvazione); il compito resta in fase chiusura, fa la parte in produzione, ne annota l'esito in `docs/verifiche/<id>-esito.md` e solo dopo l'utente scrive `CHIUSO`. Così la casella non è mai spuntata con prove ancora da fare.
+- **OPS-T09:** aggiornamenti automatici delle dipendenze solo per npm e GitHub Actions, raggruppati, con `open-pull-requests-limit: 1`; gli aggiornamenti di sicurezza in un gruppo a parte (`applies-to: security-updates`), perché per loro GitHub non applica quel limite. Prima di OPS-T09 l'utente attiva i «Dependabot security updates» nelle impostazioni del repository. Se `pnpm audit` è già rosso quando OPS-T09 lo porta in CI, decide l'utente: un'eccezione dichiarata e datata nella configurazione, e la correzione della versione in un compito di joo.
+- **COL-T01:** il collaudo (09) è l'ultimo compito di yoo e aspetta tutti gli altri; il rilascio `v*` su cui gira lo crea l'utente. Le liste di controllo preparate da yoo durante le attese (`docs/collaudo/`) entrano in `docs/verifiche/col-t01.md` nella fase test.
 
 ## Convenzioni di scrittura
 

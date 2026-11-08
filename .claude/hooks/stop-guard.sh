@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Stop: in fase codice, revisione e chiusura Claude non può chiudere la risposta con controlli rossi.
-# Senza jq common.sh esce con 2 prima del controllo di stop_hook_active: lo Stop girerebbe all'infinito.
-# Gli altri hook bloccano già tutto, quindi qui si lascia passare.
-command -v jq >/dev/null 2>&1 || exit 0
+# I controlli eseguono il codice del progetto e i test, scritti da Claude: girano nella gabbia (common.sh),
+# non con i permessi pieni degli hook.
+# HOOK_STOP: un errore d'installazione qui lascia passare (un blocco dello Stop non si supererebbe mai);
+# gli altri hook fermano già tutto.
+HOOK_STOP=1
 source "$(dirname "$0")/common.sh"
 
 input="$(cat)"
@@ -20,7 +22,12 @@ out="$(mktemp)"
 fail=""
 for step in lint typecheck test; do
   if jq -e --arg s "$step" '.scripts[$s]' package.json >/dev/null 2>&1; then
-    if ! pnpm -s "$step" >"$out" 2>&1; then fail="$step"; break; fi
+    gabbia pnpm -s "$step" >"$out" 2>&1; rc=$?
+    if [ "$rc" = 125 ]; then
+      echo "I controlli non si possono eseguire: $(tail -n 1 "$out"). Dillo all'utente." >&2
+      rm -f "$out"; exit 2
+    fi
+    if [ "$rc" != 0 ]; then fail="$step"; break; fi
   fi
 done
 

@@ -5,7 +5,7 @@ Chi fa cosa è spiegato in `docs/due-postazioni.md`. Qui ci sono solo i passi di
 ## 1. Strumenti, su ciascuno dei due computer
 
 ```bash
-sudo apt update && sudo apt install -y git jq curl bubblewrap socat    # bubblewrap e socat: la sandbox di Claude Code
+sudo apt update && sudo apt install -y git jq curl bubblewrap socat    # bubblewrap e socat: la sandbox di Claude Code e la gabbia
 # GitHub CLI dal repository ufficiale (quello di Ubuntu 22.04 è troppo vecchio): https://github.com/cli/cli/blob/trunk/docs/install_linux.md
 # Node.js 24 con nvm, poi pnpm
 curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
@@ -14,11 +14,31 @@ source ~/.bashrc && nvm install 24 && npm install -g pnpm
 curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker "$USER"
 # Chi firma i commit (lo stesso nome su tutti e due i computer va bene)
 git config --global user.name "Il tuo nome" && git config --global user.email "la-tua-email@esempio.it"
-# GitHub: accesso via HTTPS e credenziali per git (servono anche agli hook, che fanno git fetch da soli)
-gh auth login --git-protocol https && gh auth setup-git
+# GitHub: accesso via HTTPS e credenziali per git (servono anche agli hook, che fanno git fetch da soli).
+# --insecure-storage: il token sta in un file leggibile solo da te (~/.config/gh/hosts.yml), non nel portachiavi
+# del sistema, che i comandi di Claude, chiusi nella sandbox, non possono raggiungere.
+gh auth login --git-protocol https --insecure-storage && gh auth setup-git
 ```
 
-Dopo `usermod` esci dalla sessione e rientra, così Docker funziona senza `sudo`. In VS Code installa l'estensione Claude Code, in una versione recente: gli hook che si fermano se si rompono (`onFailure`) esistono da Claude Code v2.1.295. Dopo FON-T01, una volta per computer: `pnpm exec playwright install --with-deps`.
+Dopo `usermod` esci dalla sessione e rientra, così Docker funziona senza `sudo`. Dopo FON-T01, una volta per computer: `pnpm exec playwright install --with-deps`.
+
+**Ubuntu 24.04 e la sandbox.** Ubuntu 24.04 limita i «namespace utente» di cui hanno bisogno la sandbox di Claude Code e la gabbia degli hook. Controlla con `sysctl kernel.apparmor_restrict_unprivileged_userns`: se risponde `= 1`, crea il profilo AppArmor di bubblewrap, una volta sola:
+
+```bash
+sudo tee /etc/apparmor.d/bwrap >/dev/null <<'EOF'
+abi <abi/4.0>,
+include <tunables/global>
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/bwrap>
+}
+EOF
+sudo apparmor_parser -r /etc/apparmor.d/bwrap
+```
+
+Su Ubuntu 22.04 non serve. Senza questo passo Claude Code non parte (la sandbox è obbligatoria, `failIfUnavailable`).
+
+**Claude Code.** In VS Code installa l'estensione Claude Code, in una versione recente: almeno la v2.1.310, che all'avvio controlla davvero la sandbox; gli hook che si fermano se si rompono (`onFailure`) esistono dalla v2.1.295.
 
 **Solo su yoo, i nomi dei server.** Gli hook lasciano andare verso i server solo con due nomi fissi, `test` e `prod`, e per `prod` Claude Code ti chiede conferma a ogni comando. Quando hai gli indirizzi dei due server, aggiungi a `~/.ssh/config`:
 
@@ -54,7 +74,7 @@ gh repo clone gestionale-negozi ~/gestionale-negozi    # con lo stesso account G
 
 ## 4. Il nome della postazione, su ciascun computer
 
-Nel tuo terminale, non da Claude, nella cartella del progetto, una volta sola. Il nome finisce fuori dal progetto, in `~/.local/state/gestionale-negozi/`, dove i comandi di Claude non possono cambiarlo.
+Nel tuo terminale, non da Claude, nella cartella del progetto, una volta sola. Il nome finisce fuori dal progetto, in `~/.local/state/gestionale-negozi/`, dove i comandi di Claude non possono cambiarlo. Lo script registra anche l'impronta della cartella `.git`: se un giorno gli hook dicono che «la cartella del repository non è quella registrata», guarda che cosa è successo (per esempio un nuovo clone nella stessa cartella) e rilancia lo stesso comando, con lo stesso nome.
 
 ```bash
 bash .claude/hooks/imposta-postazione.sh joo    # sul computer joo
@@ -65,25 +85,33 @@ bash .claude/hooks/imposta-postazione.sh yoo    # sul computer yoo
 
 Apri la cartella `~/gestionale-negozi` in VS Code, avvia Claude Code e scrivi `/hooks`: devi vedere SessionStart, UserPromptSubmit, PreToolUse e Stop. All'apertura Claude deve ricevere il messaggio «[Metodo] Postazione joo» (o yoo).
 
+I comandi che girano fuori dalla sandbox (Docker, `ssh`, `scp`, `rsync` e la gabbia, `bash .claude/hooks/gabbia.sh …`) passano dal normale permesso di Claude Code: se te lo chiede, guarda il comando prima di dire sì. Per la gabbia puoi rispondere «sì, sempre»; per Docker e i server conviene guardarli ogni volta.
+
 ## 6. Prova, prima di lavorare
 
-Gli hook sono stati collaudati in una simulazione, e la sandbox esiste solo su Linux: questa prova verifica tutto su Ubuntu.
+Gli hook sono stati collaudati in una simulazione, e la sandbox esiste solo su Linux: questa prova verifica tutto su Ubuntu. Chiedi a Claude di eseguire i comandi, uno alla volta, e confronta la risposta.
 
 - Su joo scrivi `INIZIA FON-T07a`: deve essere **rifiutato** («è della postazione yoo»).
 - Su yoo scrivi `INIZIA FON-T01`: deve essere **rifiutato** («è della postazione joo»).
 - In nessuna delle due risposte deve comparire «git fetch non è riuscito»: se compare, l'accesso a GitHub dal terminale non funziona (passo 1, `gh auth setup-git`).
 - Su joo scrivi `/stato`: il prossimo compito deve essere FON-T01. Su yoo: FON-T07a.
-- Chiedi a Claude di eseguire `touch .claude/prova-hook`: deve essere **bloccato dall'hook** («i file del metodo … li cambia solo l'utente»).
-- Chiedi a Claude di eseguire `cd .claude && python3 -c "open('prova-sandbox','w')"`: l'hook lo lascia passare, quindi deve **fallire per la sandbox**, con un errore di permesso. Se invece il file nasce, la sandbox non è attiva: fermati.
-- Chiedi a Claude di eseguire `git fetch origin` e `gh pr list`: devono **funzionare**. Se la rete o le credenziali non passano dalla sandbox, aggiungi tu `"git fetch *"`, `"git push *"` e `"gh *"` agli `excludedCommands` di `.claude/settings.json`, con un commit su un ramo e una pull request.
-- Dopo FON-T03, `pnpm test:int` deve raggiungere il database; dopo FON-T06, `docker compose` deve funzionare. Se un comando che serve ogni giorno non funziona nella sandbox, si aggiunge allo stesso modo agli `excludedCommands`, e lo si scrive in `docs/due-postazioni.md`.
+- `touch .claude/prova-hook`: deve essere **bloccato dall'hook** («i file del metodo … li cambia solo l'utente»).
+- Le prove della sandbox: l'hook le lascia passare, quindi devono **fallire per la sandbox**, con un errore di permesso («Permission denied» o «Read-only file system»). Se anche uno solo dei file cambia, la sandbox non è attiva: fermati.
+  - `cd .claude && python3 -c "open('prova-sandbox','w')"`
+  - `python3 -c "open('CLAU'+'DE.md','a')"`
+  - `python3 -c "open('.gi'+'t/config','a')"`
+  - `python3 -c "import os; open(os.path.expanduser('~/.local/sta'+'te/gestionale-'+'negozi/prova'),'w')"`
+- `git fetch origin` e `gh pr list`: devono **funzionare** dalla sandbox. Se non funzionano, fermati e non aggiungere git o gh agli `excludedCommands`: fuori dalla sandbox git potrebbe riscrivere i file del metodo. Di solito manca il passo `gh auth login --insecure-storage`.
+- `bash .claude/hooks/gabbia.sh --prova`: tutte le righe devono cominciare con «ok». Se una dice «ERRORE», o se la gabbia non parte, fermati (di solito è il profilo AppArmor del passo 1).
+- Dopo FON-T03, `bash .claude/hooks/gabbia.sh test:int` deve raggiungere il database; dopo FON-T06, `docker compose -f infra/compose.dev.yml up -d` deve funzionare. Se un comando che serve ogni giorno non funziona, fermati e chiedi: non si aggiunge nulla agli `excludedCommands` senza averlo ragionato.
+- La conferma per `prod` la vedrai al primo comando verso la produzione, dentro FON-T07a: Claude Code deve chiederti il permesso.
 
 Se una delle risposte è diversa, fermati e non iniziare compiti.
 
 ## 7. Account esterni
 
 - **Stripe:** una sandbox per ogni computer di sviluppo («sviluppo-joo» e «sviluppo-yoo»), più quella del server di test e la produzione. Ognuna ha le sue chiavi (`docs/due-postazioni.md`, «Stripe»).
-- **I segreti** (chiavi Stripe, Cloudflare, S3, password dei server) non passano mai da git, dallo zip o dalla chat: si copiano da un computer all'altro con il gestore di password. I segreti di GitHub (Actions) li scrivi tu.
+- **I segreti** (chiavi Stripe, Cloudflare, S3, password dei server) non passano mai da git, dallo zip o dalla chat: si copiano da un computer all'altro con il gestore di password. I segreti di GitHub (Actions) e i file di ambiente dei server li scrivi tu.
 
 ## 8. Si parte
 
@@ -91,3 +119,5 @@ Se una delle risposte è diversa, fermati e non iniziare compiti.
 - yoo: `INIZIA FON-T07a`
 
 Il metodo completo (fasi e parole chiave) è in `docs/metodo.md`. Le parole chiave (`INIZIA <ID>`, `APPROVO`, `TORNA AI TEST`, `TORNA AL PIANO`, `TORNA AL CODICE`, `CHIUSO`, `ABBANDONA`) vanno scritte da sole sulla prima riga del messaggio.
+
+Per cambiare gli hook, le corsie o le istruzioni: modificali tu, fai un commit su un ramo e apri una pull request. Finché i file sono diversi dal commit corrente, nessuna fase avanza. Dopo l'unione, Claude non può portare i file del metodo nuovi nella sua cartella: quando prova ad allinearsi (o a creare il ramo del compito successivo), l'hook lo ferma e ti indica il comando, che esegui tu nel tuo terminale.

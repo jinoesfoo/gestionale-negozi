@@ -13,5 +13,5 @@ Mostra all'utente lo stato del lavoro, in italiano, in modo breve. Non modificar
 5. Indica il **prossimo compito di questa postazione**: il primo da fare nell'ordine della sua corsia. È **libero** se sono fatti tutti i compiti che lo precedono nella corsia e tutti i suoi prerequisiti; altrimenti è **bloccato**: scrivi quali compiti mancano, di quale postazione sono e se sono già in una pull request aperta.
 6. Elenca le pull request aperte (`gh pr list --state open`): con due postazioni se ne tiene aperta una alla volta fra quelle dei compiti (`docs/due-postazioni.md`, «Il giro di un compito»). Se questa postazione ha un compito in chiusura con la pull request già unita, ricorda all'utente di scrivere `CHIUSO`.
 7. Se il prossimo compito è bloccato, proponi il lavoro d'attesa adatto a questa postazione, dalla sezione «Quando aspetti» di `docs/due-postazioni.md`.
-8. Mostra le ultime 10 righe del registro di questa postazione, `.claude/registro-compiti-<postazione>.log`, se esiste.
+8. Mostra le ultime 10 righe del registro di questa postazione, `registro/compiti-<postazione>.log`, se esiste.
 9. Chiudi con, in grassetto, cosa deve fare l'utente: se c'è un compito aperto, la parola chiave della fase corrente (`CLAUDE.md` sezione 1); se il prossimo compito è libero, `INIZIA <ID>`; se è bloccato, quale pull request va unita prima e di quale postazione.

@@ -13,12 +13,17 @@ fase="$(current_phase)"
 
 say() { echo "[Metodo] $*"; }   # su UserPromptSubmit l'output finisce nel contesto di Claude
 
-# I file del metodo e il registro devono essere quelli del commit: altrimenti nessuna fase cambia
-alterati="$(metodo_modificato | tr '\n' ' ')"
-registro_alterato && alterati="$alterati${LOG_FILE#"$PROJECT_DIR"/} (diverso dalla copia degli hook in $LOG_COPY) "
+# I file del metodo e il registro devono essere quelli del commit: altrimenti nessuna fase cambia.
+# Se la cartella .git non è più quella registrata, git non si usa nemmeno per controllare.
+if git_cambiata; then
+  alterati=".git (la cartella del repository non è quella registrata con imposta-postazione.sh) "
+else
+  alterati="$(metodo_modificato | tr '\n' ' ')"
+  registro_alterato && alterati="$alterati$LOG_REL (diverso dalla copia degli hook in $LOG_COPY) "
+fi
 fermo_se_alterato() {
   [ -z "${alterati// /}" ] && return 0
-  say "I file del metodo sono cambiati rispetto al commit corrente: $alterati. Finché non tornano come prima la fase NON cambia. Li rimette a posto l'utente: per un file tracciato git checkout -- <file>, per il registro la copia degli hook."
+  say "I file del metodo non sono quelli del commit corrente: $alterati. Finché non tornano a posto la fase NON cambia. Li rimette a posto l'utente, nel suo terminale: un file tracciato con git checkout -- <file>; un file nuovo (CLAUDE.local.md, .mcp.json, un CLAUDE.md in una sottocartella) cancellandolo; in .claude/settings.local.json restano solo le approvazioni (permissions con allow, deny e ask), le altre chiavi si tolgono; il registro si ricopia dalla copia degli hook; per la cartella .git, AVVIO.md, passo 4."
   exit 0
 }
 
@@ -75,14 +80,14 @@ case "$upper" in
     fi
     cancella_manifesto_test
     write_state "$id" "piano"
-    say "${avviso}Compito $id iniziato sulla postazione $me. Fase: piano. Prima di tutto, con la cartella di lavoro pulita (a parte il registro di questa postazione): git switch --no-track -c $(echo "$id" | tr '[:upper:]' '[:lower:]') origin/main, poi pnpm install se esiste package.json. Poi leggi costituzione, docs/due-postazioni.md e area del compito, scrivi il piano e fermati per l'approvazione."
+    say "${avviso}Compito $id iniziato sulla postazione $me. Fase: piano. Prima di tutto, senza modifiche ai file tracciati (possono restare il registro di questa postazione e i file nuovi in docs/ dei suoi compiti): git switch --no-track -c $(echo "$id" | tr '[:upper:]' '[:lower:]') origin/main, poi pnpm install se esiste package.json. Se l'hook dice che origin/main cambia i file del metodo, quel comando lo esegue l'utente nel suo terminale. Poi leggi costituzione, docs/due-postazioni.md e area del compito, scrivi il piano e fermati per l'approvazione."
     ;;
   APPROVO)
     case "$fase" in piano|test|codice|revisione) fermo_se_alterato ;; esac
     case "$fase" in codice|revisione)
       cambiati="$(test_cambiati | tr '\n' ' ')"
       if [ -n "${cambiati// /}" ]; then
-        say "I test sono cambiati dopo la fase test: $cambiati. In fase $fase i test non si toccano: la fase NON è cambiata. Se un test va davvero corretto, l'utente scrive TORNA AI TEST; altrimenti va rimesso com'era."
+        say "I test sono cambiati dopo la fase test: $cambiati. In fase $fase i test e la configurazione dei controlli non si toccano: la fase NON è cambiata. Se un test va davvero corretto, l'utente scrive TORNA AI TEST; altrimenti va rimesso com'era."
         exit 0
       fi ;;
     esac

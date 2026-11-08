@@ -4,17 +4,27 @@
       "PowerShell",
       "Monitor",
       "Edit(/.claude/**)",
-      "Edit(/CLAUDE.md)",
+      "Edit(**/CLAUDE.md)",
+      "Edit(**/CLAUDE.local.md)",
+      "Edit(/.mcp.json)",
+      "Edit(/AVVIO.md)",
+      "Edit(/docs/metodo.md)",
+      "Edit(/docs/due-postazioni.md)",
+      "Edit(/.vscode/**)",
       "Edit(~/.claude/settings.json)",
       "Edit(~/.claude/settings.local.json)",
       "Edit(~/.claude/CLAUDE.md)",
+      "Edit(~/.claude/agents/**)",
+      "Edit(~/.claude/commands/**)",
+      "Edit(~/.claude/skills/**)",
+      "Edit(~/.claude/hooks/**)",
+      "Edit(~/.claude.json)",
       "Edit(~/.local/state/gestionale-negozi/**)"
     ],
     "ask": [
       "Bash(ssh *prod*)",
       "Bash(scp *prod:*)",
-      "Bash(rsync *prod:*)",
-      "Bash(sftp *prod*)"
+      "Bash(rsync *prod:*)"
     ]
   },
   "sandbox": {
@@ -33,31 +43,24 @@
       ]
     },
     "filesystem": {
-      "allowWrite": ["~/.local/share/pnpm", "~/.cache", "~/.npm"]
+      "allowWrite": ["~/.local/share/pnpm/store", "~/.cache/pnpm", "~/.local/state/pnpm"],
+      "denyWrite": [
+        "./.claude",
+        "./CLAUDE.md",
+        "./CLAUDE.local.md",
+        "./.mcp.json",
+        "./AVVIO.md",
+        "./docs/metodo.md",
+        "./docs/due-postazioni.md",
+        "~/.local/state/gestionale-negozi"
+      ]
     },
     "excludedCommands": [
       "docker *",
       "ssh *",
       "scp *",
       "rsync *",
-      "sftp *",
-      "pnpm test:int *",
-      "pnpm test:e2e *",
-      "pnpm dev *",
-      "pnpm worker *",
-      "pnpm db:migrate *",
-      "pnpm cli *",
-      "git switch *",
-      "git checkout *",
-      "git merge *",
-      "git stash *",
-      "git pull *",
-      "git restore *",
-      "git reset *",
-      "git cherry-pick *",
-      "git revert *",
-      "git am *",
-      "git apply *"
+      "bash .claude/hooks/gabbia.sh *"
     ]
   },
   "hooks": {
@@ -77,7 +80,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Read",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Read|Grep",
         "hooks": [
           { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/file-guard.sh", "onFailure": "block" }
         ]
