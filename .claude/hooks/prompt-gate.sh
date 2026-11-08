@@ -80,7 +80,7 @@ case "$upper" in
     fi
     cancella_manifesto_test
     write_state "$id" "piano"
-    say "${avviso}Compito $id iniziato sulla postazione $me. Fase: piano. Prima di tutto, senza modifiche ai file tracciati (possono restare il registro di questa postazione e i file nuovi in docs/ dei suoi compiti): git switch --no-track -c $(echo "$id" | tr '[:upper:]' '[:lower:]') origin/main, poi pnpm install se esiste package.json. Se l'hook dice che origin/main cambia i file del metodo, quel comando lo esegue l'utente nel suo terminale. Poi leggi costituzione, docs/due-postazioni.md e area del compito, scrivi il piano e fermati per l'approvazione."
+    say "${avviso}Compito $id iniziato sulla postazione $me. Fase: piano. Prima di tutto, senza altre modifiche nella cartella di lavoro (possono restare il registro di questa postazione e i file di docs/ dei suoi compiti, nuovi o modificati): git switch --no-track -c $(echo "$id" | tr '[:upper:]' '[:lower:]') origin/main, poi pnpm install se esiste package.json. Se l'hook dice che origin/main cambia i file del metodo, quel comando lo esegue l'utente nel suo terminale. Poi leggi costituzione, docs/due-postazioni.md e area del compito, scrivi il piano e fermati per l'approvazione."
     ;;
   APPROVO)
     case "$fase" in piano|test|codice|revisione) fermo_se_alterato ;; esac
@@ -137,6 +137,7 @@ case "$upper" in
         cancella_manifesto_test
         LOG_TASK="$task" write_state "" "nessuno" "nessuno (chiuso)"
         say "${avviso}Compito $task chiuso: è su main. Usa /stato per vedere il prossimo."
+        fermo_attivo && say "Attenzione: il fermo dei rilasci (TEST_DEPLOY_HOLD) è ancora attivo. Chi l'ha attivato lo tolga e rilanci il rilascio di main, altrimenti le unioni non arrivano sul server di test (docs/due-postazioni.md, «Il server di test condiviso»)."
       else
         say "${avviso}CHIUSO si scrive dopo l'unione: la casella di $task non risulta ancora spuntata su main. Unisci la pull request su GitHub quando la CI è verde, poi scrivi di nuovo CHIUSO. Se la CI è rossa, scrivi TORNA AL CODICE. La fase NON è cambiata."
       fi
@@ -148,7 +149,8 @@ case "$upper" in
     if [ -n "$task" ]; then
       cancella_manifesto_test
       LOG_TASK="$task" write_state "" "nessuno" "nessuno (abbandonato)"
-      say "Compito $task abbandonato. Le modifiche restano nella cartella di lavoro, senza commit: decidi tu se tenerle. Finché il compito non è su main, i compiti che lo seguono restano bloccati."
+      say "Compito $task abbandonato. Le modifiche restano nella cartella di lavoro: decidi tu se tenerle. Finché il compito non è su main, i compiti che lo seguono restano bloccati."
+      fermo_attivo && say "Attenzione: il fermo dei rilasci (TEST_DEPLOY_HOLD) è attivo: se l'aveva attivato questo compito, va tolto e il rilascio di main va rilanciato."
     fi
     ;;
   APPROVO*|CHIUSO*|ABBANDONA*|"TORNA AI TEST"*|"TORNA AL PIANO"*|"TORNA AL CODICE"*)

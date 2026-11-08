@@ -113,6 +113,10 @@ compiti_prima() { # $1 ID -> compiti della stessa postazione che lo precedono
     END { if (me) for (i = 1; i < me; i++) if (lane[i] == lane[me]) print ids[i] }'
 }
 aggiorna_main() { GIT_TERMINAL_PROMPT=0 timeout 30 git -C "$PROJECT_DIR" fetch -q origin main >/dev/null 2>&1; }
+fermo_attivo() { # vero se il fermo dei rilasci (variabile del repository TEST_DEPLOY_HOLD, da FON-T08) vale 1; senza gh o rete, falso
+  command -v gh >/dev/null 2>&1 || return 1
+  [ "$(cd "$PROJECT_DIR" 2>/dev/null && GH_PROMPT_DISABLED=1 timeout 15 gh variable get TEST_DEPLOY_HOLD 2>/dev/null)" = 1 ]
+}
 ha_origin_main() { git -C "$PROJECT_DIR" rev-parse -q --verify origin/main >/dev/null 2>&1; }
 sul_main() { # $1 ID -> vero se la sua casella è spuntata nelle specifiche di origin/main (pull request unita)
   git -C "$PROJECT_DIR" grep -q -i -F -e "- [x] **$1**" origin/main -- specs >/dev/null 2>&1

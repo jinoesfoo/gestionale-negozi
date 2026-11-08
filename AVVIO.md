@@ -101,6 +101,7 @@ Gli hook sono stati collaudati in una simulazione, e la sandbox esiste solo su L
   - `python3 -c "open('CLAU'+'DE.md','a')"`
   - `python3 -c "open('.gi'+'t/config','a')"`
   - `python3 -c "import os; open(os.path.expanduser('~/.local/sta'+'te/gestionale-'+'negozi/prova'),'w')"`
+- I segreti. Crea tu, nel tuo terminale, un file di prova: `echo SEGRETO_DI_PROVA=1 > .env.test`. Poi chiedi a Claude `grep -r SEGRETO_DI_PROVA .` e `python3 -c "print(open('.en'+'v.test').read())"`: nessuno dei due deve mostrare la riga (permesso negato). Poi cancella tu il file: `rm .env.test`.
 - `git fetch origin` e `gh pr list`: devono **funzionare** dalla sandbox. Se non funzionano, fermati e non aggiungere git o gh agli `excludedCommands`: fuori dalla sandbox git potrebbe riscrivere i file del metodo. Di solito manca il passo `gh auth login --insecure-storage`.
 - `bash .claude/hooks/gabbia.sh --prova`: tutte le righe devono cominciare con «ok». Se una dice «ERRORE», o se la gabbia non parte, fermati (di solito è il profilo AppArmor del passo 1).
 - Dopo FON-T03, `bash .claude/hooks/gabbia.sh test:int` deve raggiungere il database; dopo FON-T06, `docker compose -f infra/compose.dev.yml up -d` deve funzionare. Se un comando che serve ogni giorno non funziona, fermati e chiedi: non si aggiunge nulla agli `excludedCommands` senza averlo ragionato.
@@ -114,6 +115,8 @@ Se una delle risposte è diversa, fermati e non iniziare compiti.
 - **I segreti** (chiavi Stripe, Cloudflare, S3, password dei server) non passano mai da git, dallo zip o dalla chat: si copiano da un computer all'altro con il gestore di password. I segreti di GitHub (Actions) e i file di ambiente dei server li scrivi tu.
 
 ## 8. Si parte
+
+Prima del primo compito, nella parte sul collegamento a GitHub: la protezione di `main` (nessuna spinta diretta, pull request obbligatoria con la CI verde) e un'identità per Claude che non può unire le pull request. Senza, un programma scritto apposta potrebbe spingere su `main` con le tue credenziali (`docs/due-postazioni.md`, «Limiti»).
 
 - joo: `INIZIA FON-T01`
 - yoo: `INIZIA FON-T07a`

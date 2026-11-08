@@ -120,11 +120,8 @@ analizza_git() { # $1 indice di "git" in argv
   ha() { local x; for x in "${r[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
   case "$sub" in
     push) git_push ;;
-    commit)
-      if [ "$fase" != chiusura ]; then
-        { [ -f "$PROJECT_DIR_SLASH/.git/MERGE_HEAD" ] && { [ "$fase" = codice ] || [ "$fase" = revisione ]; }; } || \
-          block "i commit si fanno in fase chiusura (fase attuale: $fase), con /chiudi-compito. In fase codice e revisione solo per concludere un'unione con main già avviata."
-      fi
+    commit)   # dalla fase codice: servono all'avvio a mano sul server di test e ai rami prova-*; la pull request solo in chiusura
+      case "$fase" in codice|revisione|chiusura) ;; *) block "i commit si fanno dalla fase codice in poi (fase attuale: $fase)." ;; esac
       controlla_commit ;;
     merge) git_merge ;;
     pull) block "git pull non si usa nel metodo: git fetch origin, poi git merge --ff-only origin/main (oppure --no-edit, se il ramo ha già commit)." ;;
@@ -315,7 +312,11 @@ analizza_gh() { # $1 indice di "gh" in argv
   done
   for a in "${p[@]}"; do [[ "$a" == -* ]] || w+=("$a"); done
   case "${w[0]:-}" in
-    pr) for a in "${w[@]:1}"; do [ "$a" = merge ] && block "le pull request le unisce l'utente, su GitHub, dopo aver guardato la CI."; done ;;
+    pr) for a in "${w[@]:1}"; do [ "$a" = merge ] && block "le pull request le unisce l'utente, su GitHub, dopo aver guardato la CI."; done
+        if [ "${w[1]:-}" = create ] && [ "$fase" != chiusura ]; then   # una pull request di compito alla volta: la apre /chiudi-compito
+          [[ "$(git -C "$PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)" == prova-* ]] || \
+            block "la pull request di un compito si apre in fase chiusura, con /chiudi-compito (fase attuale: $fase). Fuori dalla chiusura solo da un ramo prova-*."
+        fi ;;
     api)
       for k in "${!p[@]}"; do
         a="${p[$k]}"
@@ -395,6 +396,7 @@ analizza_ssh() { # $1 indice, $2 programma. ssh, scp e rsync girano fuori dalla 
   if [ "$prog" = ssh ]; then
     [ "${#pos[@]}" -gt 0 ] && host_ok "${pos[0]}"
     [ "${#pos[@]}" -gt 1 ] && segreti_remoti "${pos[*]:1}"
+    [ -n "$qui_testo" ] && segreti_remoti "$qui_testo"     # ssh test <<< '…': anche quello gira sul server
     return 0
   fi
   local k
@@ -512,7 +514,7 @@ analizza_scritture() { # $1 indice, $2 programma
       -*)
         case "$prog" in
           sed) case "$a" in -e|--expression|-f|--file) script_dato=1; j=$((j+1)) ;; --expression=*|--file=*) script_dato=1 ;; -l|--line-length) j=$((j+1)) ;; --in-place*) inplace=1 ;; --*) ;; *i*) inplace=1 ;; esac ;;
-          perl|ruby) case "$a" in --*) ;; *i*) inplace=1 ;; esac; case "$a" in -e|-E|-[a-zA-Z]*e|-[a-zA-Z]*E) script_dato=1; j=$((j+1)) ;; esac ;;
+          perl|ruby) case "$a" in --*) ;; *i*) inplace=1 ;; esac; case "$a" in -e|-E|-[a-zA-Z]*e|-[a-zA-Z]*E) script_dato=1; codice_in_linea "${argv[$((j+1))]:-}"; j=$((j+1)) ;; esac ;;
           cp|mv|ln|install) case "$a" in -t|--target-directory) dest="${argv[$((j+1))]:-}"; dsg="${segni[$((j+1))]}"; j=$((j+1)) ;; --target-directory=*) dest="${a#*=}" ;; -S|--suffix|-m|--mode|-o|--owner|-g|--group) j=$((j+1)) ;; esac ;;
           truncate) case "$a" in -s|--size|-r|--reference) j=$((j+1)) ;; esac ;;
           curl) case "$a" in -o|--output) scrive "${argv[$((j+1))]:-}" "${segni[$((j+1))]}"; j=$((j+1)) ;; -O|--remote-name|-J|--remote-header-name) scrive "." "" ;;
@@ -538,9 +540,15 @@ analizza_scritture() { # $1 indice, $2 programma
   esac
   return 0
 }
-codice_in_linea() { # codice passato a python -c, node -e e simili: non deve nominare i file del metodo
+codice_in_linea() { # codice passato a python -c, node -e e simili, o in un heredoc: niente file del metodo, segreti, git e server
+  local senza_esempi
   echo "$1" | grep -Eqi '\.claude|CLAUDE(\.local)?\.md|AVVIO\.md|metodo\.md|due-postazioni|compito-corrente|registro/|postazione|corsie\.txt|gestionale-negozi/|\.local/state|\.git/' && \
     block "un programma in linea che nomina i file del metodo non è permesso."
+  senza_esempi="$(printf '%s' "$1" | sed -E 's/[A-Za-z0-9._/-]*\.example[A-Za-z0-9._-]*//g')"
+  printf '%s' "$senza_esempi" | grep -Eqi '\.env|/env/' && \
+    block "un programma in linea che nomina un file di ambiente non è permesso: i segreti non si leggono. Usa i file *.example."
+  printf '%s' "$1" | grep -Eq '(^|[^A-Za-z0-9_.-])(git|gh|ssh|scp|rsync|sftp|docker|curl|wget|sudo)([^A-Za-z0-9_.-]|$)' && \
+    block "un programma in linea che lancia git, gh, ssh, docker, curl o wget non si controlla: esegui quel comando per intero, da solo."
   return 0
 }
 analizza_find() { # $1 indice: find con -delete o -exec di un comando che scrive scrive nelle cartelle di partenza
@@ -570,13 +578,24 @@ cambia_cartella() { # $1 indice di cd o pushd
   CWD="$(risolvi "${argv[$j]}")"
   return 0
 }
-GABBIA_OK='^(test:int|test:e2e|dev|worker|db:migrate|cli|--prova)$'
+legge_stdin() { # $1 indice di una shell o di un interprete: vero se non ha né uno script né il codice in un argomento
+  local j
+  for ((j=$1+1; j<n; j++)); do
+    case "${argv[$j]}" in
+      -s|-) return 0 ;;
+      -*) continue ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+GABBIA_OK='^(test|test:int|test:e2e|dev|worker|db:migrate|cli|--prova)$'
 gabbia_comando() { # bash .claude/hooks/gabbia.sh <comando>: esce dalla sandbox, quindi la forma è una sola
   local i="$1"
   { [ "$i" = 0 ] && [ "$LIVELLO" = 1 ]; } || block "la gabbia va lanciata da sola: bash .claude/hooks/gabbia.sh <comando>, senza niente davanti e non dentro altri comandi."
   { [ "${argv[$i]}" = bash ] && [ "${argv[$((i+1))]}" = .claude/hooks/gabbia.sh ]; } || block "la gabbia si lancia esattamente così: bash .claude/hooks/gabbia.sh <comando>."
   [[ "$CWD" == "$PROJECT_DIR_SLASH" ]] || block "la gabbia si lancia dalla cartella del progetto."
-  [[ "${argv[$((i+2))]:-}" =~ $GABBIA_OK ]] || block "nella gabbia girano solo test:int, test:e2e, dev, worker, db:migrate e cli (e --prova)."
+  [[ "${argv[$((i+2))]:-}" =~ $GABBIA_OK ]] || block "nella gabbia girano solo test, test:int, test:e2e, dev, worker, db:migrate e cli (e --prova)."
   ESCLUSO="la gabbia"
 }
 comandi_pnpm() { # i comandi che usano il database, il server di sviluppo o il browser girano nella gabbia
@@ -652,7 +671,19 @@ analizza_da() { # $1 indice del nome del comando in argv
           salva="$CWD"; analizza_testo "${argv[$((j+1))]}"; CWD="$salva"; return 0
         fi
       done
+      if legge_stdin "$i"; then   # i comandi arrivano da stdin: da un heredoc (il record H) o da una stringa, altrimenti no
+        [ "$hd_qui" = 1 ] && return 0
+        [ -n "$qui_testo" ] && { salva="$CWD"; analizza_testo "$qui_testo"; CWD="$salva"; return 0; }
+        block "una shell che legge i comandi da stdin (da una pipe o da un file con <) non si controlla: scrivi i comandi per intero, o esegui lo script per nome (bash <file>)."
+      fi
       return 0 ;;
+    python|python3|node|deno|bun|perl|ruby|php)
+      if legge_stdin "$i"; then   # il codice arriva da stdin: da un heredoc (lo controlla codice_in_linea, record H) o da una stringa
+        if [ "$hd_qui" != 1 ]; then
+          [ -n "$qui_testo" ] || block "un interprete che legge il codice da stdin (da una pipe o da un file con <) non si controlla: esegui lo script per nome."
+          codice_in_linea "$qui_testo"
+        fi
+      fi ;;
     xargs|parallel)
       for ((j=i+1; j<n; j++)); do
         case "${argv[$j]##*/}" in rm|rmdir|unlink|mv|cp|ln|install|tee|truncate|touch|chmod|chown|chgrp|sed|perl|dd|shred|git|gh|ssh|scp|rsync|docker|bash|sh)
@@ -686,17 +717,23 @@ analizza_comando() { # usa argv, segni, redir, rsegni, ncmd del chiamante
 }
 analizza_testo() { # $1 testo con uno o più comandi
   local -a argv=() segni=() redir=() rsegni=()
-  local riga tipo s v attesa="" ncmd=0 ops="" dyn=0 hd_libero=0 ultimo=""
+  local riga tipo s v attesa="" ncmd=0 ops="" dyn=0 hd_libero=0 ultimo="" hd_qui=0 qui_testo="" salva_h
   LIVELLO=$((LIVELLO+1))
   while IFS= read -r riga; do
     tipo="${riga%%$'\t'*}"; v="${riga#*$'\t'}"
     case "$tipo" in
       S) dyn=1; analizza_testo "${v//$'\001'/$'\n'}"; continue ;;                  # una sostituzione è un comando anche lei
-      H) [ "$ultimo" = ssh ] && segreti_remoti "${v//$'\001'/$'\n'}"; continue ;;  # il testo che ssh manda al server
+      H) v="${v//$'\001'/$'\n'}"                                                   # il testo di un heredoc, secondo chi lo legge
+         case "$ultimo" in
+           ssh) segreti_remoti "$v" ;;
+           bash|sh|zsh|dash|ksh) salva_h="$CWD"; analizza_testo "$v"; CWD="$salva_h" ;;
+           python|python3|node|deno|bun|perl|ruby|php) codice_in_linea "$v" ;;
+         esac
+         continue ;;
       O)
         case "$v" in
           '>'|'>>'|'>|'|'<'|'<<'|'<<<'|'>&'|'<&'|'>>&') attesa="$v" ;;
-          *) ops="$ops$v"; analizza_comando; argv=(); segni=(); redir=(); rsegni=() ;;
+          *) ops="$ops$v"; analizza_comando; argv=(); segni=(); redir=(); rsegni=(); hd_qui=0; qui_testo="" ;;
         esac
         continue ;;
     esac
@@ -706,7 +743,8 @@ analizza_testo() { # $1 testo con uno o più comandi
       case "$attesa" in
         '>'|'>>'|'>|') redir+=("$v"); rsegni+=("$s") ;;
         '>&'|'>>&') [[ "$v" =~ ^([0-9]+|-)$ ]] || { redir+=("$v"); rsegni+=("$s"); } ;;
-        '<<') [[ "$s" == *q* ]] || hd_libero=1 ;;   # senza apici la shell espande il testo dell'heredoc
+        '<<') [[ "$s" == *q* ]] || hd_libero=1; hd_qui=1 ;;   # senza apici la shell espande il testo dell'heredoc
+        '<<<') qui_testo="$v" ;;
       esac
       attesa=""; continue
     fi
