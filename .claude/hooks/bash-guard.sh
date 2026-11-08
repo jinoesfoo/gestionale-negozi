@@ -359,6 +359,17 @@ rsync_lunga() { # opzioni lunghe di rsync ammesse
   esac
   return 1
 }
+credenziali_server() { # $1 percorso sul server, $2 come l'ha scritto Claude, $3 "copia" se è la sorgente di una copia
+  # chiavi private e token; authorized_keys e known_hosts (chiavi pubbliche) restano liberi: FON-T07a e OPS-T01b li scrivono
+  case "$1" in
+    *.ssh/id_*|*.ssh/*_key|*.ssh/*.pem|*.docker/config.json|*.config/gh/*|*.gnupg/*|*.git-credentials|*.netrc|*.pgpass)
+      block "il comando arriverebbe alle credenziali dell'utente del server ('$2'): chiavi private e token non si leggono né si copiano." ;;
+  esac
+  if [ "${3:-}" = copia ]; then   # copiare la cartella intera porterebbe con sé le chiavi private
+    case "$1" in *.ssh|*.docker|*.config|*.config/gh|*.gnupg) block "la copia comprenderebbe le credenziali dell'utente del server ('$2'): copia solo i file che servono." ;; esac
+  fi
+  return 0
+}
 segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segreti (file di ambiente, variabili dei processi)
   local riga w s prec=""
   printf '%s' "$1" | grep -Eq 'printenv|/environ|process\.env|os\.environ|getenv|ENV\[' && \
@@ -370,9 +381,10 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
     [[ "$s" == *g* || "$s" == *b* ]] && block "nel comando sul server niente caratteri jolly fuori dagli apici ('$w'): potrebbero arrivare ai file di ambiente. Scrivi i nomi per intero."
     case "$w" in
       env) block "il comando sul server stamperebbe le variabili d'ambiente ('env'), che contengono i segreti: non si usa." ;;
-      inspect) case "$prec" in image|manifest) ;; *) block "docker inspect sul server mostrerebbe le variabili d'ambiente dei container, che contengono i segreti: non si usa." ;; esac ;;
+      inspect) case "$prec" in image|manifest|volume|network|buildx|builder|context|plugin) ;; *) block "docker inspect di un container sul server mostrerebbe le sue variabili d'ambiente, che contengono i segreti: non si usa (per lo stato: dc ps, dc logs)." ;; esac ;;
       /srv/app/env|/srv/app/env/*) block "il comando sul server tocca la cartella dei file di ambiente ('$w'): quei file li legge e li scrive solo l'utente." ;;
     esac
+    credenziali_server "$w" "$w"
     prec="$w"
     [[ "$w" == *.example* ]] && continue
     [[ "$w" == *.env* || "$w" == */env/* || "$w" == env/* ]] && is_secret_file "$w" && \
@@ -416,7 +428,9 @@ analizza_ssh() { # $1 indice, $2 programma. ssh, scp e rsync girano fuori dalla 
     host_ok "${a%%:*}"
     [ "${#pos[@]}" -ge 2 ] && [ "$k" -eq "$ultimo_k" ] && continue   # la destinazione sul server: lì non si legge nulla
     p="${a#*:}"; p="${p%/}"                                       # una sorgente sul server: non deve portare con sé i segreti
-    [ -z "$p" ] && block "copiare tutta la cartella dell'utente del server ('$a') prenderebbe anche le sue credenziali: copia solo i file che servono."
+    { [ -z "$p" ] || [ "$p" = "~" ] || [ "$p" = "." ] || [ "$p" = /root ] || [[ "$p" =~ ^/home/[^/]+$ ]]; } && \
+      block "copiare tutta la cartella dell'utente del server ('$a') prenderebbe anche le sue credenziali: copia solo i file che servono."
+    credenziali_server "$p" "$a" copia
     [[ "$p" == *[*?[]* ]] && block "nei percorsi del server niente caratteri jolly ('$a'): scrivi i nomi per intero."
     [[ "$p" == / || "/srv/app/env" == "$p" || "/srv/app/env" == "$p"/* ]] && \
       block "la copia comprenderebbe la cartella dei file di ambiente del server ('$a'): quei file li gestisce solo l'utente. Copia solo le cartelle che servono."

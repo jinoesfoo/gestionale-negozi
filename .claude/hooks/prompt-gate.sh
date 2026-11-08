@@ -137,7 +137,7 @@ case "$upper" in
         cancella_manifesto_test
         LOG_TASK="$task" write_state "" "nessuno" "nessuno (chiuso)"
         say "${avviso}Compito $task chiuso: è su main. Usa /stato per vedere il prossimo."
-        fermo_attivo && say "Attenzione: il fermo dei rilasci (TEST_DEPLOY_HOLD) è ancora attivo. Chi l'ha attivato lo tolga e rilanci il rilascio di main, altrimenti le unioni non arrivano sul server di test (docs/due-postazioni.md, «Il server di test condiviso»)."
+        fermo_attivo && say "Attenzione: il fermo dei rilasci (TEST_DEPLOY_HOLD) è ancora attivo. Se l'aveva attivato questo compito, va tolto e il rilascio di main va rilanciato; altrimenti lo toglie l'utente dal sito di GitHub. Finché resta, le unioni non arrivano sul server di test (docs/due-postazioni.md, «Il server di test condiviso»)."
       else
         say "${avviso}CHIUSO si scrive dopo l'unione: la casella di $task non risulta ancora spuntata su main. Unisci la pull request su GitHub quando la CI è verde, poi scrivi di nuovo CHIUSO. Se la CI è rossa, scrivi TORNA AL CODICE. La fase NON è cambiata."
       fi

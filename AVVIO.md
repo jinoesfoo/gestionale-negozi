@@ -119,7 +119,13 @@ Se una delle risposte è diversa, fermati e non iniziare compiti.
 Prima del primo compito, nella parte sul collegamento a GitHub:
 - la protezione di `main`: nessuna spinta diretta, pull request obbligatoria. La CI verde come controllo obbligatorio si aggiunge dopo l'unione di FON-T01, che crea il primo `ci.yml`: prima non c'è nessuna CI, e le pull request di FON-T07a, DOM-T01 e OPS-T03 non si potrebbero unire;
 - un'identità per Claude che non può unire le pull request. Senza, un programma scritto apposta potrebbe spingere su `main` con le tue credenziali (`docs/due-postazioni.md`, «Limiti»);
-- prima del primo rilascio `v*` (FON-T08), l'ambiente `production` di GitHub con l'approvazione obbligatoria, che crei tu: se manca, GitHub lo crea da solo al primo rilascio, senza approvazione.
+- prima del primo rilascio `v*` (FON-T08), l'ambiente `production` di GitHub con l'approvazione obbligatoria, che crei tu: se manca, GitHub lo crea da solo al primo rilascio, senza approvazione;
+- **il piano di GitHub, da decidere qui.** Dalla documentazione di GitHub (verificata l'8/11/2026): su un repository privato la protezione dei rami e gli ambienti chiedono un piano a pagamento (GitHub Pro per un account personale, o Team per un'organizzazione); l'approvazione obbligatoria di un ambiente, che FON-007 usa per `production`, su un repository privato c'è solo con GitHub Enterprise. Le strade sono tre:
+  - (a) un repository pubblico: tutto senza costi, ma il codice lo vede chiunque (i segreti no, non stanno nel repository);
+  - (b) GitHub Enterprise: tutto sul repository privato, con il costo del piano;
+  - (c) Pro o Team, con un'altra approvazione per la produzione (per esempio un rilascio in produzione che lanci tu a mano): va cambiata la specifica di FON-007 e di FON-T08.
+
+  Senza una di queste, FON-T08 non può provare FON-007. I prezzi si controllano sul sito di GitHub.
 
 - joo: `INIZIA FON-T01`
 - yoo: `INIZIA FON-T07a`

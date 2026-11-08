@@ -38,7 +38,7 @@ Gli hook fermano Claude, con un messaggio che spiega perché, quando prova a:
 - fare commit prima della fase codice, aprire la pull request fuori dalla chiusura, spingere su `main`, usare `--force` o `--no-verify`, `git reset --hard`, unire pull request;
 - cambiare da solo la fase o modificare il metodo.
 
-Su GitHub, però, gli hook fermano solo i comandi scritti per intero: un programma scritto apposta potrebbe usare le tue credenziali. La difesa vera di `main` è la sua protezione su GitHub (nessuna spinta diretta, pull request obbligatoria con la CI verde) e un'identità per Claude che non può unire: si impostano nella parte sul collegamento a GitHub, prima di iniziare i compiti.
+Su GitHub, però, gli hook fermano solo i comandi scritti per intero: un programma scritto apposta potrebbe usare le tue credenziali. La difesa vera di `main` è la sua protezione su GitHub (nessuna spinta diretta, pull request obbligatoria; la CI verde obbligatoria dopo FON-T01) e un'identità per Claude che non può unire: si impostano nella parte sul collegamento a GitHub, prima di iniziare i compiti (`AVVIO.md`, §8).
 
 Gli hook leggono il testo dei comandi, e un testo si può scrivere in mille modi: per questo dietro ci sono altre difese, che non dipendono da come è scritto il comando. La sandbox di Claude Code (su Linux) non lascia scrivere nei file del metodo, nella cartella di stato e fuori dal progetto; il codice del progetto che deve girare fuori dalla sandbox gira in una gabbia con le stesse pareti; gli hook tengono l'impronta dei test e confrontano i file del metodo con il commit a ogni parola chiave. I dettagli sono in `docs/due-postazioni.md`, «Protezione del metodo».
 
