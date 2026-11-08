@@ -49,12 +49,23 @@ echo "$cmd" | grep -Eq "${S}gh[[:space:]]+secret[[:space:]]+(set|delete|remove)"
 # Commit solo in fase chiusura, e solo con il lavoro del compito corrente
 if echo "$cmd" | grep -Eq "${G}(commit|cherry-pick|revert|am)([[:space:]]|$)"; then
   [ "$fase" = "chiusura" ] || block "i commit si fanno in fase chiusura (fase attuale: $fase), con /chiudi-compito."
+  # Una modifica identica a quella già su origin/main (per esempio arrivata con git merge origin/main) va bene
   me="$(postazione)"
   cambiati="$(git -C "$PROJECT_DIR" status --porcelain --untracked-files=all 2>/dev/null | cut -c4-)"
-  vietati="$(printf '%s\n' "$cambiati" | grep -E '^\.claude/(hooks/|settings\.json|registro-compiti)' | grep -v -x -F ".claude/registro-compiti-$me.log")"
-  [ -n "$vietati" ] && block "il commit porterebbe modifiche a file che cambia solo l'utente: $(echo $vietati). Non vanno nel commit: chiedi all'utente."
-  altre="$(git -C "$PROJECT_DIR" diff HEAD -U0 -- specs 2>/dev/null | grep -oiE '^\+- \[x\] \*\*[A-Z]{3}-T[0-9]{2}[AB]?\*\*' | sed -E 's/.*\*\*(.*)\*\*/\1/' | grep -v -i -x -F "${task:-—}")"
-  [ -n "$altre" ] && block "il commit spunterebbe compiti diversi da $task: $(echo $altre). Si spunta solo la casella del compito corrente."
+  uguale_a_main() { # $1: il file esiste su origin/main con lo stesso contenuto (un file nuovo non c'è: non è uguale)
+    (cd "$PROJECT_DIR" 2>/dev/null && MSYS_NO_PATHCONV=1 git cat-file -e "origin/main:$1" 2>/dev/null && git diff --quiet origin/main -- "$1" 2>/dev/null)
+  }
+  vietati=""
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    uguale_a_main "$f" || vietati="$vietati $f"
+  done < <(printf '%s\n' "$cambiati" | grep -E '^\.claude/(hooks/|settings\.json|registro-compiti)' | grep -v -x -F ".claude/registro-compiti-$me.log")
+  [ -n "$vietati" ] && block "il commit porterebbe modifiche a file che cambia solo l'utente:$vietati. Non vanno nel commit: chiedi all'utente."
+  altre=""
+  for id in $(git -C "$PROJECT_DIR" diff HEAD -U0 -- specs 2>/dev/null | grep -oiE '^\+- \[x\] \*\*[A-Z]{3}-T[0-9]{2}[AB]?\*\*' | sed -E 's/.*\*\*(.*)\*\*/\1/' | grep -v -i -x -F "${task:-—}"); do
+    sul_main "$id" || altre="$altre $id"
+  done
+  [ -n "$altre" ] && block "il commit spunterebbe compiti diversi da $task:$altre. Si spunta solo la casella del compito corrente."
 fi
 if echo "$cmd" | grep -Eq "${G}merge([[:space:]]|$)" && ! echo "$cmd" | grep -Eq -- '--ff-only|--abort'; then
   [ "$fase" = "chiusura" ] || block "un git merge che crea un commit si fa solo in chiusura; per allinearsi a main prima si usa git merge --ff-only origin/main."
