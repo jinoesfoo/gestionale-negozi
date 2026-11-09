@@ -150,7 +150,7 @@ case "$upper" in
         say "${avviso}Compito $task chiuso: è su main. Usa /stato per vedere il prossimo."
         avviso_fermo
       else
-        say "${avviso}CHIUSO si scrive dopo l'unione: la casella di $task non risulta ancora spuntata su main. Unisci la pull request su GitHub quando la CI è verde, poi scrivi di nuovo CHIUSO. Se la CI è rossa, scrivi TORNA AL CODICE. La fase NON è cambiata."
+        say "${avviso}CHIUSO si scrive dopo l'unione: la casella di $task non risulta ancora spuntata su main. Unisci la pull request su GitHub quando la CI è verde, poi scrivi di nuovo CHIUSO. Se la CI è rossa, scrivi TORNA AL CODICE; se è rosso solo pnpm audit, per una vulnerabilità estranea al compito, vale invece docs/due-postazioni.md, «Pull request automatiche delle dipendenze». La fase NON è cambiata."
       fi
     else
       say "CHIUSO vale solo in fase chiusura (fase attuale: $fase)."

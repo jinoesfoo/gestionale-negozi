@@ -375,12 +375,18 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
   local riga w s prec="" pezzo
   local re_dc="^(dc|compose|docker-compose)[[:space:]'\"]" re_cfg="(^|[[:space:]'\"])(config|convert)([[:space:]'\"<>]|\$)"
   local re_ok="(^|[[:space:]'\"])(--no-env-resolution|-q|--quiet|--services|--images|--volumes|--networks|--profiles)([[:space:]'\"<>]|\$)"
+  local re_env="(^|[[:space:]'\"])env([[:space:]'\"<>]|\$)" re_insp="(^|[[:space:]'\"])inspect([[:space:]'\"<>]|\$)"
+  local re_insp_ok="(image|manifest|volume|network|buildx|builder|context|plugin)[[:space:]'\"]+inspect([[:space:]'\"<>]|\$)"
   printf '%s' "$1" | grep -Eq 'printenv|/environ|process\.env|os\.environ|getenv|ENV\[' && \
     block "il comando sul server stamperebbe le variabili d'ambiente, che contengono i segreti: non si usa."
-  # docker compose config (anche /srv/app/dc config) scrive nell'uscita i valori dei file di ambiente dei servizi.
-  # Il testo si divide ai separatori e a ogni dc/compose, anche dentro sh -c '…': ogni pezzo con config ha bisogno
-  # di un'opzione che non li legge (--no-env-resolution) o che non stampa la configurazione (-q, --services, …)
+  # Il testo si divide ai separatori e a ogni dc/compose, anche dentro sh -c '…', dove le parole tra apici
+  # restano unite: in ogni pezzo niente env e niente docker inspect di un container; docker compose config
+  # (anche /srv/app/dc config), che scrive i valori dei file di ambiente, ha bisogno di un'opzione che non li
+  # legge (--no-env-resolution) o che non stampa la configurazione (-q, --services, …)
   while IFS= read -r pezzo; do
+    [[ "$pezzo" =~ $re_env ]] && block "il comando sul server stamperebbe le variabili d'ambiente ('env'), che contengono i segreti: non si usa, nemmeno dentro sh -c."
+    [[ "$pezzo" =~ $re_insp ]] && ! [[ "$pezzo" =~ $re_insp_ok ]] && \
+      block "docker inspect di un container sul server mostrerebbe le sue variabili d'ambiente, che contengono i segreti: non si usa, nemmeno dentro sh -c (per lo stato: dc ps, dc logs)."
     [[ "$pezzo" =~ $re_dc ]] && [[ "$pezzo" =~ $re_cfg ]] || continue
     [[ "$pezzo" =~ $re_ok ]] || block "docker compose config sul server (anche /srv/app/dc config) scrive nell'uscita i valori dei file di ambiente dei servizi, cioè i segreti: aggiungi --no-env-resolution (oppure usa -q, --services, --images, --volumes)."
   done < <(printf '%s\n' "$1" | tr ';|&()' '\n\n\n\n\n' | sed -E "s#(^|[[:space:]/'\"(])(dc|compose|docker-compose)([[:space:]'\"])#\1\n\2\3#g")
