@@ -58,7 +58,7 @@ All'inizio di FON-T07a, finché l'utente `deploy` non esiste, al posto di `deplo
 
 ## 2. Il repository su GitHub, una volta sola, da joo
 
-Prima servono due cose dal sito di GitHub, con il tuo account: l'account di Claude e il repository vuoto `gestionale-negozi`, con l'account di Claude fra i collaboratori (§8, passi 2 e 3). Lo zip contiene `gestionale-negozi.bundle`, il repository con la sua storia. Da joo, con `gh` già collegato all'account di Claude (§1), nella cartella in cui hai estratto lo zip:
+Prima servono due cose dal sito di GitHub, con il tuo account: l'account di Claude e il repository vuoto `gestionale-negozi`, con l'account di Claude fra i collaboratori (§8, passi 2 e 3). Lo zip contiene `gestionale-negozi.bundle`, il repository con la sua storia. Da joo, nel tuo terminale e non da Claude (l'hook gli rifiuta `git remote` e ogni spinta su `main`), con `gh` già collegato all'account di Claude (§1), nella cartella in cui hai estratto lo zip:
 
 ```bash
 git clone -b main gestionale-negozi.bundle ~/gestionale-negozi
@@ -97,6 +97,7 @@ I comandi che girano fuori dalla sandbox (Docker, `ssh`, `scp`, `rsync` e la gab
 
 Gli hook sono stati collaudati in una simulazione, e la sandbox esiste solo su Linux: questa prova verifica tutto su Ubuntu. Chiedi a Claude di eseguire i comandi, uno alla volta, e confronta la risposta.
 
+- Scrivi `/model`: deve dire Opus 5.5 (`claude-opus-5-5`), il modello fissato dal kit. Se Claude Code non riconosce quel nome, fermati: il nome va corretto in `.claude/settings.json`.
 - Su joo scrivi `INIZIA FON-T07a`: deve essere **rifiutato** («è della postazione yoo»).
 - Su yoo scrivi `INIZIA FON-T01`: deve essere **rifiutato** («è della postazione joo»).
 - In nessuna delle due risposte deve comparire «git fetch non è riuscito»: se compare, l'accesso a GitHub dal terminale non funziona (passo 1, `gh auth setup-git`).
@@ -117,7 +118,7 @@ Se una delle risposte è diversa, fermati e non iniziare compiti.
 
 ## 7. Account esterni
 
-- **Stripe:** una sandbox per ogni computer di sviluppo («sviluppo-joo» e «sviluppo-yoo»), più quella del server di test e la produzione. Ognuna ha le sue chiavi (`docs/due-postazioni.md`, «Stripe»).
+- **Stripe:** una sandbox per ogni computer di sviluppo («sviluppo-joo» e «sviluppo-yoo»), più quella del server di test e la produzione. Ognuna ha le sue chiavi (`docs/due-postazioni.md`, «Stripe»). Quelle dei due server servono già a FON-T07b, che scrive nei server una chiave `sk_test_` vera; quelle di sviluppo a BIL-T01 (yoo) e a BIL-T02 (joo).
 - **I segreti** (chiavi Stripe, Cloudflare, S3, password dei server) non passano mai da git, dallo zip o dalla chat: si copiano da un computer all'altro con il gestore di password. I segreti di GitHub (Actions) e i file di ambiente dei server li scrivi tu.
 
 ## 8. Il collegamento a GitHub, passo per passo
@@ -136,7 +137,7 @@ Tutto dal sito di GitHub, con il tuo account, prima del primo compito. Le due po
    - nome `main`, Enforcement status «Active»;
    - Bypass list → «Add bypass» → il ruolo «Repository admin», cioè tu;
    - Target branches → «Add target» → «Include default branch»;
-   - Rules: «Restrict deletions»; «Block force pushes»; «Require a pull request before merging» (approvazioni richieste 0, perché a unire sei tu); «Restrict updates», così solo chi è nella bypass list aggiorna `main`: l'account di Claude può spingere i suoi rami e aprire pull request, ma non unirle né spingere su `main`; «Require status checks to pass», che si compila dopo FON-T01 (passo 9), con «Require branches to be up to date before merging», così la CI ha girato sullo stato che unisci.
+   - Rules: «Restrict deletions»; «Block force pushes»; «Require a pull request before merging» (approvazioni richieste 0, perché a unire sei tu); «Restrict updates», così solo chi è nella bypass list aggiorna `main`: l'account di Claude può spingere i suoi rami e aprire pull request, ma non unirle né spingere su `main`; «Require status checks to pass», che si compila dopo FON-T01 (passo 9), con «Require branches to be up to date before merging», così la CI ha girato sullo stato che unisci. Con questa opzione una pull request aperta diventa «out-of-date» appena `main` va avanti: non premere «Update branch», perché il ramo locale della postazione resterebbe indietro e l'hook non le lascerebbe riallinearlo; chiedi invece a quella postazione di rilanciare `/chiudi-compito`, che si riallinea con `git merge --no-edit origin/main` e spinge. Se l'hai premuto per sbaglio, nel terminale di quella postazione: `git merge --ff-only origin/<ramo>`.
    - Controlla subito che regga: entra nel sito come l'account di Claude, apri una pull request di prova da un ramo (una riga in un file di `docs/`) e verifica che per quell'account il pulsante di unione sia bloccato; poi chiudila. Se invece l'account di Claude potesse unire, aggiungi a «Require a pull request before merging» un'approvazione richiesta con «Require review from Code Owners», e un file `.github/CODEOWNERS` con la riga `* @<tuo-utente>`, che commetti tu: così senza la tua approvazione nessuno unisce.
 5. **Le impostazioni generali.** Settings → General → Pull Requests: lascia attivo solo «Allow squash merging» (togli «Allow merge commits» e «Allow rebase merging»), e attiva «Automatically delete head branches». Il metodo unisce sempre con «Squash and merge», e il ramo di un compito già unito deve potersi ricreare con lo stesso nome (una prova in produzione che fallisce, una correzione dopo l'unione): se il ramo remoto restasse, la spinta non sarebbe un avanzamento rapido, e forzarla non è permesso.
 6. **Actions.** Settings → Actions → General: permetti le azioni («Allow all actions and reusable workflows», o almeno quelle di GitHub e dei creatori verificati); Workflow permissions su «Read repository contents and packages permissions»: i flussi dichiarano da sé i permessi che gli servono. I segreti dei flussi (la chiave SSH di rilascio, `KNOWN_HOSTS`, gli altri che la pull request di FON-T08 elenca) li scrivi tu in Settings → Secrets and variables → Actions → Secrets, prima dell'unione di FON-T08; la variabile `TEST_DEPLOY_HOLD` la crea Claude dentro FON-T08 (un collaboratore può). I segreti di prova per i rami `prova-*` di FON-T08 li crei quando la pull request li nomina.
@@ -148,13 +149,16 @@ Tutto dal sito di GitHub, con il tuo account, prima del primo compito. Le due po
 **Fuori da GitHub**, da avere prima del compito che li usa:
 - i due server Ubuntu su Hostinger (test e produzione), con gli indirizzi in `~/.ssh/config` di yoo (§1): prima di FON-T07a;
 - `docker login ghcr.io` su yoo (§1): prima di FON-T07a;
-- i due domini (`{{DOMINIO}}` e `{{DOMINIO_TEST}}`) su Cloudflare, con un token API per il DNS: prima di DOM-T01;
-- l'account per l'archivio S3 dei backup (Hetzner): prima di OPS-T03; Brevo: prima di FON-T10; le sandbox Stripe (§7): prima di BIL-T01; Sentry: prima di OPS-T04; il fornitore SDI: prima di BIL-T11;
+- i due domini (`{{DOMINIO}}` e `{{DOMINIO_TEST}}`) su Cloudflare, come due zone, con un token API per zona e l'Email Routing per l'indirizzo DMARC (06, DOM-T01): prima di DOM-T01;
+- Brevo, con il dominio aggiunto, il mittente e il DKIM creati (il selettore DKIM lo dà Brevo, e DOM-T01 lo scrive nel DNS): prima di DOM-T01;
+- l'account per l'archivio S3 dei backup (Hetzner, oppure Scaleway secondo il [VERIFICA] di OPS-T03): prima di OPS-T03;
+- Stripe (§7): le sandbox del server di test e di produzione prima di FON-T07b; la sandbox di sviluppo di yoo prima di BIL-T01, quella di joo prima di BIL-T02;
+- Sentry e il servizio di controllo esterno (OPS-011: interroga i siti ogni minuto e manda gli avvisi sul telefono): prima di OPS-T04; il fornitore SDI, nella sua sandbox: prima di BIL-T11;
 - il gestore di password dove stanno tutti i segreti (§7).
 
 ## 9. Si parte
 
-Quando i passi da 1 a 6 sono fatti (7, 8, 9 e 10 arrivano con i compiti indicati):
+Quando le sezioni da 1 a 7 e i passi da 1 a 6 di §8 sono fatti, regola su `main` verificata compresa (i passi 7, 8, 9 e 10 di §8 arrivano con i compiti indicati). Le tue pull request del metodo (hook, corsie, istruzioni, `CODEOWNERS`) uniscile quando nessuna pull request di compito è aperta: con «Require branches to be up to date» un'unione rende non aggiornate le pull request aperte.
 
 - joo: `INIZIA FON-T01`
 - yoo: `INIZIA FON-T07a`

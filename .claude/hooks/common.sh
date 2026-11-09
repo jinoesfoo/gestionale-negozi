@@ -168,7 +168,7 @@ is_free_file() { # file modificabili in ogni fase (tranne le liste di controllo,
 
 # File del metodo: li cambia solo l'utente, nel suo terminale, con un commit. Lo stesso elenco sta nei divieti
 # di .claude/settings.json (denyWrite della sandbox). Come pathspec di git, "*" attraversa anche le "/".
-METODO_PATHSPEC=('*.claude/*' '*CLAUDE.md' '*CLAUDE.local.md' .mcp.json .gitmodules AVVIO.md docs/metodo.md docs/due-postazioni.md)
+METODO_PATHSPEC=('*.claude/*' '*CLAUDE.md' '*CLAUDE.local.md' .mcp.json .gitmodules .github/CODEOWNERS AVVIO.md docs/metodo.md docs/due-postazioni.md)
 # $1 è il percorso relativo (o assoluto, se fuori dal progetto).
 protetto() {
   case "$1" in
@@ -182,7 +182,7 @@ protetto() {
       return 1 ;;
   esac
   case "$1" in      # nel progetto
-    .claude|.claude/*|*/.claude|*/.claude/*|.mcp.json|.gitmodules) return 0 ;;
+    .claude|.claude/*|*/.claude|*/.claude/*|.mcp.json|.gitmodules|.github/CODEOWNERS) return 0 ;;
     CLAUDE.md|*/CLAUDE.md|CLAUDE.local.md|*/CLAUDE.local.md|AVVIO.md|docs/metodo.md|docs/due-postazioni.md) return 0 ;;
     registro|registro/*|.git|.git/*|.vscode|.vscode/*|.idea|.idea/*) return 0 ;;   # il registro e il repository li scrivono gli hook e git; l'editor lo configura l'utente
   esac
@@ -233,6 +233,8 @@ metodo_modificato() {
   (cd "$PROJECT_DIR" 2>/dev/null && git rev-parse -q --verify HEAD >/dev/null 2>&1 && {
     git diff --no-ext-diff --name-only HEAD -- "${METODO_PATHSPEC[@]}" 2>/dev/null
     git ls-files --others --exclude-standard -- "${METODO_PATHSPEC[@]}" 2>/dev/null
+    # anche i file nuovi che .gitignore o .git/info/exclude nascondono: un test o un comando potrebbero averli nascosti apposta
+    git ls-files --others --ignored --exclude-standard -- "${METODO_PATHSPEC[@]}" ':(exclude)node_modules' ':(exclude).next' ':(exclude)dist' ':(exclude)coverage' 2>/dev/null
   } | sort -u)
   # nelle impostazioni locali Claude Code salva da sé le approvazioni (permissions: allow, deny, ask); ogni altra chiave
   # potrebbe spegnere il metodo (hook, sandbox, cartelle in più, server MCP, plugin, comandi da eseguire)
@@ -302,7 +304,7 @@ gabbia() {
   command -v bwrap >/dev/null 2>&1 || { echo "manca bubblewrap (bwrap): sudo apt install bubblewrap (AVVIO.md, passo 1)" >&2; return 125; }
   local p; local -a a=(--ro-bind / / --dev-bind /dev /dev --proc /proc --tmpfs /tmp --bind "$PROJECT_DIR" "$PROJECT_DIR")
   [ -d "$PROJECT_DIR/docs" ] && a+=(--bind "$PROJECT_DIR/docs" "$PROJECT_DIR/docs")   # punto di mount: da dentro docs/ non si rinomina
-  for p in .claude .git registro CLAUDE.md CLAUDE.local.md .mcp.json .vscode .idea .gitmodules AVVIO.md docs/metodo.md docs/due-postazioni.md; do
+  for p in .claude .git registro CLAUDE.md CLAUDE.local.md .mcp.json .vscode .idea .gitmodules .github/CODEOWNERS AVVIO.md docs/metodo.md docs/due-postazioni.md; do
     [ -e "$PROJECT_DIR/$p" ] && a+=(--ro-bind "$PROJECT_DIR/$p" "$PROJECT_DIR/$p")
   done
   for p in "$HOME/.cache/pnpm" "$HOME/.local/state/pnpm"; do [ -d "$p" ] && a+=(--bind "$p" "$p"); done
@@ -321,7 +323,9 @@ gabbia() {
 # che la sandbox protegge, nella gabbia sono scrivibili. Prima e dopo ogni gabbia si prende un'impronta: se cambia, stop.
 impronta_gabbia() {
   { metodo_modificato
-    (cd "$PROJECT_DIR" 2>/dev/null && find .vscode .idea -type f 2>/dev/null | LC_ALL=C sort | xargs -r sha256sum 2>/dev/null)
+    (cd "$PROJECT_DIR" 2>/dev/null && {   # nomi, tipi e destinazioni dei collegamenti, poi il contenuto dei file veri
+      find .vscode .idea -printf '%p %y %l\n' 2>/dev/null | LC_ALL=C sort
+      find .vscode .idea -type f 2>/dev/null | LC_ALL=C sort | xargs -r sha256sum 2>/dev/null; })
   } | sha256sum | cut -c1-32
 }
 controllo_dopo_gabbia() { # $1 impronta presa prima della gabbia; stampa il messaggio e torna 2 se il codice ha toccato il metodo

@@ -81,7 +81,7 @@ controlla_commit() { # il commit porta solo il lavoro del compito corrente
     [ -z "$f" ] && continue
     uguale_a_main "$f" || vietati="$vietati $f"     # una modifica identica a main (arrivata con l'unione) va bene
   done < <(git -C "$PROJECT_DIR" status --porcelain --untracked-files=all 2>/dev/null | cut -c4- | sed 's/.* -> //' | \
-           grep -E '(^|/)\.claude/|CLAUDE(\.local)?\.md$|^\.mcp\.json$|^AVVIO\.md$|^docs/metodo\.md$|^docs/due-postazioni\.md$|^registro/' | grep -v -x -F "$LOG_REL")
+           grep -E '(^|/)\.claude/|CLAUDE(\.local)?\.md$|^\.mcp\.json$|^\.gitmodules$|^\.github/CODEOWNERS$|^\.vscode/|^\.idea/|^AVVIO\.md$|^docs/metodo\.md$|^docs/due-postazioni\.md$|^registro/' | grep -v -x -F "$LOG_REL")
   [ -n "$vietati" ] && block "il commit porterebbe modifiche a file che cambia solo l'utente (o al registro dell'altra postazione):$vietati. Non vanno nel commit: chiedi all'utente."
   for id in $(git -C "$PROJECT_DIR" diff --no-ext-diff HEAD -U0 -- specs 2>/dev/null | grep -oiE '^\+- \[x\] \*\*[A-Z]{3}-T[0-9]{2}[AB]?\*\*' | sed -E 's/.*\*\*(.*)\*\*/\1/' | grep -v -i -x -F "${task:-—}"); do
     sul_main "$id" || altre="$altre $id"
