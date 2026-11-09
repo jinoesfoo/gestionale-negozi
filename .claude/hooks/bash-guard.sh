@@ -139,6 +139,7 @@ analizza_git() { # $1 indice di "git" in argv
     hash-object) ha -w && block "git hash-object -w scrive nel repository: nel metodo non serve." ;;
     reflog) case "${r[0]:-}" in expire|delete) block "git reflog ${r[0]} cancella la storia locale: lo fa l'utente." ;; esac ;;
     worktree) case "${r[0]:-list}" in list) ;; *) block "git worktree non serve nel metodo." ;; esac ;;
+    clone|init|submodule) block "git $sub creerebbe nel progetto un repository annidato (o un sottomodulo), che i controlli del metodo non attraversano: se serve davvero, lo fa l'utente nel suo terminale." ;;
     config) git_config ;;
     remote) for a in "${r[@]}"; do case "$a" in -*) ;; add|set-url|rename|remove|rm|set-head|set-branches|prune|update) block "i remoti di git li cambia l'utente." ;; *) break ;; esac; done ;;
     clean) for a in "${r[@]}"; do { [ "$a" = --force ] || [[ "$a" == -* && "$a" != --* && "$a" == *f* ]]; } && block "git clean -f è distruttivo: se serve davvero, lo esegue l'utente."; done ;;

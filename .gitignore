@@ -3,6 +3,5 @@ node_modules/
 dist/
 .env*
 !.env*.example
-.claude/compito-corrente.json
 .claude/settings.local.json
-.claude/postazione
+playwright/.auth/

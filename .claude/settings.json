@@ -70,7 +70,8 @@
         "./docs/due-postazioni.md",
         "./.gitmodules",
         "./.github/CODEOWNERS",
-        "./.git/info",
+        "./.git/info/exclude",
+        "./.git/info/attributes",
         "~/.local/state/gestionale-negozi"
       ]
     },

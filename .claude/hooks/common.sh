@@ -188,13 +188,13 @@ protetto() {
   esac
   return 1
 }
-# Un percorso che CONTIENE i file del metodo (la radice del progetto, docs/, la casa, /): spostarlo o cancellarlo li colpisce
+# Un percorso che CONTIENE i file del metodo (la radice del progetto, docs/, .github/, la casa, /): spostarlo o cancellarlo li colpisce
 antenato_protetto() { # $1 percorso canonico assoluto
   local a="${1%/}" r
   [ -z "$a" ] && a="/"
   [ "$a" = "/" ] && return 0
   for r in "$PROJECT_DIR_SLASH/.claude" "$PROJECT_DIR_SLASH/CLAUDE.md" "$PROJECT_DIR_SLASH/.git" "$PROJECT_DIR_SLASH/registro" \
-           "$PROJECT_DIR_SLASH/docs/metodo.md" "$STATE_ROOT_SLASH" "$HOME_SLASH/.claude"; do
+           "$PROJECT_DIR_SLASH/docs/metodo.md" "$PROJECT_DIR_SLASH/.github/CODEOWNERS" "$STATE_ROOT_SLASH" "$HOME_SLASH/.claude"; do
     [[ "$r" == "$a"/* ]] && return 0
   done
   return 1
@@ -228,13 +228,19 @@ impronta_git() {
 }
 git_cambiata() { [ -f "$GITDIR_FILE" ] && [ "$(impronta_git)" != "$(cat "$GITDIR_FILE" 2>/dev/null)" ]; }
 
-# File del metodo diversi dal commit corrente, o nuovi e non tracciati
+# File del metodo diversi dal commit corrente, o nuovi e non tracciati. I nuovi li cerca find, non git ls-files: così si
+# vedono anche quelli nascosti da .gitignore o da .git/info/exclude (un test o un comando potrebbero averli nascosti apposta)
+# e quelli dentro un repository annidato, che git non attraversa. La ricerca non entra in node_modules e .git, a qualunque
+# livello, né in .next, dist e coverage della radice (docs/due-postazioni.md, «Limiti»). .claude/settings.local.json lo
+# scrive Claude Code stesso: non conta come file nuovo, ma il suo contenuto si controlla qui sotto.
 metodo_modificato() {
   (cd "$PROJECT_DIR" 2>/dev/null && git rev-parse -q --verify HEAD >/dev/null 2>&1 && {
     git diff --no-ext-diff --name-only HEAD -- "${METODO_PATHSPEC[@]}" 2>/dev/null
-    git ls-files --others --exclude-standard -- "${METODO_PATHSPEC[@]}" 2>/dev/null
-    # anche i file nuovi che .gitignore o .git/info/exclude nascondono: un test o un comando potrebbero averli nascosti apposta
-    git ls-files --others --ignored --exclude-standard -- "${METODO_PATHSPEC[@]}" ':(exclude)node_modules' ':(exclude).next' ':(exclude)dist' ':(exclude)coverage' 2>/dev/null
+    find . \( -name node_modules -o -name .git -o -path ./.next -o -path ./dist -o -path ./coverage \) -prune -o \
+      \( -name CLAUDE.md -o -name CLAUDE.local.md -o -path '*/.claude/*' -o -path ./.mcp.json -o -path ./.gitmodules \
+         -o -path ./.github/CODEOWNERS -o -path ./AVVIO.md -o -path ./docs/metodo.md -o -path ./docs/due-postazioni.md \) \
+      ! -type d ! -path ./.claude/settings.local.json -print 2>/dev/null | sed 's|^\./||' \
+      | grep -vxF -f <(git ls-files -- "${METODO_PATHSPEC[@]}" 2>/dev/null)
   } | sort -u)
   # nelle impostazioni locali Claude Code salva da sé le approvazioni (permissions: allow, deny, ask); ogni altra chiave
   # potrebbe spegnere il metodo (hook, sandbox, cartelle in più, server MCP, plugin, comandi da eseguire)
