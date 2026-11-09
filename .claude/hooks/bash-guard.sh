@@ -360,10 +360,11 @@ rsync_lunga() { # opzioni lunghe di rsync ammesse
   return 1
 }
 credenziali_server() { # $1 percorso sul server, $2 come l'ha scritto Claude, $3 "copia" se è la sorgente di una copia
-  # chiavi private e token; authorized_keys e known_hosts (chiavi pubbliche) restano liberi: FON-T07a e OPS-T01b li scrivono
+  # chiavi private e token; authorized_keys, known_hosts e le chiavi pubbliche (*.pub) restano liberi: FON-T07a e OPS-T01b li usano
   case "$1" in
-    *.ssh/id_*|*.ssh/*_key|*.ssh/*.pem|*.docker/config.json|*.config/gh/*|*.gnupg/*|*.git-credentials|*.netrc|*.pgpass)
-      block "il comando arriverebbe alle credenziali dell'utente del server ('$2'): chiavi private e token non si leggono né si copiano." ;;
+    *.pub) ;;
+    *.ssh/id_*|*.ssh/*_key|*.ssh/*.pem|*ssh_host_*_key|*.docker/config.json|*.config/gh/*|*.gnupg/*|*.git-credentials|*.netrc|*.pgpass)
+      block "il comando arriverebbe alle credenziali del server ('$2'): chiavi private e token non si leggono né si copiano." ;;
   esac
   if [ "${3:-}" = copia ]; then   # copiare la cartella intera porterebbe con sé le chiavi private
     case "$1" in *.ssh|*.docker|*.config|*.config/gh|*.gnupg) block "la copia comprenderebbe le credenziali dell'utente del server ('$2'): copia solo i file che servono." ;; esac
@@ -371,9 +372,18 @@ credenziali_server() { # $1 percorso sul server, $2 come l'ha scritto Claude, $3
   return 0
 }
 segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segreti (file di ambiente, variabili dei processi)
-  local riga w s prec=""
+  local riga w s prec="" pezzo
+  local re_dc="^(dc|compose|docker-compose)[[:space:]'\"]" re_cfg="(^|[[:space:]'\"])(config|convert)([[:space:]'\"]|\$)"
+  local re_ok="(^|[[:space:]'\"])(--no-env-resolution|-q|--quiet|--services|--images|--volumes|--networks|--profiles)([[:space:]'\"=]|\$)"
   printf '%s' "$1" | grep -Eq 'printenv|/environ|process\.env|os\.environ|getenv|ENV\[' && \
     block "il comando sul server stamperebbe le variabili d'ambiente, che contengono i segreti: non si usa."
+  # docker compose config (anche /srv/app/dc config) scrive nell'uscita i valori dei file di ambiente dei servizi.
+  # Il testo si divide ai separatori e a ogni dc/compose, anche dentro sh -c '…': ogni pezzo con config ha bisogno
+  # di un'opzione che non li legge (--no-env-resolution) o che non stampa la configurazione (-q, --services, …)
+  while IFS= read -r pezzo; do
+    [[ "$pezzo" =~ $re_dc ]] && [[ "$pezzo" =~ $re_cfg ]] || continue
+    [[ "$pezzo" =~ $re_ok ]] || block "docker compose config sul server (anche /srv/app/dc config) scrive nell'uscita i valori dei file di ambiente dei servizi, cioè i segreti: aggiungi --no-env-resolution (oppure usa -q, --services, --images, --volumes)."
+  done < <(printf '%s\n' "$1" | tr ';|&()' '\n\n\n\n\n' | sed -E "s#(^|[[:space:]/'\"(])(dc|compose|docker-compose)([[:space:]'\"])#\1\n\2\3#g")
   while IFS= read -r riga; do
     [ "${riga%%$'\t'*}" = W ] || { prec=""; continue; }
     w="${riga#W$'\t'}"; s="${w%%$'\t'*}"; w="${w#*$'\t'}"

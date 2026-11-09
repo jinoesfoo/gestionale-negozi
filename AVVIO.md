@@ -117,15 +117,15 @@ Se una delle risposte è diversa, fermati e non iniziare compiti.
 ## 8. Si parte
 
 Prima del primo compito, nella parte sul collegamento a GitHub:
-- la protezione di `main`: nessuna spinta diretta, pull request obbligatoria. La CI verde come controllo obbligatorio si aggiunge dopo l'unione di FON-T01, che crea il primo `ci.yml`: prima non c'è nessuna CI, e le pull request di FON-T07a, DOM-T01 e OPS-T03 non si potrebbero unire;
-- un'identità per Claude che non può unire le pull request. Senza, un programma scritto apposta potrebbe spingere su `main` con le tue credenziali (`docs/due-postazioni.md`, «Limiti»);
+- la protezione di `main`: nessuna spinta diretta, pull request obbligatoria. La CI verde come controllo obbligatorio si aggiunge dopo l'unione di FON-T01, che crea il primo `ci.yml`: prima non c'è nessuna CI, e le pull request di FON-T07a, DOM-T01 e OPS-T03 non si potrebbero unire. GitHub sceglie i controlli obbligatori per nome del job: dopo FON-T01 aggiungi il suo job; FON-T08 vi mette dentro i test di integrazione senza cambiargli nome, e dopo la sua unione aggiungi i job nuovi che la sua pull request elenca (per esempio il clone pulito);
+- un'identità per Claude separata dalla tua, per esempio un secondo account GitHub aggiunto come collaboratore. Deve poter spingere i rami, aprire le pull request, scrivere la variabile `TEST_DEPLOY_HOLD` e lanciare i flussi a mano: secondo la documentazione di GitHub (verificata il 9/11/2026) un collaboratore può farlo, e un token a grana fine chiede i permessi Variables e Actions in scrittura. Non deve poter aggiornare `main`, e questo non lo dà il token: il permesso che serve per spingere un ramo (Contents) basta anche per unire una pull request con l'API. Lo dà una regola su `main` che lascia aggiornarlo solo a te. Senza, un programma scritto apposta potrebbe spingere su `main` con le tue credenziali (`docs/due-postazioni.md`, «Limiti»);
 - prima del primo rilascio `v*` (FON-T08), l'ambiente `production` di GitHub con l'approvazione obbligatoria, che crei tu: se manca, GitHub lo crea da solo al primo rilascio, senza approvazione;
 - **il piano di GitHub, da decidere qui.** Dalla documentazione di GitHub (verificata l'8/11/2026): su un repository privato la protezione dei rami e gli ambienti chiedono un piano a pagamento (GitHub Pro per un account personale, o Team per un'organizzazione); l'approvazione obbligatoria di un ambiente, che FON-007 usa per `production`, su un repository privato c'è solo con GitHub Enterprise. Le strade sono tre:
   - (a) un repository pubblico: tutto senza costi, ma il codice lo vede chiunque (i segreti no, non stanno nel repository);
   - (b) GitHub Enterprise: tutto sul repository privato, con il costo del piano;
   - (c) Pro o Team, con un'altra approvazione per la produzione (per esempio un rilascio in produzione che lanci tu a mano): va cambiata la specifica di FON-007 e di FON-T08.
 
-  Senza una di queste, FON-T08 non può provare FON-007. I prezzi si controllano sul sito di GitHub.
+  Enterprise e Team sono piani per le organizzazioni: con (b), o con Team nella (c), il repository passa a un'organizzazione prima di FON-T07a, che pubblica la prima immagine, e i nomi delle immagini diventano `ghcr.io/<organizzazione>/…` (`specs/01-fondamenta.md`, i servizi Docker Compose). Senza una di queste strade, FON-T08 non può provare né FON-005 (la CI che blocca l'unione) né FON-007. I prezzi si controllano sul sito di GitHub.
 
 - joo: `INIZIA FON-T01`
 - yoo: `INIZIA FON-T07a`
