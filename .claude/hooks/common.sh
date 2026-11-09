@@ -168,7 +168,7 @@ is_free_file() { # file modificabili in ogni fase (tranne le liste di controllo,
 
 # File del metodo: li cambia solo l'utente, nel suo terminale, con un commit. Lo stesso elenco sta nei divieti
 # di .claude/settings.json (denyWrite della sandbox). Come pathspec di git, "*" attraversa anche le "/".
-METODO_PATHSPEC=('*.claude/*' '*CLAUDE.md' '*CLAUDE.local.md' .mcp.json AVVIO.md docs/metodo.md docs/due-postazioni.md)
+METODO_PATHSPEC=('*.claude/*' '*CLAUDE.md' '*CLAUDE.local.md' .mcp.json .gitmodules AVVIO.md docs/metodo.md docs/due-postazioni.md)
 # $1 è il percorso relativo (o assoluto, se fuori dal progetto).
 protetto() {
   case "$1" in
@@ -184,7 +184,7 @@ protetto() {
   case "$1" in      # nel progetto
     .claude|.claude/*|*/.claude|*/.claude/*|.mcp.json|.gitmodules) return 0 ;;
     CLAUDE.md|*/CLAUDE.md|CLAUDE.local.md|*/CLAUDE.local.md|AVVIO.md|docs/metodo.md|docs/due-postazioni.md) return 0 ;;
-    registro|registro/*|.git|.git/*|.vscode|.vscode/*) return 0 ;;   # il registro e il repository li scrivono gli hook e git
+    registro|registro/*|.git|.git/*|.vscode|.vscode/*|.idea|.idea/*) return 0 ;;   # il registro e il repository li scrivono gli hook e git; l'editor lo configura l'utente
   esac
   return 1
 }
@@ -301,7 +301,8 @@ registro_alterato() { [ -f "$LOG_COPY" ] && [ -f "$LOG_FILE" ] && ! cmp -s "$LOG
 gabbia() {
   command -v bwrap >/dev/null 2>&1 || { echo "manca bubblewrap (bwrap): sudo apt install bubblewrap (AVVIO.md, passo 1)" >&2; return 125; }
   local p; local -a a=(--ro-bind / / --dev-bind /dev /dev --proc /proc --tmpfs /tmp --bind "$PROJECT_DIR" "$PROJECT_DIR")
-  for p in .claude .git registro CLAUDE.md CLAUDE.local.md .mcp.json .vscode .gitmodules AVVIO.md docs/metodo.md docs/due-postazioni.md; do
+  [ -d "$PROJECT_DIR/docs" ] && a+=(--bind "$PROJECT_DIR/docs" "$PROJECT_DIR/docs")   # punto di mount: da dentro docs/ non si rinomina
+  for p in .claude .git registro CLAUDE.md CLAUDE.local.md .mcp.json .vscode .idea .gitmodules AVVIO.md docs/metodo.md docs/due-postazioni.md; do
     [ -e "$PROJECT_DIR/$p" ] && a+=(--ro-bind "$PROJECT_DIR/$p" "$PROJECT_DIR/$p")
   done
   for p in "$HOME/.cache/pnpm" "$HOME/.local/state/pnpm"; do [ -d "$p" ] && a+=(--bind "$p" "$p"); done
@@ -314,4 +315,17 @@ gabbia() {
   local rc=$?
   [ "$rc" = 1 ] && ! bwrap --ro-bind / / --dev /dev true >/dev/null 2>&1 && { echo "la gabbia (bubblewrap) non parte: su Ubuntu 24.04 serve il profilo AppArmor di AVVIO.md, passo 1" >&2; return 125; }
   return "$rc"
+}
+# La gabbia lega in sola lettura solo i file del metodo che esistono: un file che non esiste ancora (CLAUDE.local.md,
+# .mcp.json, .gitmodules, un CLAUDE.md in una sottocartella) il codice del progetto lo potrebbe creare, e .vscode/.idea,
+# che la sandbox protegge, nella gabbia sono scrivibili. Prima e dopo ogni gabbia si prende un'impronta: se cambia, stop.
+impronta_gabbia() {
+  { metodo_modificato
+    (cd "$PROJECT_DIR" 2>/dev/null && find .vscode .idea -type f 2>/dev/null | LC_ALL=C sort | xargs -r sha256sum 2>/dev/null)
+  } | sha256sum | cut -c1-32
+}
+controllo_dopo_gabbia() { # $1 impronta presa prima della gabbia; stampa il messaggio e torna 2 se il codice ha toccato il metodo
+  [ "$(impronta_gabbia)" = "$1" ] && return 0
+  echo "il codice eseguito nella gabbia ha creato o cambiato file del metodo o dell'editor ($(metodo_modificato | tr '\n' ' ').vscode/.idea compresi): non è un comportamento del progetto. Fermati e dillo all'utente, che controlla (git status) e rimette a posto; i file nuovi si cancellano."
+  return 2
 }

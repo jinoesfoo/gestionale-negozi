@@ -29,6 +29,7 @@ prova_gabbia() {
     prova no "$1/.git/.prova-gabbia"
     prova no "$HOME/.prova-gabbia"
     prova no "$2/.prova-gabbia"
+    if mv "$1/docs" "$1/.prova-docs" 2>/dev/null; then mv "$1/.prova-docs" "$1/docs"; echo "ERRORE: la gabbia lascia rinominare docs"; esito=1; else echo "ok: nella gabbia docs non si rinomina"; fi
     if [ -n "$(ls -A "$HOME/.ssh" 2>/dev/null)" ]; then echo "ERRORE: nella gabbia si vedono le chiavi SSH"; esito=1; else echo "ok: nella gabbia non ci sono le chiavi SSH"; fi
     if [ -n "$(ls -A "$HOME/.config/gh" 2>/dev/null)" ]; then echo "ERRORE: nella gabbia si vedono le credenziali di GitHub"; esito=1; else echo "ok: nella gabbia non ci sono le credenziali di GitHub"; fi
     exit $esito
@@ -36,7 +37,10 @@ prova_gabbia() {
 }
 
 case "${1:-}" in
-  test|test:int|test:e2e|dev|worker|db:migrate|cli) cd "$PROJECT_DIR" || exit 1; gabbia pnpm "$@"; exit $? ;;
+  test|test:int|test:e2e|dev|worker|db:migrate|cli)
+    cd "$PROJECT_DIR" || exit 1; prima="$(impronta_gabbia)"; gabbia pnpm "$@"; rc=$?
+    controllo_dopo_gabbia "$prima" >&2 || exit 2   # il codice non deve aver toccato i file del metodo né .vscode/.idea
+    exit $rc ;;
   --prova) mkdir -p "$STATE_DIR"; prova_gabbia; exit $? ;;
   *) echo "Uso: bash .claude/hooks/gabbia.sh test|test:int|test:e2e|dev|worker|db:migrate|cli [argomenti], oppure --prova" >&2; exit 64 ;;
 esac

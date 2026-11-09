@@ -20,9 +20,11 @@ command -v pnpm >/dev/null 2>&1 || { echo "pnpm non trovato: impossibile verific
 
 out="$(mktemp)"
 fail=""
+prima="$(impronta_gabbia)"
 for step in lint typecheck test; do
   if jq -e --arg s "$step" '.scripts[$s]' package.json >/dev/null 2>&1; then
     gabbia pnpm -s "$step" >"$out" 2>&1; rc=$?
+    if ! msg="$(controllo_dopo_gabbia "$prima")"; then echo "$msg" >&2; rm -f "$out"; exit 2; fi
     if [ "$rc" = 125 ]; then
       echo "I controlli non si possono eseguire: $(tail -n 1 "$out"). Dillo all'utente." >&2
       rm -f "$out"; exit 2

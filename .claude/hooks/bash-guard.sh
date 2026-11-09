@@ -129,6 +129,7 @@ analizza_git() { # $1 indice di "git" in argv
       { ha --abort || ha --quit; } && return 0
       block "git $sub non serve nel metodo: se serve davvero, lo esegue l'utente." ;;
     switch) git_ramo ;;
+    branch) git_branch ;;
     checkout) if git_checkout_percorsi; then git_percorsi; else git_ramo; fi ;;
     restore) git_percorsi ;;
     reset) git_reset ;;
@@ -160,6 +161,24 @@ metodo_in_arrivo() { # $1 commit verso cui va la cartella di lavoro: se cambia i
   [ -n "${d// /}" ] && block "così cambierebbero i file del metodo ($d): la sandbox non lascia scriverli a Claude, e git si fermerebbe a metà. Chiedi all'utente di eseguire lui, nel suo terminale, nella cartella del progetto: $CMD_GIT"
   return 0
 }
+git_branch() { # git branch: i rami si elencano o si cancellano in locale; si creano con git switch --no-track -c
+  local k a canc=0 lista=0; local -a pos=()
+  for k in "${!r[@]}"; do
+    a="${r[$k]}"
+    [[ "${rs[$k]}" == *d* ]] && block "git branch con argomenti decisi da variabili non si controlla: scrivili per intero."
+    case "$a" in
+      -t|--track|--track=*|-u|--set-upstream-to|--set-upstream-to=*|--unset-upstream)
+        block "git branch $a scrive nella configurazione di git, che la sandbox protegge: i rami si creano con git switch --no-track -c <nome> origin/main." ;;
+      -m|-M|--move|-c|-C|--copy|-f|--force|--edit-description) block "git branch $a non serve nel metodo: se serve, lo fa l'utente." ;;
+      -d|-D|--delete) canc=1 ;;
+      -l|--list|-a|--all|-r|--remotes|-v|-vv|--verbose|--show-current|--contains|--no-contains|--merged|--no-merged|--points-at|--sort|--sort=*|--format|--format=*|--column|--no-column|--color|--color=*|--no-color|-i|--ignore-case) lista=1 ;;
+      -*) ;;
+      *) pos+=("$a") ;;
+    esac
+  done
+  { [ "${#pos[@]}" -eq 0 ] || [ "$canc" = 1 ] || [ "$lista" = 1 ]; } && return 0
+  block "git branch con un nome crea un ramo senza i controlli del metodo (e da origin/main si fermerebbe a metà sulla configurazione di git): crea i rami con git switch --no-track -c <nome> origin/main, oppure git switch -c prova-<nome> dal ramo del compito."
+}
 git_ramo() { # switch e checkout di un ramo: si va su main o sul ramo di un compito, o si crea il ramo da origin/main
   local k a nuovo="" dest="" notrack=0; local -a pos=()
   for ((k=0; k<${#r[@]}; k++)); do
@@ -172,6 +191,7 @@ git_ramo() { # switch e checkout di un ramo: si va su main o sul ramo di un comp
         block "git $sub $a non serve nel metodo: se serve, lo esegue l'utente." ;;
       -t|--track|--track=*) block "git $sub $a scrive nella configurazione di git, che la sandbox protegge: crea il ramo con --no-track." ;;
       --no-track) notrack=1 ;;
+      -) block "git $sub - torna al ramo precedente senza che l'hook sappia quale: scrivi il nome del ramo." ;;
       -*) ;;
       *) pos+=("$a") ;;
     esac
@@ -258,7 +278,7 @@ git_reset() { # reset senza commit (togliere file dall'indice) sì; spostare il 
   return 0
 }
 git_push() {
-  local cur d a k nopz=0; local -a pos=()
+  local cur d s a k nopz=0; local -a pos=()
   cur="$(git -C "$gdir" rev-parse --abbrev-ref HEAD 2>/dev/null)"
   [ "$cur" = main ] && block "sei su main: da qui non si spinge nulla. Spingi il ramo del compito."
   for k in "${!r[@]}"; do
@@ -285,6 +305,8 @@ git_push() {
     [[ "$a" == +* ]] && block "una destinazione con + forza la spinta: non è permesso."
     [[ "$a" == :* ]] && block "una destinazione senza sorgente cancella un ramo remoto: non è permesso."
     [[ "$a" == *'*'* ]] && block "una destinazione con * spingerebbe più rami: non è permesso."
+    s="${a%%:*}"; s="${s#refs/heads/}"; s="${s#heads/}"   # la sorgente: solo HEAD o un ramo del metodo, mai stash o commit sciolti
+    { [[ "${s^^}" == HEAD ]] || [[ "$s" =~ $RAMI_OK ]]; } || block "si spinge solo HEAD o un ramo del metodo, non '$s': stash, commit sciolti e altri riferimenti non passano dal controllo del commit."
     d="${a##*:}"; d="${d#refs/heads/}"; d="${d#heads/}"
     [ "$d" = main ] && block "non si spinge su main: si apre una pull request dal ramo del compito."
     case "$d" in refs/tags/*|tags/*|v[0-9]*) block "i tag di rilascio li crea l'utente." ;; esac

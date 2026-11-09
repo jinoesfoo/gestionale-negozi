@@ -12,9 +12,10 @@ curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bas
 source ~/.bashrc && nvm install 24 && npm install -g pnpm
 # Docker (database in locale, immagini, test di integrazione)
 curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker "$USER"
-# Chi firma i commit (lo stesso nome su tutti e due i computer va bene)
-git config --global user.name "Il tuo nome" && git config --global user.email "la-tua-email@esempio.it"
-# GitHub: accesso via HTTPS e credenziali per git (servono anche agli hook, che fanno git fetch da soli).
+# Chi firma i commit: il nome e l'email dell'account GitHub di Claude (§8, passo 2), uguali sui due computer
+git config --global user.name "Claude (gestionale)" && git config --global user.email "<email dell'account di Claude>"
+# GitHub: accesso via HTTPS con l'ACCOUNT DI CLAUDE (§8, passo 2), non con il tuo; le credenziali servono anche
+# agli hook, che fanno git fetch da soli.
 # --insecure-storage: il token sta in un file leggibile solo da te (~/.config/gh/hosts.yml), non nel portachiavi
 # del sistema, che i comandi di Claude, chiusi nella sandbox, non possono raggiungere.
 gh auth login --git-protocol https --insecure-storage && gh auth setup-git
@@ -53,23 +54,26 @@ Host prod
 
 All'inizio di FON-T07a, finché l'utente `deploy` non esiste, al posto di `deploy` va l'utente che ti ha dato Hostinger: FON-T07a lo spiega in `infra/README.md`.
 
+**Solo su yoo, l'accesso a GHCR.** Le prime immagini le pubblica Claude a mano con `docker push` (l'immagine di prova di FON-T07a, Caddy in DOM-T02, PostgreSQL in OPS-T01a, l'app in FON-T07b). Prima di FON-T07a, nel tuo terminale: `docker login ghcr.io` con il tuo nome utente di GitHub e un token con il permesso `write:packages`. L'accesso resta nel portachiavi di Docker, che la gabbia non vede; Claude non lo tocca e non lo può fare al posto tuo (il token è un segreto, e `gh auth` è bloccato).
+
 ## 2. Il repository su GitHub, una volta sola, da joo
 
-Lo zip contiene `gestionale-negozi.bundle`, il repository con la sua storia. Da joo, nella cartella in cui hai estratto lo zip:
+Prima servono due cose dal sito di GitHub, con il tuo account: l'account di Claude e il repository vuoto `gestionale-negozi`, con l'account di Claude fra i collaboratori (§8, passi 2 e 3). Lo zip contiene `gestionale-negozi.bundle`, il repository con la sua storia. Da joo, con `gh` già collegato all'account di Claude (§1), nella cartella in cui hai estratto lo zip:
 
 ```bash
 git clone -b main gestionale-negozi.bundle ~/gestionale-negozi
 cd ~/gestionale-negozi
 git remote remove origin
-gh repo create gestionale-negozi --private --source . --remote origin --push
+git remote add origin https://github.com/<tuo-utente>/gestionale-negozi.git
+git push origin main
 ```
 
-Le impostazioni del repository su GitHub (come si uniscono le pull request, la protezione di `main`) si decidono insieme nella parte sul collegamento a GitHub. Fino ad allora: unisci le pull request solo con «Squash and merge».
+Questa spinta di `main` è l'unica che l'account di Claude farà: subito dopo, con il passo 4 di §8, `main` si chiude e la aggiorni solo tu, unendo le pull request con «Squash and merge».
 
 ## 3. Il clone, da yoo (dopo il passo 2)
 
 ```bash
-gh repo clone gestionale-negozi ~/gestionale-negozi    # con lo stesso account GitHub di joo
+gh repo clone <tuo-utente>/gestionale-negozi ~/gestionale-negozi    # anche qui gh è collegato all'account di Claude (§1)
 ```
 
 ## 4. Il nome della postazione, su ciascun computer
@@ -86,6 +90,8 @@ bash .claude/hooks/imposta-postazione.sh yoo    # sul computer yoo
 Apri la cartella `~/gestionale-negozi` in VS Code, avvia Claude Code e scrivi `/hooks`: devi vedere SessionStart, UserPromptSubmit, PreToolUse e Stop. All'apertura Claude deve ricevere il messaggio «[Metodo] Postazione joo» (o yoo).
 
 I comandi che girano fuori dalla sandbox (Docker, `ssh`, `scp`, `rsync` e la gabbia, `bash .claude/hooks/gabbia.sh …`) passano dal normale permesso di Claude Code: se te lo chiede, guarda il comando prima di dire sì. Per la gabbia puoi rispondere «sì, sempre»; per Docker e i server conviene guardarli ogni volta.
+
+**Il modello.** Il kit fissa in `.claude/settings.json` il modello Opus 5.5 (`claude-opus-5-5`) per tutte e due le postazioni: è il modello più capace della famiglia, e quello con cui il kit è stato costruito e collaudato. Se una sessione raggiunge il limite del piano, con `/model` scegli per quella sessione Fable 5.1, l'altro modello di punta; Sonnet e Haiku non si usano per il codice del progetto. Due postazioni che lavorano insieme consumano il doppio: tieni d'occhio il limite settimanale del piano, perché quando si raggiunge il lavoro si ferma fino all'azzeramento.
 
 ## 6. Prova, prima di lavorare
 
@@ -114,20 +120,41 @@ Se una delle risposte è diversa, fermati e non iniziare compiti.
 - **Stripe:** una sandbox per ogni computer di sviluppo («sviluppo-joo» e «sviluppo-yoo»), più quella del server di test e la produzione. Ognuna ha le sue chiavi (`docs/due-postazioni.md`, «Stripe»).
 - **I segreti** (chiavi Stripe, Cloudflare, S3, password dei server) non passano mai da git, dallo zip o dalla chat: si copiano da un computer all'altro con il gestore di password. I segreti di GitHub (Actions) e i file di ambiente dei server li scrivi tu.
 
-## 8. Si parte
+## 8. Il collegamento a GitHub, passo per passo
 
-Prima del primo compito, nella parte sul collegamento a GitHub:
-- la protezione di `main`: nessuna spinta diretta, pull request obbligatoria. La CI verde come controllo obbligatorio si aggiunge dopo l'unione di FON-T01, che crea il primo `ci.yml`: prima non c'è nessuna CI, e le pull request di FON-T07a, DOM-T01 e OPS-T03 non si potrebbero unire. GitHub sceglie i controlli obbligatori per nome del job: dopo FON-T01 aggiungi il suo job. I compiti successivi mettono i loro controlli in quel job, senza cambiargli nome; quando un compito aggiunge un job nuovo (per esempio il clone pulito di FON-T08), la sua pull request te lo indica, e tu lo aggiungi dopo l'unione;
-- nelle impostazioni del repository, «Automatically delete head branches»: dopo «Squash and merge» il ramo remoto del compito si cancella da solo. Serve quando il ramo di un compito già unito si ricrea con lo stesso nome (una prova in produzione che fallisce, una correzione dopo l'unione): altrimenti la spinta non sarebbe un avanzamento rapido, e forzarla non è permesso;
-- un'identità per Claude separata dalla tua, per esempio un secondo account GitHub aggiunto come collaboratore. Deve poter spingere i rami, aprire le pull request, scrivere la variabile `TEST_DEPLOY_HOLD` e lanciare i flussi a mano: secondo la documentazione di GitHub (verificata il 9/11/2026) un collaboratore può farlo, e un token a grana fine chiede i permessi Variables e Actions in scrittura. Non deve poter aggiornare `main`, e questo non lo dà il token: il permesso che serve per spingere un ramo (Contents) basta anche per unire una pull request con l'API. Lo dà una regola su `main` che lascia aggiornarlo solo a te. Senza, un programma scritto apposta potrebbe spingere su `main` con le tue credenziali (`docs/due-postazioni.md`, «Limiti»);
-- prima di iniziare FON-T08, nelle impostazioni dei tre pacchetti su GitHub (Caddy, PostgreSQL e app, pubblicati a mano da DOM-T02, OPS-T01a e FON-T07b) il repository deve avere l'accesso dei flussi in scrittura. È automatico se il Dockerfile aveva già la label del repository alla prima pubblicazione (`docs/due-postazioni.md`, «Regole di struttura»); altrimenti lo dai tu, in «Manage Actions access». Senza, le prove di FON-T08 e poi i rilasci automatici non riescono a pubblicare le immagini;
-- prima del primo rilascio `v*` (FON-T08), l'ambiente `production` di GitHub con l'approvazione obbligatoria, che crei tu: se manca, GitHub lo crea da solo al primo rilascio, senza approvazione;
-- **il piano di GitHub, da decidere qui.** Dalla documentazione di GitHub (verificata l'8/11/2026): su un repository privato la protezione dei rami e gli ambienti chiedono un piano a pagamento (GitHub Pro per un account personale, o Team per un'organizzazione); l'approvazione obbligatoria di un ambiente, che FON-007 usa per `production`, su un repository privato c'è solo con GitHub Enterprise. Le strade sono tre:
-  - (a) un repository pubblico: tutto senza costi, ma il codice lo vede chiunque (i segreti no, non stanno nel repository);
-  - (b) GitHub Enterprise: tutto sul repository privato, con il costo del piano;
-  - (c) Pro o Team, con un'altra approvazione per la produzione (per esempio un rilascio in produzione che lanci tu a mano): va cambiata la specifica di FON-007 e di FON-T08.
+Tutto dal sito di GitHub, con il tuo account, prima del primo compito. Le due postazioni lavorano nello stesso momento perché ciascuna spinge solo i propri rami e apre pull request: su `main` arriva soltanto ciò che unisci tu (`docs/due-postazioni.md`, «Perché le postazioni non si sovrappongono»).
 
-  Enterprise e Team sono piani per le organizzazioni: con (b), o con Team nella (c), il repository passa a un'organizzazione prima di FON-T07a, che pubblica la prima immagine, e i nomi delle immagini diventano `ghcr.io/<organizzazione>/…` (`specs/01-fondamenta.md`, i servizi Docker Compose). Senza una di queste strade, FON-T08 non può provare né FON-005 (la CI che blocca l'unione) né FON-007. I prezzi si controllano sul sito di GitHub.
+1. **Il piano di GitHub, da decidere per primo.** Dalla documentazione di GitHub (verificata l'8/11/2026): su un repository privato la protezione dei rami e gli ambienti chiedono un piano a pagamento (GitHub Pro per un account personale, o Team per un'organizzazione); l'approvazione obbligatoria di un ambiente, che FON-007 usa per `production`, su un repository privato c'è solo con GitHub Enterprise. Le strade sono tre:
+   - (a) un repository pubblico: tutto senza costi, ma il codice lo vede chiunque (i segreti no, non stanno nel repository);
+   - (b) GitHub Enterprise: tutto sul repository privato, con il costo del piano;
+   - (c) Pro o Team, con un'altra approvazione per la produzione (per esempio un rilascio in produzione che lanci tu a mano): va cambiata la specifica di FON-007 e di FON-T08.
+
+   Enterprise e Team sono piani per le organizzazioni: con (b), o con Team nella (c), il repository nasce dentro un'organizzazione, prima di FON-T07a, che pubblica la prima immagine, e i nomi delle immagini diventano `ghcr.io/<organizzazione>/…` (`specs/01-fondamenta.md`, i servizi Docker Compose). Senza una di queste strade, FON-T08 non può provare né FON-005 (la CI che blocca l'unione) né FON-007. I prezzi si controllano sul sito di GitHub.
+2. **Un account GitHub per Claude.** Crea un secondo account (per esempio `claude-<tuo-nome>`), con un'email tua e la verifica in due passaggi. È l'account che i due computer usano con `gh` e `git` (§1): così ciò che fa Claude, rami, pull request, variabili, avvii a mano, porta il suo nome, e tu resti l'unico che aggiorna `main`. Tu, sul sito, continui a usare il tuo account.
+3. **Il repository.** Con il tuo account: «New repository», nome `gestionale-negozi`, privato (o pubblico, strada (a)), senza README, licenza né `.gitignore`. Poi Settings → Collaborators → «Add people»: l'account di Claude (in un repository personale i collaboratori hanno il permesso di scrittura). Accetta l'invito entrando nel sito come l'account di Claude, in una finestra privata del browser. Poi il passo §2.
+4. **La regola su `main`.** Settings → Rules → Rulesets → «New ruleset» → «New branch ruleset»:
+   - nome `main`, Enforcement status «Active»;
+   - Bypass list → «Add bypass» → il ruolo «Repository admin», cioè tu;
+   - Target branches → «Add target» → «Include default branch»;
+   - Rules: «Restrict deletions»; «Block force pushes»; «Require a pull request before merging» (approvazioni richieste 0, perché a unire sei tu); «Restrict updates», così solo chi è nella bypass list aggiorna `main`: l'account di Claude può spingere i suoi rami e aprire pull request, ma non unirle né spingere su `main`; «Require status checks to pass», che si compila dopo FON-T01 (passo 9), con «Require branches to be up to date before merging», così la CI ha girato sullo stato che unisci.
+   - Controlla subito che regga: entra nel sito come l'account di Claude, apri una pull request di prova da un ramo (una riga in un file di `docs/`) e verifica che per quell'account il pulsante di unione sia bloccato; poi chiudila. Se invece l'account di Claude potesse unire, aggiungi a «Require a pull request before merging» un'approvazione richiesta con «Require review from Code Owners», e un file `.github/CODEOWNERS` con la riga `* @<tuo-utente>`, che commetti tu: così senza la tua approvazione nessuno unisce.
+5. **Le impostazioni generali.** Settings → General → Pull Requests: lascia attivo solo «Allow squash merging» (togli «Allow merge commits» e «Allow rebase merging»), e attiva «Automatically delete head branches». Il metodo unisce sempre con «Squash and merge», e il ramo di un compito già unito deve potersi ricreare con lo stesso nome (una prova in produzione che fallisce, una correzione dopo l'unione): se il ramo remoto restasse, la spinta non sarebbe un avanzamento rapido, e forzarla non è permesso.
+6. **Actions.** Settings → Actions → General: permetti le azioni («Allow all actions and reusable workflows», o almeno quelle di GitHub e dei creatori verificati); Workflow permissions su «Read repository contents and packages permissions»: i flussi dichiarano da sé i permessi che gli servono. I segreti dei flussi (la chiave SSH di rilascio, `KNOWN_HOSTS`, gli altri che la pull request di FON-T08 elenca) li scrivi tu in Settings → Secrets and variables → Actions → Secrets, prima dell'unione di FON-T08; la variabile `TEST_DEPLOY_HOLD` la crea Claude dentro FON-T08 (un collaboratore può). I segreti di prova per i rami `prova-*` di FON-T08 li crei quando la pull request li nomina.
+7. **I pacchetti (GHCR).** Prima di iniziare FON-T08, nelle impostazioni dei tre pacchetti su GitHub (Caddy, PostgreSQL e app, pubblicati a mano da DOM-T02, OPS-T01a e FON-T07b) il repository deve avere l'accesso dei flussi in scrittura. È automatico se il Dockerfile aveva già la label del repository alla prima pubblicazione (`docs/due-postazioni.md`, «Regole di struttura»); altrimenti lo dai tu, nella pagina del pacchetto, «Package settings» → «Manage Actions access». Senza, le prove di FON-T08 e poi i rilasci automatici non riescono a pubblicare le immagini.
+8. **L'ambiente `production`.** Prima del primo rilascio `v*` (FON-T08): Settings → Environments → «New environment» → `production` → «Required reviewers»: tu. Se manca, GitHub lo crea da solo al primo rilascio, senza approvazione. Con la strada (c) segui invece ciò che è stato deciso per FON-007.
+9. **I controlli obbligatori.** Dopo l'unione di FON-T01, che crea il primo `ci.yml` (prima non c'è nessuna CI, e le pull request di FON-T07a, DOM-T01 e OPS-T03 non si potrebbero unire): apri la regola `main` → «Require status checks to pass» → «Add checks» → il nome del job di `ci.yml`. GitHub sceglie i controlli per nome del job; i compiti successivi mettono i loro controlli in quel job, senza cambiargli nome. Quando un compito aggiunge un job nuovo (per esempio il clone pulito di FON-T08), la sua pull request te lo indica e tu lo aggiungi dopo l'unione.
+10. **Dependabot.** Prima di OPS-T09: Settings → Code security → «Dependabot security updates» attivo, così una correzione di sicurezza arriva anche prima che OPS-T09 sia unito (`docs/due-postazioni.md`, «Pull request automatiche delle dipendenze»).
+
+**Fuori da GitHub**, da avere prima del compito che li usa:
+- i due server Ubuntu su Hostinger (test e produzione), con gli indirizzi in `~/.ssh/config` di yoo (§1): prima di FON-T07a;
+- `docker login ghcr.io` su yoo (§1): prima di FON-T07a;
+- i due domini (`{{DOMINIO}}` e `{{DOMINIO_TEST}}`) su Cloudflare, con un token API per il DNS: prima di DOM-T01;
+- l'account per l'archivio S3 dei backup (Hetzner): prima di OPS-T03; Brevo: prima di FON-T10; le sandbox Stripe (§7): prima di BIL-T01; Sentry: prima di OPS-T04; il fornitore SDI: prima di BIL-T11;
+- il gestore di password dove stanno tutti i segreti (§7).
+
+## 9. Si parte
+
+Quando i passi da 1 a 6 sono fatti (7, 8, 9 e 10 arrivano con i compiti indicati):
 
 - joo: `INIZIA FON-T01`
 - yoo: `INIZIA FON-T07a`
