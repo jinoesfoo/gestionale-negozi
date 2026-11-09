@@ -27,13 +27,14 @@ fermo_se_alterato() {
   exit 0
 }
 # Il fermo dei rilasci lo usano solo i compiti di yoo, uno alla volta (docs/due-postazioni.md, «Il server di test condiviso»):
-# dopo CHIUSO o ABBANDONA su yoo non lo usa più nessuno; su joo può servire al compito di yoo ancora aperto.
+# dopo CHIUSO o ABBANDONA su yoo non lo usa più nessuno; su joo può servire al compito di yoo ancora aperto, oppure
+# essere rimasto da un compito di yoo chiuso o abbandonato.
 avviso_fermo() {
   fermo_attivo || return 0
   if [ "$(postazione)" = yoo ]; then
     say "Attenzione: il fermo dei rilasci (TEST_DEPLOY_HOLD) è ancora attivo, e su yoo non resta nessun compito aperto: va tolto adesso, e il rilascio di main va rilanciato con l'avvio a mano. Dillo all'utente: lo toglie dal sito di GitHub, oppure ti chiede di farlo (gh variable set TEST_DEPLOY_HOLD --body 0, poi l'avvio a mano di deploy-test.yml su main). Finché resta, le unioni non arrivano sul server di test (docs/due-postazioni.md, «Il server di test condiviso»)."
   else
-    say "Attenzione: il fermo dei rilasci (TEST_DEPLOY_HOLD) è attivo. L'ha attivato un compito di yoo, e da questa postazione non si tocca: se su yoo è aperto un compito che lo usa, lo toglie quel compito dopo la sua unione; se su yoo non c'è nessun compito aperto, l'utente lo toglie dal sito di GitHub e rilancia il rilascio di main. Intanto le unioni non arrivano sul server di test: le porta il rilascio di main che parte quando il fermo viene tolto (docs/due-postazioni.md, «Il server di test condiviso»)."
+    say "Attenzione: il fermo dei rilasci (TEST_DEPLOY_HOLD) è attivo. L'ha attivato un compito di yoo, e da questa postazione non si tocca. Se l'ha attivato il compito aperto adesso su yoo, lo toglie quel compito dopo la sua unione; se invece l'ha lasciato un compito di yoo già chiuso o abbandonato, l'utente lo toglie dal sito di GitHub e rilancia il rilascio di main. Intanto le unioni non arrivano sul server di test: le porta il rilascio di main che parte quando il fermo viene tolto (docs/due-postazioni.md, «Il server di test condiviso»)."
   fi
 }
 

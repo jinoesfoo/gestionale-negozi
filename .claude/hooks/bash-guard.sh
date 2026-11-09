@@ -366,15 +366,15 @@ credenziali_server() { # $1 percorso sul server, $2 come l'ha scritto Claude, $3
     *.ssh/id_*|*.ssh/*_key|*.ssh/*.pem|*ssh_host_*_key|*.docker/config.json|*.config/gh/*|*.gnupg/*|*.git-credentials|*.netrc|*.pgpass)
       block "il comando arriverebbe alle credenziali del server ('$2'): chiavi private e token non si leggono né si copiano." ;;
   esac
-  if [ "${3:-}" = copia ]; then   # copiare la cartella intera porterebbe con sé le chiavi private
-    case "$1" in *.ssh|*.docker|*.config|*.config/gh|*.gnupg) block "la copia comprenderebbe le credenziali dell'utente del server ('$2'): copia solo i file che servono." ;; esac
+  if [ "${3:-}" = copia ]; then   # copiare la cartella intera porterebbe con sé le chiavi private (anche quelle dell'host)
+    case "$1" in *.ssh|*.docker|*.config|*.config/gh|*.gnupg|/etc|/etc/|/etc/ssh|/etc/ssh/) block "la copia comprenderebbe le credenziali del server ('$2'): copia solo i file che servono." ;; esac
   fi
   return 0
 }
 segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segreti (file di ambiente, variabili dei processi)
   local riga w s prec="" pezzo
-  local re_dc="^(dc|compose|docker-compose)[[:space:]'\"]" re_cfg="(^|[[:space:]'\"])(config|convert)([[:space:]'\"]|\$)"
-  local re_ok="(^|[[:space:]'\"])(--no-env-resolution|-q|--quiet|--services|--images|--volumes|--networks|--profiles)([[:space:]'\"=]|\$)"
+  local re_dc="^(dc|compose|docker-compose)[[:space:]'\"]" re_cfg="(^|[[:space:]'\"])(config|convert)([[:space:]'\"<>]|\$)"
+  local re_ok="(^|[[:space:]'\"])(--no-env-resolution|-q|--quiet|--services|--images|--volumes|--networks|--profiles)([[:space:]'\"<>]|\$)"
   printf '%s' "$1" | grep -Eq 'printenv|/environ|process\.env|os\.environ|getenv|ENV\[' && \
     block "il comando sul server stamperebbe le variabili d'ambiente, che contengono i segreti: non si usa."
   # docker compose config (anche /srv/app/dc config) scrive nell'uscita i valori dei file di ambiente dei servizi.

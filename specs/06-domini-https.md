@@ -25,6 +25,7 @@ RUN xcaddy build --with github.com/caddy-dns/cloudflare
 FROM caddy:2
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 COPY Caddyfile /etc/caddy/Caddyfile
+LABEL org.opencontainers.image.source="https://github.com/<utente>/<repo>"
 ```
 Fissare la versione di `caddy` nelle due righe `FROM` con lo stesso numero.
 
