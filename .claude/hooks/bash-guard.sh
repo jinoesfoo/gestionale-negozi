@@ -376,7 +376,7 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
   local re_dc="^(dc|compose|docker-compose)[[:space:]'\"]" re_cfg="(^|[[:space:]'\"])(config|convert)([[:space:]'\"<>]|\$)"
   local re_ok="(^|[[:space:]'\"])(--no-env-resolution|-q|--quiet|--services|--images|--volumes|--networks|--profiles)([[:space:]'\"<>]|\$)"
   local re_env="(^|[[:space:]'\"])env([[:space:]'\"<>]|\$)" re_insp="(^|[[:space:]'\"])inspect([[:space:]'\"<>]|\$)"
-  local re_insp_ok="(image|manifest|volume|network|buildx|builder|context|plugin)[[:space:]'\"]+inspect([[:space:]'\"<>]|\$)"
+  local re_insp_ok="(image|imagetools|manifest|volume|network|buildx|builder|context|plugin)[[:space:]'\"]+inspect([[:space:]'\"<>]|\$)"
   printf '%s' "$1" | grep -Eq 'printenv|/environ|process\.env|os\.environ|getenv|ENV\[' && \
     block "il comando sul server stamperebbe le variabili d'ambiente, che contengono i segreti: non si usa."
   # Il testo si divide ai separatori e a ogni dc/compose, anche dentro sh -c '…', dove le parole tra apici
@@ -397,7 +397,7 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
     [[ "$s" == *g* || "$s" == *b* ]] && block "nel comando sul server niente caratteri jolly fuori dagli apici ('$w'): potrebbero arrivare ai file di ambiente. Scrivi i nomi per intero."
     case "$w" in
       env) block "il comando sul server stamperebbe le variabili d'ambiente ('env'), che contengono i segreti: non si usa." ;;
-      inspect) case "$prec" in image|manifest|volume|network|buildx|builder|context|plugin) ;; *) block "docker inspect di un container sul server mostrerebbe le sue variabili d'ambiente, che contengono i segreti: non si usa (per lo stato: dc ps, dc logs)." ;; esac ;;
+      inspect) case "$prec" in image|imagetools|manifest|volume|network|buildx|builder|context|plugin) ;; *) block "docker inspect di un container sul server mostrerebbe le sue variabili d'ambiente, che contengono i segreti: non si usa (per lo stato: dc ps, dc logs)." ;; esac ;;
       /srv/app/env|/srv/app/env/*) block "il comando sul server tocca la cartella dei file di ambiente ('$w'): quei file li legge e li scrive solo l'utente." ;;
     esac
     credenziali_server "$w" "$w"
