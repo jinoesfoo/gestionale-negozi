@@ -161,7 +161,7 @@ metodo_in_arrivo() { # $1 commit verso cui va la cartella di lavoro: se cambia i
   return 0
 }
 git_ramo() { # switch e checkout di un ramo: si va su main o sul ramo di un compito, o si crea il ramo da origin/main
-  local k a nuovo="" dest=""; local -a pos=()
+  local k a nuovo="" dest="" notrack=0; local -a pos=()
   for ((k=0; k<${#r[@]}; k++)); do
     a="${r[$k]}"
     [[ "${rs[$k]}" == *d* ]] && block "git $sub con argomenti decisi da variabili non si controlla: scrivili per intero."
@@ -171,6 +171,7 @@ git_ramo() { # switch e checkout di un ramo: si va su main o sul ramo di un comp
       --detach|-d|--orphan|--orphan=*|-f|--force|--discard-changes|--overwrite-ignore|-m|--merge)
         block "git $sub $a non serve nel metodo: se serve, lo esegue l'utente." ;;
       -t|--track|--track=*) block "git $sub $a scrive nella configurazione di git, che la sandbox protegge: crea il ramo con --no-track." ;;
+      --no-track) notrack=1 ;;
       -*) ;;
       *) pos+=("$a") ;;
     esac
@@ -179,6 +180,9 @@ git_ramo() { # switch e checkout di un ramo: si va su main o sul ramo di un comp
     [[ "$nuovo" =~ $RAMI_OK ]] || block "il ramo di un compito si chiama come il compito, in minuscolo (per esempio fon-t01); per le prove prova-<nome>."
     dest="${pos[0]:-HEAD}"
     [ "$dest" = origin/main ] || [ "$dest" = HEAD ] || block "un ramo nuovo nasce da origin/main: git switch --no-track -c $nuovo origin/main."
+    if [ "$dest" = origin/main ] && [ "$notrack" = 0 ]; then   # senza --no-track git scrive l'upstream in .git/config, che la sandbox nega, e si ferma a metà
+      block "un ramo creato da origin/main vuole --no-track: senza, git scriverebbe l'upstream nella configurazione di git, che la sandbox protegge, e si fermerebbe a metà. Scrivi: git switch --no-track -c $nuovo origin/main."
+    fi
   else
     dest="${pos[0]:-}"; [ -z "$dest" ] && return 0
     [[ "$dest" =~ $RAMI_OK ]] || block "si cambia ramo solo verso main o verso il ramo di un compito ('$dest' non lo è): andare su un commit qualsiasi lo fa l'utente."
