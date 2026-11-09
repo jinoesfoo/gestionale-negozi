@@ -4,6 +4,8 @@
     "deny": [
       "PowerShell",
       "Monitor",
+      "EnterWorktree",
+      "ExitWorktree",
       "Read(.env)",
       "Read(.env.local)",
       "Read(.env.app)",
@@ -84,6 +86,13 @@
     ]
   },
   "hooks": {
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          { "type": "command", "command": "echo 'Il metodo non usa worktree: ogni postazione lavora in una sola cartella, perché hook, stato e controlli dei file del metodo sono legati a quella cartella (docs/due-postazioni.md). Se un worktree serve davvero, lo crea chi usa il computer, nel suo terminale e fuori dal progetto.' >&2; exit 2" }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [

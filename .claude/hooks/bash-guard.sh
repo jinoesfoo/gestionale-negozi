@@ -688,7 +688,12 @@ comandi_pnpm() { # i comandi che usano il database, il server di sviluppo o il b
     case "$a" in
       -*|run|exec|dlx) continue ;;
       test:int|test:e2e|dev|worker|db:migrate|cli|playwright)
-        [ "$a" = playwright ] && a=test:e2e
+        if [ "$a" = playwright ]; then
+          case "${argv[$((j+1))]:-}" in
+            install|install-deps) block "i browser di Playwright li installa l'utente nel suo terminale, dopo FON-T01 e dopo ogni aggiornamento di Playwright: pnpm exec playwright install --with-deps (AVVIO.md §1). Nella sandbox non si può (scrive in ~/.cache/ms-playwright) e nella gabbia non è ammesso." ;;
+          esac
+          a=test:e2e
+        fi
         block "pnpm $a non funziona nella sandbox (sul suo localhost non c'è il database): lancialo nella gabbia, da solo, con bash .claude/hooks/gabbia.sh $a." ;;
     esac
     return 0
