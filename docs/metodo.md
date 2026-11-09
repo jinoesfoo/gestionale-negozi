@@ -8,7 +8,7 @@ Il metodo è già nel repository: `CLAUDE.md`, la cartella `.claude/` (hook, imp
 
 1. Installa `jq` e `bubblewrap`, che gli hook usano (`AVVIO.md`, passo 1).
 2. Dai il nome alla postazione, dal tuo terminale: `bash .claude/hooks/imposta-postazione.sh yoo` (oppure `joo`). Fase, postazione e copia del registro stanno fuori dal progetto, nella cartella di stato degli hook (`~/.local/state/gestionale-negozi/`); il registro delle approvazioni sta nel repository, in `registro/compiti-<postazione>.log`: è la traccia di cosa hai approvato e quando.
-3. Apri Claude Code nella cartella del progetto e scrivi `/hooks`: devi vedere gli hook `SessionStart`, `UserPromptSubmit`, `PreToolUse` e `Stop`. Se non li vedi, riavvia Claude Code.
+3. Apri Claude Code nella cartella del progetto e scrivi `/hooks`: devi vedere gli hook `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Stop` e `WorktreeCreate`. Se non li vedi, riavvia Claude Code.
 
 ## Il ciclo di ogni compito
 

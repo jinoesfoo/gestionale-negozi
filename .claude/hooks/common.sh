@@ -233,14 +233,18 @@ git_cambiata() { [ -f "$GITDIR_FILE" ] && [ "$(impronta_git)" != "$(cat "$GITDIR
 # e quelli dentro un repository annidato, che git non attraversa. La ricerca non entra in node_modules e .git, a qualunque
 # livello, né in .next, dist e coverage della radice (docs/due-postazioni.md, «Limiti»). .claude/settings.local.json lo
 # scrive Claude Code stesso: non conta come file nuovo, ma il suo contenuto si controlla qui sotto. Gli errori di find (una
-# cartella non leggibile) restano nell'elenco e valgono come alterazione: una cartella resa illeggibile apposta non nasconde nulla.
+# cartella non leggibile) restano nell'elenco e valgono come alterazione: una cartella resa illeggibile apposta non nasconde
+# nulla. Non conta solo «No such file or directory», una voce sparita fra la lettura della cartella e il suo controllo (un
+# test che svuota test-results/ mentre arriva un messaggio): ciò che non c'è più non si può caricare. LC_ALL=C tiene i
+# messaggi di find in inglese, così il filtro vale con ogni lingua del sistema.
+errori_find() { grep -vE '^find: .*: No such file or directory$' | sed -E 's|^find: (.*)$|cartella non leggibile, find dice: \1|; s|^\./||'; }
 metodo_modificato() {
   (cd "$PROJECT_DIR" 2>/dev/null && git rev-parse -q --verify HEAD >/dev/null 2>&1 && {
     git diff --no-ext-diff --name-only HEAD -- "${METODO_PATHSPEC[@]}" 2>/dev/null
-    find . \( -name node_modules -o -name .git -o -path ./.next -o -path ./dist -o -path ./coverage \) -prune -o \
+    LC_ALL=C find . \( -name node_modules -o -name .git -o -path ./.next -o -path ./dist -o -path ./coverage \) -prune -o \
       \( -name CLAUDE.md -o -name CLAUDE.local.md -o -path '*/.claude/*' -o -path ./.mcp.json -o -path ./.gitmodules \
          -o -path ./.github/CODEOWNERS -o -path ./AVVIO.md -o -path ./docs/metodo.md -o -path ./docs/due-postazioni.md \) \
-      ! -type d ! -path ./.claude/settings.local.json -print 2>&1 | sed -E 's|^find: (.*)$|cartella non leggibile, find dice: \1|; s|^\./||' \
+      ! -type d ! -path ./.claude/settings.local.json -print 2>&1 | errori_find \
       | grep -vxF -f <(git ls-files -- "${METODO_PATHSPEC[@]}" 2>/dev/null)
   } | sort -u)
   # nelle impostazioni locali Claude Code salva da sé le approvazioni (permissions: allow, deny, ask); ogni altra chiave

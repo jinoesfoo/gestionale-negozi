@@ -690,9 +690,11 @@ comandi_pnpm() { # i comandi che usano il database, il server di sviluppo o il b
       test:int|test:e2e|dev|worker|db:migrate|cli|playwright)
         if [ "$a" = playwright ]; then
           case "${argv[$((j+1))]:-}" in
-            install|install-deps) block "i browser di Playwright li installa l'utente nel suo terminale, dopo FON-T01 e dopo ogni aggiornamento di Playwright: pnpm exec playwright install --with-deps (AVVIO.md §1). Nella sandbox non si può (scrive in ~/.cache/ms-playwright) e nella gabbia non è ammesso." ;;
+            install|install-deps|uninstall) block "i browser di Playwright li installa (e li toglie) l'utente nel suo terminale, dopo FON-T01 e dopo ogni aggiornamento di Playwright: pnpm exec playwright install --with-deps (AVVIO.md §1). Nella sandbox non si può (scrive in ~/.cache/ms-playwright) e nella gabbia non è ammesso." ;;
+            ''|--version|-V|--help|-h|merge-reports) return 0 ;;   # sola lettura, nessun browser: passano
+            test) a=test:e2e ;;
+            *) block "pnpm exec playwright ${argv[$((j+1))]} non si usa dalla sandbox: apre un browser o un server locale (show-report, show-trace, codegen, open, screenshot, pdf) oppure scrive fuori dal progetto. Le prove girano nella gabbia, bash .claude/hooks/gabbia.sh test:e2e, e i rapporti si leggono come file (playwright-report/, test-results/)." ;;
           esac
-          a=test:e2e
         fi
         block "pnpm $a non funziona nella sandbox (sul suo localhost non c'è il database): lancialo nella gabbia, da solo, con bash .claude/hooks/gabbia.sh $a." ;;
     esac
