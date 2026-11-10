@@ -30,7 +30,15 @@ if is_secret_file "$rel"; then
   block "'$rel' contiene segreti e non si legge né si modifica. Usa il file *.example corrispondente."
 fi
 
-# Le letture sono sempre permesse (tranne i segreti)
+# 1b. Le sessioni salvate delle prove e le credenziali di questo computer (common.sh, tocca_credenziali)
+case "$rel" in
+  playwright/.auth|playwright/.auth/*) block "'$rel' è una sessione salvata delle prove: è una credenziale, la usano solo i test nella gabbia, e non si legge né si modifica." ;;
+esac
+modo=""; [ "$tool" = Grep ] && modo=contiene
+tocca_credenziali "$(canon_path "$path")" "$modo" && \
+  block "'$path' contiene credenziali di questo computer (chiavi SSH, accessi di Docker, GitHub e Stripe, portachiavi, accesso di Claude Code): non si legge né si modifica."
+
+# Le letture sono sempre permesse (tranne i segreti e le credenziali)
 case "$tool" in Read|Grep) exit 0 ;; esac
 
 # 2. I file del metodo (tutta .claude/, CLAUDE.md, AVVIO.md, docs/metodo.md, docs/due-postazioni.md, il registro,

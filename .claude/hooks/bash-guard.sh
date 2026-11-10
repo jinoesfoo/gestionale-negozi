@@ -403,6 +403,63 @@ credenziali_server() { # $1 percorso sul server, $2 come l'ha scritto Claude, $3
   fi
   return 0
 }
+credenziali_locali() { # $1 percorso assoluto canonico, $2 come l'ha scritto Claude, $3 "contiene" (facoltativo)
+  tocca_credenziali "$1" "${3:-}" && \
+    block "il comando arriverebbe alle credenziali di questo computer ('$2'): chiavi SSH, accessi di Docker, GitHub e Stripe, portachiavi e accesso di Claude Code non si leggono, non si copiano e non si montano (docs/due-postazioni.md, «Protezione del metodo»)."
+  return 0
+}
+parola_locale() { # $1 parola di un comando: niente credenziali di questo computer; fuori dalla sandbox nemmeno sessioni salvate
+  local w="$1" v abs; local -a cand=()
+  case "$w" in --*=*) w="${w#*=}" ;; -*) return 0 ;; esac
+  cand+=("$w")
+  [[ "$w" == *=* ]] && cand+=("${w#*=}")
+  [[ "$w" =~ (^|,)(source|src)=([^,]+) ]] && cand+=("${BASH_REMATCH[3]}")
+  for v in "${cand[@]}"; do
+    [ -n "$ESCLUSO" ] && [[ "$v" == *playwright/.auth* ]] && \
+      block "il comando gira fuori dalla sandbox e nomina una sessione salvata delle prove ('$v'): è una credenziale, la usano solo i test, nella gabbia."
+    [[ "$v" == /* || "$v" == "~"* || "$v" == *..* || "$v" == [A-Za-z]:/* ]] || continue
+    abs="$(risolvi "$v")"; [ "$abs" = "?" ] && continue
+    credenziali_locali "$abs" "$v"
+  done
+  return 0
+}
+sorgente_locale() { # $1 percorso di questo computer che un comando fuori dalla sandbox legge: sorgenti di scp e rsync, volumi e cp di docker, «<»
+  local t="$1" abs rel x r
+  [[ "$t" == *[*?[{]* ]] && block "nei percorsi che un comando fuori dalla sandbox legge niente caratteri jolly né graffe ('$t'): scrivi i nomi per intero."
+  abs="$(risolvi "$t")"
+  [ "$abs" = "?" ] && block "dopo un cd che non si può risolvere, o con ~- e ~utente, un percorso letto fuori dalla sandbox non si controlla ('$t'): scrivilo per intero."
+  credenziali_locali "$abs" "$t" contiene
+  rel="$(rel_path "$abs")"
+  { is_secret_file "$rel" || [[ "$rel" == playwright/.auth || "$rel" == playwright/.auth/* ]]; } && \
+    block "il comando gira fuori dalla sandbox e leggerebbe '$t', che contiene segreti (un file di ambiente o una sessione salvata): non si copia, non si monta e non si legge."
+  [[ "$PROJECT_DIR_SLASH" == "${abs%/}" || "$PROJECT_DIR_SLASH" == "${abs%/}"/* ]] && \
+    block "il comando gira fuori dalla sandbox e prenderebbe tutta la cartella del progetto ('$t'), con i file di ambiente e le sessioni salvate: indica solo le cartelle che servono."
+  [ -d "$abs" ] || return 0
+  while IFS= read -r x; do
+    r="$(rel_path "$abs/${x#./}")"
+    { is_secret_file "$r" || [[ "$x" == */playwright/.auth ]]; } && \
+      block "la cartella '$t' contiene segreti ('$r'): il comando gira fuori dalla sandbox e li leggerebbe. Indica solo i file che servono."
+  done < <(cd "$abs" 2>/dev/null && find . -maxdepth 8 -name node_modules -prune -o \( -name .env -o -name '.env.*' -o -name '*.env' -o -path '*/playwright/.auth' \) -print 2>/dev/null)
+  return 0
+}
+legge_file() { # $1 file letto con «<»: niente file di ambiente reali né credenziali; per un comando fuori dalla sandbox, come le sue sorgenti
+  local abs
+  abs="$(risolvi "$1")"
+  [ "$abs" != "?" ] && is_secret_file "$(rel_path "$abs")" && \
+    block "il comando legge un file di ambiente reale ('$1'). Usa i file *.example; quelli dei server li gestisce l'utente."
+  parola_locale "$1"
+  [ -n "$ESCLUSO" ] && sorgente_locale "$1"
+  return 0
+}
+contesto_docker() { # $1 contesto di costruzione: docker lo legge fuori dalla sandbox, quindi niente cartelle che contengono le credenziali
+  local abs
+  [ "$1" = - ] && return 0
+  [[ "$1" == *://* ]] && return 0
+  abs="$(risolvi "$1")"
+  [ "$abs" = "?" ] && block "il contesto di docker build dopo un cd che non si può risolvere, o con ~- e ~utente, non si controlla ('$1'): scrivilo per intero."
+  credenziali_locali "$abs" "$1" contiene
+  return 0
+}
 segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segreti (file di ambiente, variabili dei processi)
   local riga w s prec="" pezzo
   local re_dc="^(dc|compose|docker-compose)[[:space:]'\"]" re_cfg="(^|[[:space:]'\"])(config|convert)([[:space:]'\"<>]|\$)"
@@ -472,7 +529,10 @@ analizza_ssh() { # $1 indice, $2 programma. ssh, scp e rsync girano fuori dalla 
   local k p ultimo_k=$(( ${#pos[@]} - 1 ))
   for k in "${!pos[@]}"; do
     a="${pos[$k]}"
-    [[ "$a" =~ ^([^/@:]+@)?[A-Za-z0-9._-]+: ]] || continue
+    if ! [[ "$a" =~ ^([^/@:]+@)?[A-Za-z0-9._-]+: ]]; then   # un percorso di questo computer
+      { [ "${#pos[@]}" -ge 2 ] && [ "$k" -eq "$ultimo_k" ]; } || sorgente_locale "$a"   # una sorgente: scp e rsync la leggono fuori dalla sandbox
+      continue
+    fi
     host_ok "${a%%:*}"
     [ "${#pos[@]}" -ge 2 ] && [ "$k" -eq "$ultimo_k" ] && continue   # la destinazione sul server: lì non si legge nulla
     p="${a#*:}"; p="${p%/}"                                       # una sorgente sul server: non deve portare con sé i segreti
@@ -498,6 +558,7 @@ monta() { # una cartella dell'host montata in un container non deve contenere i 
   for s in /var/run/docker.sock /run/docker.sock; do
     [[ "$s" == "${abs%/}" || "$s" == "${abs%/}"/* ]] && block "montare il socket di Docker in un container gli dà il controllo del computer: nel metodo non si usa."
   done
+  sorgente_locale "$1"   # niente credenziali, file di ambiente o sessioni salvate nel container
   return 0
 }
 volume() { # -v sorgente:destinazione, --mount type=bind,source=…
@@ -562,6 +623,7 @@ analizza_docker() { # $1 indice. Docker gira fuori dalla sandbox e un container 
         continue ;;
       --opt=device=*) monta "${a#--opt=device=}"; continue ;;
       --output=*) uscita_docker "${a#--output=}"; continue ;;
+      --ssh|--ssh=*) block "docker $sub --ssh porterebbe nella costruzione l'agente SSH di questo computer, con l'accesso ai server: nel metodo non si usa." ;;
       --*) continue ;;
       -[a-zA-Z]*)   # opzioni corte in gruppo (-itv, -dv/x:/y): un -v può stare in fondo
         g="${a#-}"; salta=0
@@ -578,7 +640,15 @@ analizza_docker() { # $1 indice. Docker gira fuori dalla sandbox e un container 
     pos+=("$a")
   done
   [ "$sub" = compose ] && case "$csub" in up|run|create|start|restart|watch) compose_controlla "${cglob[@]}" ;; esac
-  if [ "$sub" = cp ] && [ "${#pos[@]}" -ge 2 ] && [[ "${pos[-1]}" != *:* ]]; then scrive "${pos[-1]}" ""; fi
+  if [ "$sub" = cp ] && [ "${#pos[@]}" -ge 2 ]; then
+    if [[ "${pos[-1]}" != *:* ]]; then scrive "${pos[-1]}" ""   # dal container a questo computer: una scrittura
+    else for ((k=0; k<${#pos[@]}-1; k++)); do [[ "${pos[$k]}" == *:* || "${pos[$k]}" == - ]] || sorgente_locale "${pos[$k]}"; done   # nel container: una lettura fuori dalla sandbox
+    fi
+  fi
+  case "$sub" in   # il contesto di costruzione
+    build) [ "${#pos[@]}" -ge 1 ] && contesto_docker "${pos[-1]}" ;;
+    buildx|image|builder) [ "${pos[0]:-}" = build ] && [ "${#pos[@]}" -ge 2 ] && contesto_docker "${pos[-1]}" ;;
+  esac
   return 0
 }
 
@@ -623,6 +693,8 @@ codice_in_linea() { # codice passato a python -c, node -e e simili, o in un here
   local senza_esempi
   echo "$1" | grep -Eqi '\.claude|CLAUDE(\.local)?\.md|AVVIO\.md|metodo\.md|due-postazioni|compito-corrente|registro/|postazione|corsie\.txt|gestionale-negozi/|\.local/state|\.git/' && \
     block "un programma in linea che nomina i file del metodo non è permesso."
+  echo "$1" | grep -Eqi '\.ssh/|\.docker/|\.config/(gh|stripe)|\.gnupg|keyrings|\.credentials\.json|playwright/\.auth' && \
+    block "un programma in linea che nomina le credenziali di questo computer o le sessioni salvate delle prove non è permesso."
   senza_esempi="$(printf '%s' "$1" | sed -E 's/[A-Za-z0-9._/-]*\.example[A-Za-z0-9._-]*//g')"
   printf '%s' "$senza_esempi" | grep -Eqi '\.env|/env/' && \
     block "un programma in linea che nomina un file di ambiente non è permesso: i segreti non si leggono. Usa i file *.example."
@@ -686,8 +758,27 @@ gabbia_comando() { # bash .claude/hooks/gabbia.sh <comando>: esce dalla sandbox,
   [[ "${argv[$((i+2))]:-}" =~ $GABBIA_OK ]] || block "nella gabbia girano solo test, test:int, test:e2e, dev, worker, db:migrate e cli (e --prova)."
   ESCLUSO="la gabbia"
 }
-comandi_pnpm() { # i comandi che usano il database, il server di sviluppo o il browser girano nella gabbia
-  local i="$1" j a
+comandi_pnpm() { # i comandi che usano il database, il server di sviluppo o il browser girano nella gabbia; il comando
+                 # lanciato con exec o dlx (pnpx è pnpm dlx) si controlla come se fosse scritto da solo
+  local i="$1" j a t e=-1 salva
+  if [ "${argv[$i]##*/}" = pnpx ]; then e="$i"
+  else for ((j=i+1; j<n; j++)); do case "${argv[$j]}" in exec|dlx) e="$j"; break ;; esac; done   # anche dopo -C <cartella> o --filter
+  fi
+  if [ "$e" -ge 0 ]; then
+    for ((j=e+1; j<n; j++)); do
+      a="${argv[$j]}"
+      case "$a" in
+        -c|--shell-mode)   # il resto della riga è un comando per la shell
+          for ((t=j+1; t<n; t++)); do [[ "${segni[$t]}" == *d* ]] && block "pnpm exec -c con un testo deciso da variabili o comandi annidati non si controlla: scrivi il comando per intero."; done
+          [ $((j+1)) -lt "$n" ] || return 0
+          salva="$CWD"; analizza_testo "${argv[*]:$((j+1))}"; CWD="$salva"; return 0 ;;
+        -C|--dir|-F|--filter|--filter-prod|--reporter|--loglevel|--workspace-concurrency|--resume-from|--package) j=$((j+1)); continue ;;
+        -*) continue ;;
+        playwright) break ;;   # lo controlla il ciclo qui sotto
+      esac
+      analizza_da "$j"; return 0
+    done
+  fi
   for ((j=i+1; j<n; j++)); do
     a="${argv[$j]}"
     case "$a" in
@@ -724,6 +815,7 @@ analizza_da() { # $1 indice del nome del comando in argv
   for ((j=i; j<n; j++)); do
     a="${argv[$j]}"
     case "$a" in *imposta-postazione*|*hooks/imposta*) block "il nome della postazione lo imposta l'utente, nel suo terminale, una volta sola." ;; esac
+    [ "$prog" = ssh ] || parola_locale "$a"   # le credenziali di questo computer (per ssh gli argomenti sono il comando remoto)
     [[ "$a" == -* || "$a" == *.example* ]] && continue
     [ "$prog" = ssh ] && continue    # per ssh gli argomenti sono il comando remoto: lo controlla segreti_remoti
     if [[ "$a" == *.env* || "$a" == */env/* ]]; then
@@ -786,7 +878,8 @@ analizza_da() { # $1 indice del nome del comando in argv
         esac
       done
       return 0 ;;
-    pnpm|npm|npx|yarn) comandi_pnpm "$i"; return 0 ;;
+    pnpm|pnpx) comandi_pnpm "$i"; return 0 ;;
+    npm|npx|yarn|yarnpkg|bunx|corepack) block "nel progetto si usa pnpm: al posto di $prog usa pnpm (pnpm exec, pnpm dlx, pnpm view). npm serve solo all'utente, per installare pnpm (AVVIO.md §1)." ;;
     cd|pushd) cambia_cartella "$i"; return 0 ;;
     popd) CWD="?"; return 0 ;;
     find) analizza_find "$i"; return 0 ;;
@@ -798,7 +891,7 @@ analizza_da() { # $1 indice del nome del comando in argv
   analizza_scritture "$i" "$prog"
   return 0
 }
-analizza_comando() { # usa argv, segni, redir, rsegni, ncmd del chiamante
+analizza_comando() { # usa argv, segni, redir, rsegni, iredir, ncmd del chiamante
   local n=${#argv[@]} i=0 k
   for k in "${!redir[@]}"; do scrive "${redir[$k]}" "${rsegni[$k]}"; done
   [ "$n" -eq 0 ] && return 0
@@ -808,10 +901,11 @@ analizza_comando() { # usa argv, segni, redir, rsegni, ncmd del chiamante
     i=$((i+1))
   done
   [ "$i" -lt "$n" ] && analizza_da "$i"
+  for k in "${!iredir[@]}"; do legge_file "${iredir[$k]}"; done   # i file letti con «<»
   return 0
 }
 analizza_testo() { # $1 testo con uno o più comandi
-  local -a argv=() segni=() redir=() rsegni=()
+  local -a argv=() segni=() redir=() rsegni=() iredir=() isegni=()
   local riga tipo s v attesa="" ncmd=0 ops="" dyn=0 hd_libero=0 ultimo="" hd_qui=0 qui_testo="" salva_h
   LIVELLO=$((LIVELLO+1))
   while IFS= read -r riga; do
@@ -828,7 +922,7 @@ analizza_testo() { # $1 testo con uno o più comandi
       O)
         case "$v" in
           '>'|'>>'|'>|'|'<'|'<<'|'<<<'|'>&'|'<&'|'>>&') attesa="$v" ;;
-          *) ops="$ops$v"; analizza_comando; argv=(); segni=(); redir=(); rsegni=(); hd_qui=0; qui_testo="" ;;
+          *) ops="$ops$v"; analizza_comando; argv=(); segni=(); redir=(); rsegni=(); iredir=(); isegni=(); hd_qui=0; qui_testo="" ;;
         esac
         continue ;;
     esac
@@ -838,6 +932,7 @@ analizza_testo() { # $1 testo con uno o più comandi
       case "$attesa" in
         '>'|'>>'|'>|') redir+=("$v"); rsegni+=("$s") ;;
         '>&'|'>>&') [[ "$v" =~ ^([0-9]+|-)$ ]] || { redir+=("$v"); rsegni+=("$s"); } ;;
+        '<') iredir+=("$v"); isegni+=("$s") ;;
         '<<') [[ "$s" == *q* ]] || hd_libero=1; hd_qui=1 ;;   # senza apici la shell espande il testo dell'heredoc
         '<<<') qui_testo="$v" ;;
       esac

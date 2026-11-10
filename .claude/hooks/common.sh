@@ -200,6 +200,23 @@ antenato_protetto() { # $1 percorso canonico assoluto
   return 1
 }
 
+# Le credenziali di questo computer. La sandbox di suo legge tutto il computer, credenziali comprese, e non ne ha
+# un elenco proprio: settings.json le nega con i divieti Read(...), che valgono anche per lei (~/.ssh, ~/.docker,
+# ~/.config/stripe, l'accesso di Claude Code), tranne ~/.config/gh, che gh e git usano dalla sandbox. Gli hook non
+# le lasciano aprire agli strumenti di Claude, nominare nei comandi, né copiare o montare ai comandi che girano fuori
+# dalla sandbox (docker, scp, rsync); la gabbia le nasconde.
+CRED_LOCALI=(.ssh .docker .config/stripe .config/gh .gnupg .local/share/keyrings .claude/.credentials.json)
+tocca_credenziali() { # $1 percorso assoluto canonico, $2 "contiene" per contare anche le cartelle che le contengono
+  local c d a="${1%/}"
+  [ -z "$a" ] && a=/
+  for c in "${CRED_LOCALI[@]}"; do
+    d="$HOME_SLASH/$c"
+    [[ "$a" == "$d" || "$a" == "$d"/* ]] && return 0
+    [ "${2:-}" = contiene ] && { [ "$a" = / ] || [[ "$d" == "$a"/* ]]; } && return 0
+  done
+  return 1
+}
+
 is_secret_file() {
   case "$1" in
     *..*) ;;                                     # con ".." le eccezioni qui sotto non valgono
@@ -317,7 +334,7 @@ registro_alterato() { [ -f "$LOG_COPY" ] && [ -f "$LOG_FILE" ] && ! cmp -s "$LOG
 # Il codice del progetto che gira fuori dalla sandbox di Claude Code (i controlli dello Stop e, con gabbia.sh,
 # test di integrazione, end-to-end, server di sviluppo, worker, migrazioni, CLI) gira in una gabbia di bubblewrap:
 # rete e progetto liberi, ma file del metodo, .git e registro in sola lettura, il resto del computer in sola lettura,
-# senza chiavi SSH, credenziali di GitHub, Docker e portachiavi. Uscita 125: la gabbia non parte.
+# senza chiavi SSH, credenziali di GitHub, Docker e Stripe, portachiavi e accesso di Claude Code. Uscita 125: la gabbia non parte.
 gabbia() {
   command -v bwrap >/dev/null 2>&1 || { echo "manca bubblewrap (bwrap): sudo apt install bubblewrap (AVVIO.md, passo 1)" >&2; return 125; }
   local p; local -a a=(--ro-bind / / --dev-bind /dev /dev --proc /proc --tmpfs /tmp --bind "$PROJECT_DIR" "$PROJECT_DIR")
@@ -329,6 +346,7 @@ gabbia() {
   for p in "$HOME/.ssh" "$HOME/.config/gh" "$HOME/.docker" "$HOME/.config/stripe" "$HOME/.gnupg" "$HOME/.local/share/keyrings" "${XDG_RUNTIME_DIR:-}"; do
     [ -n "$p" ] && [ -d "$p" ] && a+=(--tmpfs "$p")
   done
+  [ -f "$HOME/.claude/.credentials.json" ] && a+=(--ro-bind /dev/null "$HOME/.claude/.credentials.json")   # l'accesso di Claude Code
   for p in /run/docker.sock /var/run/docker.sock; do [ -S "$p" ] && a+=(--ro-bind /dev/null "$p"); done
   bwrap "${a[@]}" --new-session --die-with-parent --unsetenv SSH_AUTH_SOCK --unsetenv DOCKER_HOST \
     --unsetenv GH_TOKEN --unsetenv GITHUB_TOKEN --setenv NEXT_TELEMETRY_DISABLED 1 --chdir "$PROJECT_DIR" -- "$@"
