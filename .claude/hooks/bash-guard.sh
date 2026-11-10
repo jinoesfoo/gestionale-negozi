@@ -20,7 +20,7 @@ fase="$(current_phase)"
 task="$(current_task)"
 TOKENIZER="$HOOKS_DIR/tokenizza.awk"
 [ -f "$TOKENIZER" ] || block "manca .claude/hooks/tokenizza.awk: i comandi non si possono controllare."
-MSG_PROT="i file del metodo (.claude/, CLAUDE.md, AVVIO.md, docs/metodo.md, docs/due-postazioni.md, il registro, .git, le impostazioni di Claude Code, la cartella di stato degli hook) li cambia solo l'utente"
+MSG_PROT="i file del metodo (.claude/, CLAUDE.md, CLAUDE.local.md, .mcp.json, .gitmodules, .github/CODEOWNERS, AVVIO.md, docs/metodo.md, docs/due-postazioni.md, il registro, .git, le impostazioni di Claude Code, la cartella di stato degli hook) li cambia solo l'utente"
 LIVELLO=0      # 1 = il comando scritto da Claude; più su = dentro bash -c o una sostituzione
 ESCLUSO=""     # il comando del primo livello che gira fuori dalla sandbox (settings.json, excludedCommands)
 
@@ -31,11 +31,20 @@ variabile_vietata() { # $1 nome di una variabile assegnata davanti a un comando,
   return 0
 }
 UTENTE="${USER:-${LOGNAME:-$(id -un 2>/dev/null)}}"
-casa_in_chiaro() { # $1 parola -> CC: ~utente, $HOME e ${HOME} come ~; $USER e $LOGNAME con il nome dell'utente
+casa_in_chiaro() { # $1 parola -> CC: ~utente, $HOME e ${HOME} come ~; $PWD come ~+ e $OLDPWD come ~-; $XDG_CONFIG_HOME e
+                   # $XDG_DATA_HOME con il loro valore su Ubuntu (~/.config, ~/.local/share); $USER e $LOGNAME con il nome dell'utente
   CC="$1"
   case "$CC" in
     '$HOME'|'$HOME/'*) CC="~${CC:5}" ;;
     '${HOME}'|'${HOME}/'*) CC="~${CC:7}" ;;
+    '$PWD'|'$PWD/'*) CC="~+${CC:4}" ;;
+    '${PWD}'|'${PWD}/'*) CC="~+${CC:6}" ;;
+    '$OLDPWD'|'$OLDPWD/'*) CC="~-${CC:7}" ;;
+    '${OLDPWD}'|'${OLDPWD}/'*) CC="~-${CC:9}" ;;
+    '$XDG_CONFIG_HOME'|'$XDG_CONFIG_HOME/'*) CC="~/.config${CC:16}" ;;
+    '${XDG_CONFIG_HOME}'|'${XDG_CONFIG_HOME}/'*) CC="~/.config${CC:18}" ;;
+    '$XDG_DATA_HOME'|'$XDG_DATA_HOME/'*) CC="~/.local/share${CC:14}" ;;
+    '${XDG_DATA_HOME}'|'${XDG_DATA_HOME}/'*) CC="~/.local/share${CC:16}" ;;
     "~$UTENTE"|"~$UTENTE/"*) [ -n "$UTENTE" ] && CC="~${CC:$((${#UTENTE}+1))}" ;;
   esac
   if [ -n "$UTENTE" ] && [[ "$CC" == *'$'* ]]; then
@@ -61,7 +70,11 @@ classifica() { # $1 percorso assoluto canonico in cui un comando scrive
   local abs="$1" rel; rel="$(rel_path "$abs")"
   protetto "$rel" && block "$MSG_PROT ('$rel')."
   antenato_protetto "$abs" && block "il comando scriverebbe su '$rel', che contiene i file del metodo: indica il file preciso."
-  case "$rel" in /*|[a-zA-Z]:/*) return 0 ;; esac      # fuori dal progetto: lì decide la sandbox
+  case "$rel" in /*|[a-zA-Z]:/*)   # fuori dal progetto decide la sandbox, ma non per i comandi che girano fuori da lei
+    tocca_credenziali "$abs" && block "il comando scriverebbe nelle credenziali di questo computer ('$rel'): non si scrivono, non si sostituiscono e non si cancellano (docs/due-postazioni.md, «Protezione del metodo»)."
+    if [ -n "$ESCLUSO" ]; then case "$abs" in /tmp|/tmp/*|/dev/*) ;; *) block "$ESCLUSO gira fuori dalla sandbox: fuori dal progetto scrive solo in /tmp ('$rel'), perché lì nessun muro lo ferma." ;; esac; fi
+    return 0 ;;
+  esac
   is_secret_file "$rel" && return 0                     # i file di ambiente li controlla la regola sui segreti
   case "$fase" in
     test) is_test_file "$rel" || is_test_tooling_file "$rel" || is_free_file "$rel" || \
@@ -386,8 +399,10 @@ analizza_gh() { # $1 indice di "gh" in argv
 }
 
 # --- server -----------------------------------------------------------------------------------------
-host_ok() { # verso i server si va solo con i nomi test e prod della configurazione SSH: così vale la conferma per prod
-  local h="${1#*@}"; h="${h%%:*}"
+host_ok() { # verso i server si va solo con i nomi test e prod della configurazione SSH, con il suo utente e la sua chiave:
+           # così vale la conferma per prod, e Claude entra solo come deploy (AVVIO.md §1)
+  local h="${1%%:*}"
+  [[ "$h" == *@* ]] && block "verso i server non si sceglie l'utente ('$1'): lo decide la configurazione SSH (User deploy e la chiave di yoo, AVVIO.md §1). Scrivi solo test o prod."
   case "$h" in test|prod) return 0 ;; esac
   block "verso i server si usano solo i nomi test e prod della configurazione SSH (AVVIO.md): '$1' non va bene."
 }
@@ -426,35 +441,122 @@ credenziali_locali() { # $1 percorso assoluto canonico, $2 come l'ha scritto Cla
 fuori_progetto() { # vero se la cartella in cui gira il comando è nota e fuori dal progetto
   [ "$CWD" != "?" ] && [[ "$CWD" != "$PROJECT_DIR_SLASH" && "$CWD" != "$PROJECT_DIR_SLASH"/* ]]
 }
-parola_locale() { # $1 parola di un comando, $2 "contiene" se il programma legge le cartelle per intero (legge_cartelle):
-                  # niente credenziali di questo computer; fuori dalla sandbox nemmeno sessioni salvate
-  local w="$1" v abs modo scritto; local -a cand=()
-  case "$w" in --*=*) w="${w#*=}" ;; -*) return 0 ;; esac
+coda_fissa() { # $1 parola con $(…), `…`, ${…} o $NOME -> la parte fissa che segue l'ultimo pezzo deciso al momento
+  local r="$1" re='\$([A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-])(.*)$'
+  [[ "$r" == *'$('* || "$r" == *'`'* || "$r" == *'${'* ]] && r="${r##*[)\`\}]}"
+  while [[ "$r" =~ $re ]]; do r="${BASH_REMATCH[2]}"; done
+  printf '%s' "$r"
+}
+coda_credenziali() { # $1 parte fissa di un percorso la cui base non si conosce (dopo un cd che non si può risolvere, con ~- o
+                     # ~utente, o dopo una variabile o un $(…)), $2 come l'ha scritto Claude, $3 "contiene": si ferma se, con
+                     # una base qualunque, porterebbe alle credenziali (gh/hosts.yml dopo un cd in ~/.config, .ssh/… dopo la casa)
+  local r="$1" c t
+  while :; do case "$r" in /*) r="${r#/}" ;; ./*) r="${r#./}" ;; ../*) r="${r#../}" ;; .|..) r="" ;; *) break ;; esac; done
+  r="${r%/}"
+  for c in "${CRED_LOCALI[@]}"; do
+    [[ "$r" == */"$c" || "$r" == */"$c"/* ]] && credenziali_locali "$HOME_SLASH/$c" "$2"
+    t="$c"
+    while :; do   # la base può contenere la parte iniziale della credenziale: si confronta ogni sua coda
+      [[ "$r" == "$t" || "$r" == "$t"/* ]] && credenziali_locali "$HOME_SLASH/$c" "$2"
+      [ "${3:-}" = contiene ] && [ -n "$r" ] && [[ "$t" == "$r"/* ]] && credenziali_locali "$HOME_SLASH/$c" "$2"
+      [[ "$t" == */* ]] || break
+      t="${t#*/}"
+    done
+  done
+  [ "${3:-}" = contiene ] && case "${r##*/}" in ""|home|"${HOME_SLASH##*/}") credenziali_locali "$HOME_SLASH" "$2" contiene ;; esac
+  return 0
+}
+parola_locale() { # $1 parola di un comando, $2 "contiene" se il programma legge le cartelle per intero (legge_cartelle),
+                  # $3 i segni della parola: niente credenziali di questo computer; fuori dalla sandbox nemmeno sessioni salvate
+  local w="$1" v abs modo scritto re_att='^-[A-Za-z0-9]+([/~@.$<].*)$'; local -a cand=()
+  case "$w" in
+    --*=*) w="${w#*=}" ;;
+    -*) [[ "$w" =~ $re_att ]] || return 0; w="${BASH_REMATCH[1]}" ;;   # il valore attaccato a un'opzione corta: -T/…, -C~/…
+  esac
   cand+=("$w")
   [[ "$w" == *=* ]] && cand+=("${w#*=}")
   [[ "$w" =~ (^|,)(source|src)=([^,]+) ]] && cand+=("${BASH_REMATCH[3]}")
   for v in "${cand[@]}"; do
+    v="${v#[@<]}"                               # curl -d @file, curl -F campo=<file
     [ -n "$ESCLUSO" ] && [[ "$v" == *playwright/.auth* ]] && \
       block "il comando gira fuori dalla sandbox e nomina una sessione salvata delle prove ('$v'): è una credenziale, la usano solo i test, nella gabbia."
     scritto="$v"; modo="${2:-}"
     [[ "$v" == file://* ]] && v="${v#file://}"   # curl file:///…
-    casa_in_chiaro "$v"; v="$CC"                # $HOME/…, ${HOME}/…, ~utente/…, /home/$USER/…
+    casa_in_chiaro "$v"; v="$CC"                # $HOME/…, ${HOME}/…, ~utente/…, /home/$USER/…, $PWD/…
+    if [[ "${3:-}" == *d* ]] && [[ "$v" == *'$'* || "$v" == *'`'* ]]; then   # una parte decisa da una variabile o da un comando:
+      coda_credenziali "$(coda_fissa "$v")" "$scritto" "$modo"; continue     # conta la parte fissa che la segue
+    fi
     if [[ "$v" == *[*?[{]* ]]; then             # caratteri jolly o graffe: conta la cartella fissa che li precede, con ciò che contiene
       v="${v%%[*?[{]*}"
       case "$v" in */*) v="${v%/*}"; [ -z "$v" ] && v=/ ;; "~"*) ;; *) v=. ;; esac
       modo=contiene
     fi
-    # un percorso relativo si controlla quando il comando gira fuori dal progetto (dopo un cd)
-    [[ "$v" == /* || "$v" == "~"* || "$v" == *..* || "$v" == [A-Za-z]:/* ]] || fuori_progetto || continue
-    abs="$(risolvi "$v")"; [ "$abs" = "?" ] && continue
+    # un percorso relativo si controlla quando il comando gira fuori dal progetto (dopo un cd), o in una cartella che non si conosce
+    [[ "$v" == /* || "$v" == "~"* || "$v" == *..* || "$v" == [A-Za-z]:/* ]] || fuori_progetto || [ "$CWD" = "?" ] || continue
+    abs="$(risolvi "$v")"
+    if [ "$abs" = "?" ]; then                   # la base non si conosce (dopo un cd che non si può risolvere, con ~- e ~utente)
+      case "$v" in "~"*/*) v="${v#*/}" ;; "~"*) v="" ;; esac
+      coda_credenziali "$v" "$scritto" "$modo"; continue
+    fi
     credenziali_locali "$abs" "$scritto" "$modo"
   done
   return 0
 }
-legge_cartelle() { # $1 indice del programma: vero se legge le cartelle per intero (grep -r, rg, find, tar, zip, cp -r, diff -r, ln)
+file_ambiente() { # $1 parola: niente file di ambiente reali, nemmeno come valore di un'opzione (--env-file=…, src=…, @…)
+  local a="$1" v pth; local -a cand=()
+  case "$a" in --*=*) cand+=("${a#*=}") ;; -*) ;; *) cand+=("$a") ;; esac
+  [[ "$a" =~ (^|[,=])(source|src)=([^,]+) ]] && cand+=("${BASH_REMATCH[3]}")
+  for v in "${cand[@]}"; do
+    v="${v#[@<]}"
+    [[ "$v" == *.example* ]] && continue
+    [[ "$v" == *.env* || "$v" == */env/* ]] || continue
+    pth="$v"; [[ "$v" =~ ^([^/@:]+@)?[A-Za-z0-9._-]+:(/.*)$ ]] && pth="${BASH_REMATCH[2]}"   # server:percorso
+    case "$pth" in /*) ;; *) pth="$(rel_path "$(risolvi "$pth")")" ;; esac
+    is_secret_file "$pth" && block "il comando legge o modifica un file di ambiente reale ('$a'). Usa i file *.example; quelli dei server li gestisce l'utente."
+  done
+  return 0
+}
+testi_cercati() { # $1 indice da cui partono le opzioni, $2 programma (grep e simili): mette in SALTA gli indici dei testi da
+                  # cercare, che non sono file (il valore di -e, o il primo argomento che non è un'opzione); il resto si controlla
+  local j a g k c dato=0 corte lunghe
+  case "$2" in
+    rg|ripgrep) corte=efgtTmABCjMdEr
+      lunghe=' --regexp --file --glob --iglob --type --type-not --type-add --max-count --after-context --before-context --context --threads --max-columns --max-depth --max-filesize --encoding --engine --pre --pre-glob --replace --sort --sortr --colors --context-separator --field-context-separator --field-match-separator --path-separator --ignore-file --dfa-size-limit --regex-size-limit ' ;;
+    grep|egrep|fgrep|zgrep|rgrep) corte=efmABCdD
+      lunghe=' --regexp --file --max-count --after-context --before-context --context --directories --devices --include --exclude --exclude-from --exclude-dir --label --binary-files --group-separator --max-depth --threads ' ;;
+    *) corte=efmABCdDgGt
+      lunghe=' --regexp --file --max-count --after-context --before-context --context --directories --devices --include --exclude --exclude-from --exclude-dir --label --glob --iglob --type --ignore-dir ' ;;
+  esac
+  for ((j=$1; j<n; j++)); do
+    a="${argv[$j]}"
+    case "$a" in
+      --) [ "$dato" = 0 ] && SALTA="$SALTA$((j+1)) "; return 0 ;;
+      --regexp) SALTA="$SALTA$((j+1)) "; dato=1; j=$((j+1)) ;;
+      --regexp=*) SALTA="$SALTA$j "; dato=1 ;;
+      --file|--file=*|--files|--type-list) dato=1; [ "$a" = --file ] && j=$((j+1)) ;;   # i testi in un file, che resta da controllare
+      --*=*) ;;
+      --*) [[ "$lunghe" == *" $a "* ]] && j=$((j+1)) ;;
+      -?*)   # opzioni corte, anche in gruppo (-rne testo, -etesto): la prima che vuole un valore prende il resto o la parola dopo
+        g="${a#-}"
+        for ((k=0; k<${#g}; k++)); do
+          c="${g:$k:1}"
+          [[ "$corte" == *"$c"* ]] || continue
+          if [ $((k+1)) -lt "${#g}" ]; then [ "$c" = e ] && { SALTA="$SALTA$j "; dato=1; }
+          else [ "$c" = e ] && { SALTA="$SALTA$((j+1)) "; dato=1; }; j=$((j+1)); fi
+          [ "$c" = f ] && dato=1
+          break
+        done ;;
+      *) [ "$dato" = 0 ] && { SALTA="$SALTA$j "; dato=1; } ;;
+    esac
+  done
+  return 0
+}
+legge_cartelle() { # $1 indice del programma: vero se legge le cartelle per intero (grep -r, rg, find, tar, zip, cp -r, diff -r, ln,
+                   # git diff e git grep con --no-index)
   local j a p="${argv[$1]##*/}"
   case "$p" in
     rg|ripgrep|ag|ack|ack-grep|ugrep|ug|rgrep|find|fd|fdfind|tar|bsdtar|gtar|zip|7z|7za|7zr|ln) return 0 ;;
+    git) for ((j=$1+1; j<n; j++)); do [ "${argv[$j]}" = --no-index ] && return 0; done; return 1 ;;
     grep|egrep|fgrep|zgrep|cp|diff) ;;
     *) return 1 ;;
   esac
@@ -486,17 +588,18 @@ sorgente_locale() { # $1 percorso di questo computer che un comando fuori dalla 
   [ -d "$abs" ] || return 0
   while IFS= read -r x; do
     r="$(rel_path "$abs/${x#./}")"
-    { is_secret_file "$r" || [[ "$x" == */playwright/.auth ]]; } && \
+    { is_secret_file "$r" || [[ "$r" == playwright/.auth || "$r" == */playwright/.auth ]]; } && \
       block "la cartella '$t' contiene segreti ('$r'): il comando gira fuori dalla sandbox e li leggerebbe. Indica solo i file che servono."
-  done < <(cd "$abs" 2>/dev/null && find . -maxdepth 8 -name node_modules -prune -o \( -name .env -o -name '.env.*' -o -name '*.env' -o -path '*/playwright/.auth' \) -print 2>/dev/null)
+  done < <(cd "$abs" 2>/dev/null && find . -maxdepth 8 -name node_modules -prune -o \( -name .env -o -name '.env.*' -o -name '*.env' -o -name .auth \) -print 2>/dev/null)
   return 0
 }
-legge_file() { # $1 file letto con «<»: niente file di ambiente reali né credenziali; per un comando fuori dalla sandbox, come le sue sorgenti
+legge_file() { # $1 file letto con «<», $2 i suoi segni: niente file di ambiente reali né credenziali; per un comando fuori
+               # dalla sandbox, come le sue sorgenti
   local abs
   abs="$(risolvi "$1")"
   [ "$abs" != "?" ] && is_secret_file "$(rel_path "$abs")" && \
     block "il comando legge un file di ambiente reale ('$1'). Usa i file *.example; quelli dei server li gestisce l'utente."
-  parola_locale "$1"
+  parola_locale "$1" "" "${2:-}"
   [ -n "$ESCLUSO" ] && sorgente_locale "$1"
   return 0
 }
@@ -544,16 +647,125 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
     [[ "$w" == *.env* || "$w" == */env/* || "$w" == env/* ]] && is_secret_file "$w" && \
       block "il comando sul server nomina un file di ambiente con i segreti ('$w'): quei file li legge e li scrive solo l'utente."
   done < <(printf '%s' "$1" | awk -f "$TOKENIZER")
+  letture_remote "$1"
+  return 0
+}
+LETTORI_REMOTI=' grep egrep fgrep zgrep rgrep rg ripgrep ag ack ack-grep find fd fdfind tar bsdtar gtar zip 7z 7za cp rsync '
+letture_remote() { # $1 comando che gira sul server: una lettura per intero (grep -r, rg, find, tar, zip, cp -r, rsync), anche dentro
+                   # sh -c '…' o docker exec, non parte da una cartella che contiene i file di ambiente o le credenziali (/, /srv,
+                   # /srv/app, /home, la cartella di un utente, /root, /etc, le cartelle delle chiavi), né senza percorso dalla
+                   # cartella corrente, che sul server è quella dell'utente; un cd sul server la sposta, tar -C sposta i nomi
+  local riga w primo prog="" ric=0 dato=0 salta=0 dazione=0 tdir=0 tbase="" espr=0 shell=0 testo=0 inizio=1 ainizio=0 rcwd="~"
+  local -a parole=()
+  while IFS= read -r riga; do
+    if [ "${riga%%$'\t'*}" != W ]; then lettura_finita; inizio=1; shell=0; continue; fi
+    w="${riga#W$'\t'}"; w="${w#*$'\t'}"
+    primo="$inizio"; inizio=0
+    if [ "$testo" = 1 ]; then testo=0; letture_remote "$w"; continue; fi   # sh -c '…': il testo è un altro comando
+    if [ "$salta" = 1 ]; then salta=0; continue; fi                         # il valore di un'opzione
+    if [ "$dazione" = 1 ]; then dazione=0; [ "$w" = recurse ] && ric=1; continue; fi   # grep -d recurse
+    if [ "$tdir" = 1 ]; then tdir=0; tbase="$w"                             # tar -C <cartella>; su Windows -C e -c (crea) sono
+      [ "$ON_WINDOWS" = 1 ] && [[ "$w" != -* ]] && parole+=("$w")            # la stessa parola: vale per tutte e due
+      continue
+    fi
+    if [ "$primo" = 1 ] && [ "$w" = cd ]; then prog=cd; continue; fi
+    if [ "$prog" = cd ]; then
+      case "$w" in -) rcwd="?" ;; -*) continue ;; /*|"~"|"~/"*) rcwd="$w" ;; *) [ "$rcwd" = "?" ] || rcwd="$rcwd/$w" ;; esac
+      [[ "$w" == *'$'* || "$w" == *'`'* ]] && rcwd="?"
+      prog=""; continue
+    fi
+    if [ -z "$prog" ]; then   # fuori dagli argomenti di un lettore: una shell con -c, o un lettore (anche dopo docker exec, nice, xargs)
+      case " sh bash dash zsh ksh " in *" ${w##*/} "*) shell=1; continue ;; esac
+      if [ "$shell" = 1 ] && [[ "$w" =~ ^-[a-zA-Z]*c[a-zA-Z]*$ ]]; then testo=1; shell=0; continue; fi
+      if [[ "$LETTORI_REMOTI" == *" ${w##*/} "* ]]; then
+        prog="${w##*/}"; ainizio="$primo"
+        case "$prog" in grep|egrep|fgrep|zgrep|cp) ric=0 ;; *) ric=1 ;; esac
+      fi
+      continue
+    fi
+    if [[ "$w" == -* ]]; then
+      case "$prog" in
+        grep|egrep|fgrep|zgrep|rgrep|rg|ripgrep|ag|ack|ack-grep) opzione_lettore "$w" ;;
+        cp) [[ "$w" == --recursive || "$w" == --archive || "$w" =~ ^-[a-zA-Z]*[rRa] ]] && ric=1 ;;
+        tar|bsdtar|gtar) case "$w" in
+                           -C|--directory) tdir=1 ;;
+                           --directory=*) tbase="${w#*=}" ;;
+                           -C?*) if [ "$ON_WINDOWS" = 0 ] || [[ "${w:2}" == [/~.]* ]]; then tbase="${w:2}"; fi ;;   # su Windows -czf è -c
+                         esac ;;
+        find) case "$w" in -L|-H|-P) ;; *) espr=1 ;; esac ;;   # dopo i percorsi viene l'espressione
+      esac
+      continue
+    fi
+    case "$prog" in
+      grep|egrep|fgrep|zgrep|rgrep|rg|ripgrep|ag|ack|ack-grep|fd|fdfind) [ "$dato" = 0 ] && { dato=1; continue; } ;;   # il testo da cercare
+      find) [ "$w" = '!' ] || [ "$w" = '(' ] && espr=1; [ "$espr" = 1 ] && continue ;;                        # l'espressione non è un percorso
+    esac
+    parole+=("$w")
+  done < <(printf '%s' "$1" | awk -f "$TOKENIZER")
+  lettura_finita
+  return 0
+}
+opzione_lettore() { # $1 opzione di grep o rg sul server (usa le variabili di letture_remote): -r, -d recurse, il testo dopo -e e
+                    # dopo -f, i valori delle altre opzioni, che non sono percorsi
+  local w="$1" g k c corte=efmABCdD
+  case "$prog" in rg|ripgrep) corte=efgtTmABCjMdEr ;; esac
+  case "$w" in
+    --recursive|--dereference-recursive|--directories=recurse) ric=1; return 0 ;;
+    --regexp|--file) dato=1; salta=1; return 0 ;;
+    --regexp=*|--file=*) dato=1; return 0 ;;
+    --directories) dazione=1; return 0 ;;
+    --max-count|--after-context|--before-context|--context|--include|--exclude|--exclude-from|--exclude-dir|--label|--binary-files|\
+    --group-separator|--glob|--iglob|--type|--type-not|--type-add|--threads|--max-columns|--max-depth|--max-filesize|--encoding|\
+    --engine|--pre|--pre-glob|--replace|--sort|--sortr|--colors|--ignore-file) salta=1; return 0 ;;
+    --*) return 0 ;;
+  esac
+  g="${w#-}"
+  for ((k=0; k<${#g}; k++)); do
+    c="${g:$k:1}"
+    case "$prog" in rg|ripgrep) ;; *) [[ "$c" == [rR] ]] && { ric=1; continue; } ;; esac
+    [[ "$corte" == *"$c"* ]] || continue
+    if [ $((k+1)) -lt "${#g}" ]; then   # il valore attaccato all'opzione
+      case "$c" in e|f) dato=1 ;; d) [ "${g:$((k+1))}" = recurse ] && ric=1 ;; esac
+    else                                # il valore è la parola dopo
+      case "$c" in e|f) dato=1; salta=1 ;; d) case "$prog" in rg|ripgrep) salta=1 ;; *) dazione=1 ;; esac ;; *) salta=1 ;; esac
+    fi
+    return 0
+  done
+  return 0
+}
+lettura_finita() { # usa prog, ric, parole, tbase, ainizio e rcwd di letture_remote: controlla le cartelle lette, poi riparte da zero
+  local x
+  if [ "$ric" = 1 ]; then
+    if [ "${#parole[@]}" -eq 0 ] && [ "$ainizio" = 1 ]; then
+      case "$prog" in grep|egrep|fgrep|zgrep|rgrep|rg|ripgrep|ag|ack|ack-grep|find|fd|fdfind) lettura_remota . "$prog senza percorso, cioè la cartella corrente" ;; esac
+    fi
+    for x in "${parole[@]}"; do
+      [ -n "$tbase" ] && case "$x" in /*|"~"|"~/"*) ;; *) x="$tbase/$x" ;; esac   # tar -C <cartella>: i nomi partono da lì
+      lettura_remota "$x" "$x"
+    done
+  fi
+  prog=""; ric=0; dato=0; salta=0; dazione=0; tdir=0; tbase=""; espr=0; ainizio=0; parole=()
+}
+lettura_remota() { # $1 cartella del server letta per intero, $2 come l'ha scritta Claude
+  local p="$1"
+  case "$p" in /*|"~"|"~/"*) ;; *) if [ "$rcwd" = "?" ]; then p="?"; else p="$rcwd/$p"; fi ;; esac
+  [ "$p" = "?" ] && block "sul server, dopo un cd che non si può risolvere, una lettura per intero non si controlla ('$2'): scrivi la cartella per intero."
+  p="$(norm_path "$p")"; p="${p%/}"; [ -z "$p" ] && p=/
+  { case "$p" in /|/srv|/srv/app|/home|/root|/etc|"~") true ;; *) [[ "$p" =~ ^/home/[^/]+$ ]] ;; esac; } && \
+    block "una lettura per intero di '$2' sul server arriverebbe ai file di ambiente o alle credenziali (/srv/app/env, le chiavi, il token di GHCR): indica la cartella che serve (per esempio /srv/app/infra)."
+  credenziali_server "$p" "$2" copia
   return 0
 }
 analizza_ssh() { # $1 indice, $2 programma. ssh, scp e rsync girano fuori dalla sandbox: opzioni solo da un elenco
-  local i="$1" prog="$2" j a v; local -a pos=() psg=()
+  local i="$1" prog="$2" j a v rcmd=0; local -a pos=() psg=()
   [ "$prog" = sftp ] && block "sftp non si usa nel metodo (legge comandi da eseguire sul tuo computer): per copiare file verso i server usa scp."
   case "$fase" in codice|revisione|chiusura) ;; *) block "i comandi verso i server (ssh, scp, rsync) si usano solo dentro un compito, nelle fasi codice, revisione e chiusura (fase attuale: $fase). Per un controllo in sola lettura chiedi all'utente di eseguirlo." ;; esac
   for ((j=i+1; j<n; j++)); do
     a="${argv[$j]}"
     [[ "${segni[$j]}" == *d* ]] && block "un comando verso i server con argomenti decisi da variabili non si controlla: scrivili per intero."
-    if [ "$prog" = ssh ] && [ "${#pos[@]}" -gt 0 ]; then pos+=("$a"); psg+=("${segni[$j]}"); continue; fi   # dopo il server: il comando remoto
+    if [ "$prog" = ssh ] && [ "${#pos[@]}" -gt 0 ]; then   # dopo il server OpenSSH legge ancora le opzioni, fino al comando remoto
+      if [ "$rcmd" = 1 ] || [[ "$a" != -* ]]; then rcmd=1; pos+=("$a"); psg+=("${segni[$j]}"); continue; fi
+    fi
     case "$prog:$a" in
       *:--) for ((j=j+1; j<n; j++)); do pos+=("${argv[$j]}"); psg+=("${segni[$j]}"); done; break ;;
       ssh:-p|scp:-P) j=$((j+1)); continue ;;
@@ -622,6 +834,20 @@ uscita_docker() { # -o/--output di build, save, export: scrive sul computer
   elif [[ "$v" != *type=* ]]; then scrive "$v" ""; fi
   return 0
 }
+contesto_aggiuntivo() { # --build-context nome=valore: un'immagine o un indirizzo vanno bene; una cartella si controlla come il contesto
+  local v="${1#*=}"
+  case "$v" in *://*|target:*) return 0 ;; esac
+  contesto_docker "$v"
+}
+segreto_docker() { # --secret id=…,src=… (o source=): docker legge il file fuori dalla sandbox, come una sorgente
+  [[ "$1" =~ (^|,)(src|source)=([^,]+) ]] && sorgente_locale "${BASH_REMATCH[3]}"
+  return 0
+}
+compose_config() { # $1 indice del sottocomando: docker compose config scrive nell'uscita i valori dei file di ambiente dei servizi
+  local k
+  for ((k=$1+1; k<n; k++)); do case "${argv[$k]}" in --no-env-resolution|-q|--quiet|--services|--images|--volumes|--networks|--profiles) return 0 ;; esac; done
+  block "docker compose config scrive nell'uscita i valori dei file di ambiente dei servizi: aggiungi --no-env-resolution (oppure usa -q, --services, --images, --volumes)."
+}
 compose_controlla() { # "docker compose config" in sola lettura: che cosa montano e con quali permessi girano i servizi
   local out src abs
   [ "$CWD" = "?" ] && block "docker compose dopo un cd che non si può risolvere non si controlla."
@@ -646,7 +872,7 @@ compose_controlla() { # "docker compose config" in sola lettura: che cosa montan
   return 0
 }
 analizza_docker() { # $1 indice. Docker gira fuori dalla sandbox e un container può tutto: volumi, file compose e opzioni si controllano
-  local i="$1" j a v sub="" csub="" salta k g c; local -a pos=() cglob=()
+  local i="$1" j a v sub="" csub="" cj=-1 salta k g c eff off=0; local -a pos=() cglob=()
   for ((j=i+1; j<n; j++)); do
     a="${argv[$j]}"
     [[ "${segni[$j]}" == *d* ]] && block "docker gira fuori dalla sandbox: niente argomenti decisi da variabili, scrivili per intero."
@@ -661,7 +887,7 @@ analizza_docker() { # $1 indice. Docker gira fuori dalla sandbox e un container 
       case "$a" in
         -f|--file|-p|--project-name|--project-directory|--env-file|--profile|--ansi|--progress|--parallel) cglob+=("$a" "${argv[$((j+1))]:-}"); j=$((j+1)); continue ;;
         -*) cglob+=("$a"); continue ;;
-        *) csub="$a"; continue ;;
+        *) csub="$a"; cj="$j"; continue ;;
       esac
     fi
     case "$a" in
@@ -676,12 +902,18 @@ analizza_docker() { # $1 indice. Docker gira fuori dalla sandbox e un container 
       -o|--opt|--output)
         v="${argv[$((j+1))]:-}"; j=$((j+1))
         case "$sub" in
-          volume) [[ "$v" == device=* ]] && monta "${v#device=}" ;;
-          build|buildx|save|export|image) [ "$a" != --opt ] && uscita_docker "$v" ;;
+          volume|network) [[ "$v" == device=* ]] && monta "${v#device=}" ;;   # le opzioni del driver
+          *) [ "$a" != --opt ] && uscita_docker "$v" ;;                       # un file o una cartella in uscita (build, save, export, container export, image save)
         esac
         continue ;;
       --opt=device=*) monta "${a#--opt=device=}"; continue ;;
       --output=*) uscita_docker "${a#--output=}"; continue ;;
+      --cidfile|--iidfile|--metadata-file) scrive "${argv[$((j+1))]:-}" "${segni[$((j+1))]}"; j=$((j+1)); continue ;;
+      --cidfile=*|--iidfile=*|--metadata-file=*) scrive "${a#*=}" ""; continue ;;
+      --build-context) contesto_aggiuntivo "${argv[$((j+1))]:-}"; j=$((j+1)); continue ;;
+      --build-context=*) contesto_aggiuntivo "${a#--build-context=}"; continue ;;
+      --secret) segreto_docker "${argv[$((j+1))]:-}"; j=$((j+1)); continue ;;
+      --secret=*) segreto_docker "${a#--secret=}"; continue ;;
       --ssh|--ssh=*) block "docker $sub --ssh porterebbe nella costruzione l'agente SSH di questo computer, con l'accesso ai server: nel metodo non si usa." ;;
       --*) continue ;;
       -[a-zA-Z]*)   # opzioni corte in gruppo (-itv, -dv/x:/y): un -v può stare in fondo
@@ -698,16 +930,27 @@ analizza_docker() { # $1 indice. Docker gira fuori dalla sandbox e un container 
     esac
     pos+=("$a")
   done
-  [ "$sub" = compose ] && case "$csub" in up|run|create|start|restart|watch) compose_controlla "${cglob[@]}" ;; esac
-  if [ "$sub" = cp ] && [ "${#pos[@]}" -ge 2 ]; then
+  [ "$sub" = compose ] && case "$csub" in
+    up|run|create|start|restart|watch|build) compose_controlla "${cglob[@]}" ;;
+    config|convert) compose_config "$cj" ;;
+  esac
+  eff="$sub"   # il sottocomando vero: docker container cp è docker cp, docker image build è docker build, docker compose cp una copia
+  case "$sub" in
+    container|image|builder|buildx|context|plugin|trust|volume|network|system|manifest) eff="${pos[0]:-}"; off=1 ;;
+    compose) eff="$csub" ;;
+  esac
+  case "$sub" in
+    login|logout) block "docker $sub lo fa l'utente, nel suo terminale: l'accesso a GHCR è un segreto (AVVIO.md §1)." ;;
+    context) case "$eff" in ls|list|inspect|show|"") ;; *) block "docker context $eff cambia il demone a cui parla Docker, come -H: nel metodo non si usa." ;; esac ;;
+    plugin|trust) case "$eff" in ls|list|inspect|"") ;; *) block "docker $sub $eff cambia Docker o le sue chiavi: lo fa l'utente." ;; esac ;;
+    buildx) [ "$eff" = bake ] && block "docker buildx bake legge da un file contesti, segreti e l'agente SSH, che l'hook non controlla: nel metodo non si usa (docker build, oppure docker compose build)." ;;
+  esac
+  if [ "$eff" = cp ] && [ $(( ${#pos[@]} - off )) -ge 2 ]; then
     if [[ "${pos[-1]}" != *:* ]]; then scrive "${pos[-1]}" ""   # dal container a questo computer: una scrittura
-    else for ((k=0; k<${#pos[@]}-1; k++)); do [[ "${pos[$k]}" == *:* || "${pos[$k]}" == - ]] || sorgente_locale "${pos[$k]}"; done   # nel container: una lettura fuori dalla sandbox
+    else for ((k=off; k<${#pos[@]}-1; k++)); do [[ "${pos[$k]}" == *:* || "${pos[$k]}" == - ]] || sorgente_locale "${pos[$k]}"; done   # nel container: una lettura fuori dalla sandbox
     fi
   fi
-  case "$sub" in   # il contesto di costruzione
-    build) [ "${#pos[@]}" -ge 1 ] && contesto_docker "${pos[-1]}" ;;
-    buildx|image|builder) [ "${pos[0]:-}" = build ] && [ "${#pos[@]}" -ge 2 ] && contesto_docker "${pos[-1]}" ;;
-  esac
+  [ "$eff" = build ] && [ $(( ${#pos[@]} - off )) -ge 1 ] && contesto_docker "${pos[-1]}"   # il contesto di costruzione
   return 0
 }
 
@@ -780,15 +1023,18 @@ analizza_find() { # $1 indice: find con -delete o -exec di un comando che scrive
   fi
   return 0
 }
+nuova_cwd() { # $1 cartella in cui va un comando (cd, env -C, pnpm -C), $2 i suoi segni -> CWD, "?" se non si può risolvere
+  if [[ "${2:-}" == *g* || "${2:-}" == *b* || "$1" == - ]]; then CWD="?"; return 0; fi
+  casa_in_chiaro "$1"   # cd $HOME, cd ~utente: la cartella è nota
+  if [[ "${2:-}" == *d* ]] && [[ "$CC" == *'$'* || "$CC" == *'`'* ]]; then CWD="?"; return 0; fi
+  CWD="$(risolvi "$CC")"
+  return 0
+}
 cambia_cartella() { # $1 indice di cd o pushd
   local j=$(( $1 + 1 ))
   while [ "$j" -lt "$n" ] && [[ "${argv[$j]}" == -* && "${argv[$j]}" != - ]]; do j=$((j+1)); done
   if [ "$j" -ge "$n" ]; then CWD="$(canon_path "$HOME")"; return 0; fi
-  if [[ "${segni[$j]}" == *g* || "${segni[$j]}" == *b* || "${argv[$j]}" == - ]]; then CWD="?"; return 0; fi
-  casa_in_chiaro "${argv[$j]}"   # cd $HOME, cd ~utente: la cartella è nota
-  if [[ "${segni[$j]}" == *d* ]] && [[ "$CC" == *'$'* || "$CC" == *'`'* ]]; then CWD="?"; return 0; fi
-  CWD="$(risolvi "$CC")"
-  return 0
+  nuova_cwd "${argv[$j]}" "${segni[$j]}"
 }
 legge_stdin() { # $1 indice, $2 programma (shell o interprete): vero se non ha né uno script né il codice in un argomento
   local j a opz=""
@@ -819,50 +1065,82 @@ gabbia_comando() { # bash .claude/hooks/gabbia.sh <comando>: esce dalla sandbox,
   [[ "${argv[$((i+2))]:-}" =~ $GABBIA_OK ]] || block "nella gabbia girano solo test, test:int, test:e2e, dev, worker, db:migrate e cli (e --prova)."
   ESCLUSO="la gabbia"
 }
-comandi_pnpm() { # i comandi che usano il database, il server di sviluppo o il browser girano nella gabbia; il comando
-                 # lanciato con exec o dlx (pnpx è pnpm dlx) si controlla come se fosse scritto da solo
-  local i="$1" j a t e=-1 salva
-  if [ "${argv[$i]##*/}" = pnpx ]; then e="$i"
-  else for ((j=i+1; j<n; j++)); do case "${argv[$j]}" in exec|dlx) e="$j"; break ;; esac; done   # anche dopo -C <cartella> o --filter
-  fi
-  if [ "$e" -ge 0 ]; then
-    for ((j=e+1; j<n; j++)); do
-      a="${argv[$j]}"
-      case "$a" in
-        -c|--shell-mode)   # il resto della riga è un comando per la shell
-          for ((t=j+1; t<n; t++)); do [[ "${segni[$t]}" == *d* ]] && block "pnpm exec -c con un testo deciso da variabili o comandi annidati non si controlla: scrivi il comando per intero."; done
-          [ $((j+1)) -lt "$n" ] || return 0
-          salva="$CWD"; analizza_testo "${argv[*]:$((j+1))}"; CWD="$salva"; return 0 ;;
-        -C|--dir|-F|--filter|--filter-prod|--reporter|--loglevel|--workspace-concurrency|--resume-from|--package) j=$((j+1)); continue ;;
-        -*) continue ;;
-        playwright) break ;;   # lo controlla il ciclo qui sotto
-      esac
-      analizza_da "$j"; return 0
-    done
-  fi
+PNPM_INTERNI=' add approve-builds audit bin c cache cat-file cat-index config create dedupe deploy dlx docs doctor env exec fetch find-hash get help i ignored-builds import info init install install-test it la licenses link list ll ln login logout ls m multi outdated pack patch patch-commit patch-remove pm prune publish rb rebuild recursive remove repo rm root run run-script sbom search self-update server set setup show start store t test tst un uni uninstall unlink up update upgrade view whoami why '
+PNPM_VALORE='^(-C|--dir|-F|--filter|--filter-prod|--test-pattern|--changed-files-ignore-pattern|--loglevel|--reporter|--workspace-concurrency|--resume-from|--package|--allow-build|--cpu|--os|--libc)$'
+PNPM_SOLE='^(-r|--recursive|-w|--workspace-root|--include-workspace-root|-s|--silent|--parallel|--stream|--aggregate-output|--use-stderr|--color|--no-color|--report-summary|--reverse|--sort|--no-sort|--bail|--no-bail|--if-present|--fail-if-no-match|--no-reporter-hide-prefix|-h|--help)$'
+script_pnpm() { # $1 cartella di pnpm -C (vuota: quella del comando), $2 i suoi segni -> i nomi degli script di package.json
+  local salva="$CWD" d f
+  [ -n "${1:-}" ] && nuova_cwd "$1" "${2:-}"
+  d="$CWD"; CWD="$salva"
+  [ "$d" = "?" ] && return 0
+  f="$d/package.json"; [ -f "$f" ] || f="$PROJECT_DIR/package.json"
+  jq -r '(.scripts // {}) | keys[]' "$f" 2>/dev/null | tr -d '\r'
+}
+playwright_pnpm() { # $1 indice di playwright, lanciato da pnpm
+  case "${argv[$(( $1 + 1 ))]:-}" in
+    install|install-deps|uninstall) block "i browser di Playwright li installa (e li toglie) l'utente nel suo terminale, dopo FON-T01 e dopo ogni aggiornamento di Playwright: pnpm exec playwright install --with-deps (AVVIO.md §1). Nella sandbox non si può (scrive in ~/.cache/ms-playwright) e nella gabbia non è ammesso." ;;
+    ''|--version|-V|--help|-h|merge-reports) return 0 ;;   # sola lettura, nessun browser: passano
+    test) block "pnpm test:e2e non funziona nella sandbox (sul suo localhost non c'è il database): lancialo nella gabbia, da solo, con bash .claude/hooks/gabbia.sh test:e2e." ;;
+    *) block "pnpm exec playwright ${argv[$(( $1 + 1 ))]} non si usa dalla sandbox: apre un browser o un server locale (show-report, show-trace, codegen, open, screenshot, pdf) oppure scrive fuori dal progetto. Le prove girano nella gabbia, bash .claude/hooks/gabbia.sh test:e2e, e i rapporti si leggono come file (playwright-report/, test-results/)." ;;
+  esac
+}
+comandi_pnpm() { # $1 indice di pnpm, pn, pnpx o pnx. pnpm lancia un comando qualsiasi con exec e dlx (pnpx e pnx sono pnpm dlx), e
+                 # anche con pnpm <nome>, se <nome> non è un comando di pnpm né uno script di package.json (pnpm.io/cli/exec); legge
+                 # le sue opzioni prima e dopo exec, fino al nome del comando. Il comando lanciato si controlla come se fosse scritto
+                 # da solo (con -c come un testo per la shell, con -C nella sua cartella), e quando pnpm lancia un comando valgono
+                 # solo le opzioni di un elenco. I comandi che usano il database, il server di sviluppo o il browser girano nella gabbia
+  local i="$1" j a g t e=-1 shell=0 dir="" dsg="" salva cmd=-1 sotto="" ignota=""
+  case "${argv[$i]##*/}" in pnpx|pnx) e="$i" ;; esac
   for ((j=i+1; j<n; j++)); do
     a="${argv[$j]}"
+    if [[ "$a" != -* ]]; then
+      [ "$e" -ge 0 ] && { cmd="$j"; break; }                        # il comando lanciato da exec, dlx, pnpx o pnx
+      case "$a" in exec|dlx) e="$j"; continue ;; esac
+      sotto="$a"
+      if [ "$a" = run ] || [ "$a" = run-script ]; then               # pnpm run <script>
+        for ((t=j+1; t<n; t++)); do [[ "${argv[$t]}" == -* ]] || { sotto="${argv[$t]}"; break; }; done
+      elif [[ "$PNPM_INTERNI" != *" $a "* ]]; then                   # pnpm <nome>: uno script, oppure un comando lanciato come con exec
+        case "$a" in test:int|test:e2e|dev|worker|db:migrate|cli) ;; *) script_pnpm "$dir" "$dsg" | grep -qxF -- "$a" || cmd="$j" ;; esac
+      fi
+      break
+    fi
     case "$a" in
-      -*|run|exec|dlx) continue ;;
-      test:int|test:e2e|dev|worker|db:migrate|cli|playwright)
-        if [ "$a" = playwright ]; then
-          case "${argv[$((j+1))]:-}" in
-            install|install-deps|uninstall) block "i browser di Playwright li installa (e li toglie) l'utente nel suo terminale, dopo FON-T01 e dopo ogni aggiornamento di Playwright: pnpm exec playwright install --with-deps (AVVIO.md §1). Nella sandbox non si può (scrive in ~/.cache/ms-playwright) e nella gabbia non è ammesso." ;;
-            ''|--version|-V|--help|-h|merge-reports) return 0 ;;   # sola lettura, nessun browser: passano
-            test) a=test:e2e ;;
-            *) block "pnpm exec playwright ${argv[$((j+1))]} non si usa dalla sandbox: apre un browser o un server locale (show-report, show-trace, codegen, open, screenshot, pdf) oppure scrive fuori dal progetto. Le prove girano nella gabbia, bash .claude/hooks/gabbia.sh test:e2e, e i rapporti si leggono come file (playwright-report/, test-results/)." ;;
-          esac
+      --) [ "$e" -ge 0 ] && [ $((j+1)) -lt "$n" ] && cmd=$((j+1)); break ;;
+      -c|--shell-mode)   # su Windows -C (--dir) arriva come -c: prima di exec, con una parola dopo, vale per tutte e due
+        if [ "$ON_WINDOWS" = 1 ] && [ "$a" = -c ] && [ "$e" -lt 0 ] && [ $((j+1)) -lt "$n" ] && [[ "${argv[$((j+1))]}" != -* ]] && [[ ! "${argv[$((j+1))]}" =~ ^(exec|dlx)$ ]]; then
+          dir="${argv[$((j+1))]}"; dsg="${segni[$((j+1))]}"; j=$((j+1))
         fi
-        block "pnpm $a non funziona nella sandbox (sul suo localhost non c'è il database): lancialo nella gabbia, da solo, con bash .claude/hooks/gabbia.sh $a." ;;
+        shell=1; continue ;;
+      -C|--dir) dir="${argv[$((j+1))]:-}"; dsg="${segni[$((j+1))]}"; j=$((j+1)); continue ;;
+      --dir=*) dir="${a#*=}"; dsg="${segni[$j]}"; continue ;;
     esac
-    return 0
+    [[ "$a" =~ $PNPM_VALORE ]] && { j=$((j+1)); continue; }
+    [[ "$a" =~ $PNPM_SOLE || "${a%%=*}" =~ $PNPM_VALORE ]] && continue
+    if [[ "$a" =~ ^-[a-zA-Z]+$ ]]; then g="${a#-}"; [[ "$g" =~ ^[rwsc]+$ ]] && { [[ "$g" == *c* ]] && shell=1; continue; }; fi   # -rc = -r -c
+    [ -z "$ignota" ] && ignota="$a"
   done
+  if [ "$cmd" -ge 0 ]; then
+    [ -n "$ignota" ] && block "pnpm lancia un comando, e l'opzione $ignota non è fra quelle che l'hook conosce: con un'opzione sconosciuta il comando lanciato non si riconosce. Toglila, o lancia il comando da solo."
+    salva="$CWD"; [ -n "$dir" ] && nuova_cwd "$dir" "$dsg"
+    if [ "$shell" = 1 ]; then
+      for ((t=cmd; t<n; t++)); do [[ "${segni[$t]}" == *d* ]] && block "pnpm -c con un testo deciso da variabili o comandi annidati non si controlla: scrivi il comando per intero."; done
+      analizza_testo "${argv[*]:$cmd}"
+    elif [ "${argv[$cmd]##*/}" = playwright ]; then
+      playwright_pnpm "$cmd"
+    else
+      analizza_da "$cmd"
+    fi
+    CWD="$salva"; return 0
+  fi
+  case "$sotto" in
+    test:int|test:e2e|dev|worker|db:migrate|cli) block "pnpm $sotto non funziona nella sandbox (sul suo localhost non c'è il database): lancialo nella gabbia, da solo, con bash .claude/hooks/gabbia.sh $sotto." ;;
+  esac
   return 0
 }
 
 # --- un comando semplice ----------------------------------------------------------------------------
 analizza_da() { # $1 indice del nome del comando in argv
-  local i="$1" prog j a salva pth ric="" modello
+  local i="$1" prog j a k salva ric="" SALTA=" " edir="" esg="" etesto="" ets=0
   [[ "${segni[$i]}" == *d* ]] && block "il nome del comando viene da una variabile o da un comando annidato: scrivilo per intero."
   prog="${argv[$i]##*/}"
   ultimo="$prog"
@@ -874,50 +1152,48 @@ analizza_da() { # $1 indice del nome del comando in argv
   esac
   # in qualunque comando: il nome della postazione, le credenziali di questo computer e i file di ambiente reali
   if legge_cartelle "$i"; then   # un programma che legge le cartelle per intero: niente cartelle che contengono le credenziali
-    ric=contiene; fuori_progetto && credenziali_locali "$CWD" "$CWD" contiene
+    ric=contiene
+    [ "$CWD" = "?" ] && block "dopo un cd che non si può risolvere (con una variabile, \$(…), cd - o popd), $prog legge le cartelle per intero e non si controlla: fai il cd con il percorso scritto per intero, o scrivi per intero le cartelle da leggere."
+    fuori_progetto && credenziali_locali "$CWD" "$CWD" contiene
   fi
-  modello=-1   # grep e simili: il primo argomento che non è un'opzione è il testo da cercare, non un file
-  case "$prog" in
-    grep|egrep|fgrep|zgrep|rgrep|rg|ripgrep|ag|ack|ack-grep|ugrep|ug)
-      for ((j=i+1; j<n; j++)); do
-        case "${argv[$j]}" in
-          --) modello=$((j+1)); break ;;
-          -e|-e?*|--regexp|--regexp=*|-f|-f?*|--file|--file=*|--files|--type-list) break ;;   # il testo sta in un'opzione, o non c'è
-          -*) ;;
-          *) modello="$j"; break ;;
-        esac
-      done ;;
+  case "$prog" in   # grep e simili, anche git grep: il testo da cercare non è un file
+    grep|egrep|fgrep|zgrep|rgrep|rg|ripgrep|ag|ack|ack-grep|ugrep|ug) testi_cercati $((i+1)) "$prog" ;;
+    git) j=$((i+1)); while [ "$j" -lt "$n" ] && [[ "${argv[$j]}" == -* ]]; do [ "${argv[$j]}" = -C ] && j=$((j+1)); j=$((j+1)); done
+         [ "${argv[$j]:-}" = grep ] && testi_cercati $((j+1)) grep ;;
   esac
   for ((j=i; j<n; j++)); do
     a="${argv[$j]}"
-    [ "$j" = "$modello" ] && continue
+    [[ "$SALTA" == *" $j "* ]] && continue
     case "$a" in *imposta-postazione*|*hooks/imposta*) block "il nome della postazione lo imposta l'utente, nel suo terminale, una volta sola." ;; esac
-    [ "$prog" = ssh ] || parola_locale "$a" "$ric"   # (per ssh gli argomenti sono il comando remoto)
-    [[ "$a" == -* || "$a" == *.example* ]] && continue
     [ "$prog" = ssh ] && continue    # per ssh gli argomenti sono il comando remoto: lo controlla segreti_remoti
-    if [[ "$a" == *.env* || "$a" == */env/* ]]; then
-      pth="$a"; [[ "$a" =~ ^([^/@:]+@)?[A-Za-z0-9._-]+:(/.*)$ ]] && pth="${BASH_REMATCH[2]}"   # server:percorso
-      case "$pth" in /*) ;; *) pth="$(rel_path "$(risolvi "$pth")")" ;; esac
-      is_secret_file "$pth" && block "il comando legge o modifica un file di ambiente reale ('$a'). Usa i file *.example; quelli dei server li gestisce l'utente."
-    fi
+    parola_locale "$a" "$ric" "${segni[$j]}"
+    file_ambiente "$a"
   done
   case "$prog" in
     sudo|su|doas|pkexec|runuser) block "i comandi con sudo li esegue l'utente." ;;
     eval) block "eval non è permesso: scrivi il comando per intero." ;;
     export|declare|typeset|readonly|local)
       for ((j=i+1; j<n; j++)); do [[ "${argv[$j]}" == -* ]] || variabile_vietata "${argv[$j]%%=*}"; done; return 0 ;;
-    env)
+    env)   # env -C <cartella> porta il comando in un'altra cartella; env -S '<testo>' è una riga di comando intera
       j=$((i+1))
       while [ "$j" -lt "$n" ]; do
         a="${argv[$j]}"
         case "$a" in
-          -u|-C|-S|--unset|--chdir|--split-string) j=$((j+2)); continue ;;
+          -S|--split-string) etesto="${argv[*]:$((j+1))}"; ets=1; for ((k=j+1; k<n; k++)); do [[ "${segni[$k]}" == *d* ]] && ets=2; done; break ;;
+          --split-string=*|-S?*) etesto="${a#--split-string=}"; etesto="${etesto#-[Ss]} ${argv[*]:$((j+1))}"; ets=1
+                                 for ((k=j; k<n; k++)); do [[ "${segni[$k]}" == *d* ]] && ets=2; done; break ;;
+          -C|--chdir) edir="${argv[$((j+1))]:-}"; esg="${segni[$((j+1))]}"; j=$((j+2)); continue ;;
+          --chdir=*|-C?*) edir="${a#--chdir=}"; edir="${edir#-[Cc]}"; esg="${segni[$j]}"; j=$((j+1)); continue ;;
+          -u|--unset) j=$((j+2)); continue ;;
           -*) j=$((j+1)); continue ;;
         esac
         if [[ "$a" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then variabile_vietata "${a%%=*}"; j=$((j+1)); continue; fi
         break
       done
-      [ "$j" -lt "$n" ] && analizza_da "$j"; return 0 ;;
+      [ "$ets" = 2 ] && block "env -S con un testo deciso da variabili o comandi annidati non si controlla: scrivi il comando per intero."
+      salva="$CWD"; [ -n "$edir" ] && nuova_cwd "$edir" "$esg"
+      if [ "$ets" = 1 ]; then analizza_testo "$etesto"; elif [ "$j" -lt "$n" ]; then analizza_da "$j"; fi
+      CWD="$salva"; return 0 ;;
     command|builtin|exec|nohup|time|setsid|chronic|unbuffer)
       j=$((i+1)); while [ "$j" -lt "$n" ] && [[ "${argv[$j]}" == -* ]]; do j=$((j+1)); done
       [ "$j" -lt "$n" ] && analizza_da "$j"; return 0 ;;
@@ -955,7 +1231,7 @@ analizza_da() { # $1 indice del nome del comando in argv
         esac
       done
       return 0 ;;
-    pnpm|pnpx) comandi_pnpm "$i"; return 0 ;;
+    pnpm|pnpx|pn|pnx) comandi_pnpm "$i"; return 0 ;;
     npm|npx|yarn|yarnpkg|bunx|corepack) block "nel progetto si usa pnpm: al posto di $prog usa pnpm (pnpm exec, pnpm dlx, pnpm view). npm serve solo all'utente, per installare pnpm (AVVIO.md §1)." ;;
     cd|pushd) cambia_cartella "$i"; return 0 ;;
     popd) CWD="?"; return 0 ;;
@@ -968,17 +1244,24 @@ analizza_da() { # $1 indice del nome del comando in argv
   analizza_scritture "$i" "$prog"
   return 0
 }
-analizza_comando() { # usa argv, segni, redir, rsegni, iredir, ncmd del chiamante
-  local n=${#argv[@]} i=0 k
-  for k in "${!redir[@]}"; do scrive "${redir[$k]}" "${rsegni[$k]}"; done
-  [ "$n" -eq 0 ] && return 0
+analizza_comando() { # usa argv, segni, redir, rsegni, iredir, isegni, ncmd del chiamante
+  local n=${#argv[@]} i=0 k cwd0="$CWD" cwd1
+  if [ "$n" -eq 0 ]; then   # solo redirezioni, come in $(< file): il file letto e quello scritto si controllano lo stesso
+    for k in "${!iredir[@]}"; do legge_file "${iredir[$k]}" "${isegni[$k]}"; done
+    for k in "${!redir[@]}"; do scrive "${redir[$k]}" "${rsegni[$k]}"; done
+    return 0
+  fi
   ncmd=$((ncmd+1))
   while [ "$i" -lt "$n" ] && [[ "${argv[$i]}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
     variabile_vietata "${argv[$i]%%=*}"
     i=$((i+1))
   done
   [ "$i" -lt "$n" ] && analizza_da "$i"
-  for k in "${!iredir[@]}"; do legge_file "${iredir[$k]}"; done   # i file letti con «<»
+  # le redirezioni dopo il comando, dalla cartella in cui è partito: se gira fuori dalla sandbox (ESCLUSO), anche loro
+  cwd1="$CWD"; CWD="$cwd0"
+  for k in "${!redir[@]}"; do scrive "${redir[$k]}" "${rsegni[$k]}"; done
+  for k in "${!iredir[@]}"; do legge_file "${iredir[$k]}" "${isegni[$k]}"; done   # i file letti con «<»
+  CWD="$cwd1"
   return 0
 }
 analizza_testo() { # $1 testo con uno o più comandi

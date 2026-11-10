@@ -6,6 +6,7 @@ source "$(dirname "$0")/common.sh"
 input="$(cat)"
 tool="$(echo "$input" | jq -r '.tool_name // ""')"
 path="$(echo "$input" | jq -r '.tool_input.file_path // .tool_input.notebook_path // .tool_input.path // ""')"
+case "$path" in "~"|"~/"*|"~\\"*) path="$HOME${path#\~}" ;; esac   # Grep di Claude Code espande ~ dopo l'hook: qui la si espande prima
 
 block() { echo "BLOCCATO dal metodo di lavoro: $*" >&2; exit 2; }
 

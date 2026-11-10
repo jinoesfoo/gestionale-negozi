@@ -31,13 +31,13 @@ prova_gabbia() {
     prova no "$HOME/.prova-gabbia"
     prova no "$2/.prova-gabbia"
     if mv "$1/docs" "$1/.prova-docs" 2>/dev/null; then mv "$1/.prova-docs" "$1/docs"; echo "ERRORE: la gabbia lascia rinominare docs"; esito=1; else echo "ok: nella gabbia docs non si rinomina"; fi
-    if [ -n "$(ls -A "$HOME/.ssh" 2>/dev/null)" ]; then echo "ERRORE: nella gabbia si vedono le chiavi SSH"; esito=1; else echo "ok: nella gabbia non ci sono le chiavi SSH"; fi
-    if [ -n "$(ls -A "$HOME/.config/gh" 2>/dev/null)" ]; then echo "ERRORE: nella gabbia si vedono le credenziali di GitHub"; esito=1; else echo "ok: nella gabbia non ci sono le credenziali di GitHub"; fi
-    if [ -s "$HOME/.claude/.credentials.json" ]; then echo "ERRORE: nella gabbia si legge il file di accesso di Claude Code"; esito=1; else echo "ok: nella gabbia il file di accesso di Claude Code non si legge"; fi
-    v=""; for d in "$HOME/.gnupg" "$HOME/.mozilla" "$HOME/snap/firefox" "$HOME/.config/google-chrome" "$HOME/.config/chromium"; do [ -n "$(ls -A "$d" 2>/dev/null)" ] && v="$v $d"; done
-    if [ -n "$v" ]; then echo "ERRORE: nella gabbia si vedono$v"; esito=1; else echo "ok: nella gabbia non si vedono le chiavi GPG e i profili dei browser"; fi
+    shift 2; v=""   # le credenziali di questo computer (CRED_LOCALI di common.sh): cartelle vuote e file vuoti
+    for c in "$@"; do p="$HOME/$c"; if [ -d "$p" ]; then [ -n "$(ls -A "$p" 2>/dev/null)" ] && v="$v ~/$c"; elif [ -s "$p" ]; then v="$v ~/$c"; fi; done
+    if [ -n "$v" ]; then echo "ERRORE: nella gabbia si vedono$v"; esito=1; else echo "ok: nella gabbia non si vedono le credenziali di questo computer ($# voci: chiavi SSH e GPG, accessi di Docker, GitHub e Stripe, portachiavi, profili dei browser, accesso di Claude Code)"; fi
+    if [ -n "${SSH_AUTH_SOCK:-}" ] || { [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -n "$(ls -A "$XDG_RUNTIME_DIR" 2>/dev/null)" ]; }; then echo "ERRORE: nella gabbia si raggiungono gli agenti SSH e GPG"; esito=1; else echo "ok: nella gabbia non si raggiungono gli agenti SSH e GPG"; fi
+    if [ -S /run/docker.sock ] || [ -S /var/run/docker.sock ]; then echo "ERRORE: nella gabbia si raggiunge il socket di Docker"; esito=1; else echo "ok: nella gabbia non si raggiunge il socket di Docker"; fi
     exit $esito
-  ' prova "$PROJECT_DIR" "$STATE_DIR"
+  ' prova "$PROJECT_DIR" "$STATE_DIR" "${CRED_LOCALI[@]}"
 }
 
 case "${1:-}" in
