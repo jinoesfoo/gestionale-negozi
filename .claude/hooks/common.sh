@@ -200,12 +200,15 @@ antenato_protetto() { # $1 percorso canonico assoluto
   return 1
 }
 
-# Le credenziali di questo computer. La sandbox di suo legge tutto il computer, credenziali comprese, e non ne ha
-# un elenco proprio: settings.json le nega con i divieti Read(...), che valgono anche per lei (~/.ssh, ~/.docker,
-# ~/.config/stripe, l'accesso di Claude Code), tranne ~/.config/gh, che gh e git usano dalla sandbox. Gli hook non
-# le lasciano aprire agli strumenti di Claude, nominare nei comandi, né copiare o montare ai comandi che girano fuori
-# dalla sandbox (docker, scp, rsync); la gabbia le nasconde.
-CRED_LOCALI=(.ssh .docker .config/stripe .config/gh .gnupg .local/share/keyrings .claude/.credentials.json)
+# Le credenziali di questo computer, sotto la cartella di casa: chiavi SSH e GPG, accessi di Docker, GitHub e della
+# Stripe CLI, portachiavi e password di pass, profili dei browser e della posta (anche snap), file di credenziali di
+# git, curl e PostgreSQL, accesso di Claude Code. La sandbox di suo legge tutto il computer, credenziali comprese, e
+# non ne ha un elenco proprio: settings.json le nega con i divieti Read(...), che valgono anche per lei, tranne
+# ~/.config/gh, che gh e git usano dalla sandbox. Gli hook non le lasciano aprire agli strumenti di Claude, nominare
+# nei comandi, né copiare o montare ai comandi che girano fuori dalla sandbox (docker, scp, rsync); la gabbia le nasconde.
+CRED_LOCALI=(.ssh .gnupg .docker .config/gh .config/stripe .local/share/keyrings .password-store
+  .mozilla snap/firefox .config/google-chrome .config/chromium snap/chromium .config/BraveSoftware .config/microsoft-edge
+  .thunderbird snap/thunderbird .git-credentials .netrc .pgpass .claude/.credentials.json)
 tocca_credenziali() { # $1 percorso assoluto canonico, $2 "contiene" per contare anche le cartelle che le contengono
   local c d a="${1%/}"
   [ -z "$a" ] && a=/
@@ -334,19 +337,20 @@ registro_alterato() { [ -f "$LOG_COPY" ] && [ -f "$LOG_FILE" ] && ! cmp -s "$LOG
 # Il codice del progetto che gira fuori dalla sandbox di Claude Code (i controlli dello Stop e, con gabbia.sh,
 # test di integrazione, end-to-end, server di sviluppo, worker, migrazioni, CLI) gira in una gabbia di bubblewrap:
 # rete e progetto liberi, ma file del metodo, .git e registro in sola lettura, il resto del computer in sola lettura,
-# senza chiavi SSH, credenziali di GitHub, Docker e Stripe, portachiavi e accesso di Claude Code. Uscita 125: la gabbia non parte.
+# senza le credenziali di questo computer (CRED_LOCALI, qui sopra) né gli agenti SSH e GPG. Uscita 125: la gabbia non parte.
 gabbia() {
   command -v bwrap >/dev/null 2>&1 || { echo "manca bubblewrap (bwrap): sudo apt install bubblewrap (AVVIO.md, passo 1)" >&2; return 125; }
-  local p; local -a a=(--ro-bind / / --dev-bind /dev /dev --proc /proc --tmpfs /tmp --bind "$PROJECT_DIR" "$PROJECT_DIR")
+  local p c; local -a a=(--ro-bind / / --dev-bind /dev /dev --proc /proc --tmpfs /tmp --bind "$PROJECT_DIR" "$PROJECT_DIR")
   [ -d "$PROJECT_DIR/docs" ] && a+=(--bind "$PROJECT_DIR/docs" "$PROJECT_DIR/docs")   # punto di mount: da dentro docs/ non si rinomina
   for p in .claude .git registro CLAUDE.md CLAUDE.local.md .mcp.json .vscode .idea .gitmodules .github/CODEOWNERS AVVIO.md docs/metodo.md docs/due-postazioni.md; do
     [ -e "$PROJECT_DIR/$p" ] && a+=(--ro-bind "$PROJECT_DIR/$p" "$PROJECT_DIR/$p")
   done
   for p in "$HOME/.cache/pnpm" "$HOME/.local/state/pnpm"; do [ -d "$p" ] && a+=(--bind "$p" "$p"); done
-  for p in "$HOME/.ssh" "$HOME/.config/gh" "$HOME/.docker" "$HOME/.config/stripe" "$HOME/.gnupg" "$HOME/.local/share/keyrings" "${XDG_RUNTIME_DIR:-}"; do
-    [ -n "$p" ] && [ -d "$p" ] && a+=(--tmpfs "$p")
+  for c in "${CRED_LOCALI[@]}"; do   # le credenziali di questo computer: cartelle vuote e file vuoti
+    p="$HOME/$c"
+    if [ -d "$p" ]; then a+=(--tmpfs "$p"); elif [ -e "$p" ]; then a+=(--ro-bind /dev/null "$p"); fi
   done
-  [ -f "$HOME/.claude/.credentials.json" ] && a+=(--ro-bind /dev/null "$HOME/.claude/.credentials.json")   # l'accesso di Claude Code
+  [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ] && a+=(--tmpfs "$XDG_RUNTIME_DIR")   # agenti SSH e GPG, portachiavi, D-Bus
   for p in /run/docker.sock /var/run/docker.sock; do [ -S "$p" ] && a+=(--ro-bind /dev/null "$p"); done
   bwrap "${a[@]}" --new-session --die-with-parent --unsetenv SSH_AUTH_SOCK --unsetenv DOCKER_HOST \
     --unsetenv GH_TOKEN --unsetenv GITHUB_TOKEN --setenv NEXT_TELEMETRY_DISABLED 1 --chdir "$PROJECT_DIR" -- "$@"

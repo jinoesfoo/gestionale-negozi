@@ -2,7 +2,8 @@
 # I comandi del progetto che usano il database, il server di sviluppo o il browser non funzionano nella sandbox
 # di Claude Code: lì localhost è privato, e PostgreSQL non c'è. Girano fuori dalla sandbox, ma dentro la gabbia
 # di common.sh: rete e progetto liberi; file del metodo, .git, registro e resto del computer in sola lettura;
-# niente chiavi SSH, credenziali di GitHub, Docker e Stripe, portachiavi e accesso di Claude Code.
+# niente credenziali di questo computer (chiavi SSH e GPG, accessi di GitHub, Docker e Stripe, portachiavi, profili
+# dei browser, accesso di Claude Code).
 # Uso, dalla cartella del progetto, da solo nella riga (è un comando escluso dalla sandbox, settings.json):
 #   bash .claude/hooks/gabbia.sh test|test:int|test:e2e|dev|worker|db:migrate|cli [argomenti]
 #   (test: i test unitari, quando hanno bisogno di un file di ambiente, che la sandbox non lascia leggere)
@@ -33,6 +34,8 @@ prova_gabbia() {
     if [ -n "$(ls -A "$HOME/.ssh" 2>/dev/null)" ]; then echo "ERRORE: nella gabbia si vedono le chiavi SSH"; esito=1; else echo "ok: nella gabbia non ci sono le chiavi SSH"; fi
     if [ -n "$(ls -A "$HOME/.config/gh" 2>/dev/null)" ]; then echo "ERRORE: nella gabbia si vedono le credenziali di GitHub"; esito=1; else echo "ok: nella gabbia non ci sono le credenziali di GitHub"; fi
     if [ -s "$HOME/.claude/.credentials.json" ]; then echo "ERRORE: nella gabbia si legge il file di accesso di Claude Code"; esito=1; else echo "ok: nella gabbia il file di accesso di Claude Code non si legge"; fi
+    v=""; for d in "$HOME/.gnupg" "$HOME/.mozilla" "$HOME/snap/firefox" "$HOME/.config/google-chrome" "$HOME/.config/chromium"; do [ -n "$(ls -A "$d" 2>/dev/null)" ] && v="$v $d"; done
+    if [ -n "$v" ]; then echo "ERRORE: nella gabbia si vedono$v"; esito=1; else echo "ok: nella gabbia non si vedono le chiavi GPG e i profili dei browser"; fi
     exit $esito
   ' prova "$PROJECT_DIR" "$STATE_DIR"
 }

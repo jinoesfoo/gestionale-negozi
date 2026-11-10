@@ -30,6 +30,19 @@ variabile_vietata() { # $1 nome di una variabile assegnata davanti a un comando,
   case "$1" in GIT_*|CLAUDE_PROJECT_DIR|GESTIONALE_STATO_DIR|HOME) block "la variabile $1 cambia il repository o la cartella degli hook: non si imposta." ;; esac
   return 0
 }
+UTENTE="${USER:-${LOGNAME:-$(id -un 2>/dev/null)}}"
+casa_in_chiaro() { # $1 parola -> CC: ~utente, $HOME e ${HOME} come ~; $USER e $LOGNAME con il nome dell'utente
+  CC="$1"
+  case "$CC" in
+    '$HOME'|'$HOME/'*) CC="~${CC:5}" ;;
+    '${HOME}'|'${HOME}/'*) CC="~${CC:7}" ;;
+    "~$UTENTE"|"~$UTENTE/"*) [ -n "$UTENTE" ] && CC="~${CC:$((${#UTENTE}+1))}" ;;
+  esac
+  if [ -n "$UTENTE" ] && [[ "$CC" == *'$'* ]]; then
+    CC="${CC//'${USER}'/$UTENTE}"; CC="${CC//'${LOGNAME}'/$UTENTE}"; CC="${CC//'$USER'/$UTENTE}"; CC="${CC//'$LOGNAME'/$UTENTE}"
+  fi
+  return 0
+}
 
 # --- percorsi ---------------------------------------------------------------------------------------
 risolvi() { # $1 percorso, $2 cartella base (facoltativa: altrimenti CWD) -> assoluto canonico, "?" se la base è ignota
@@ -137,6 +150,7 @@ analizza_git() { # $1 indice di "git" in argv
     commit-tree|update-ref|replace|update-index|read-tree|write-tree|symbolic-ref|fast-import|filter-branch|filter-repo|mktree|mktag|unpack-objects|index-pack|notes)
       block "git $sub è un comando di basso livello: nel metodo non serve." ;;
     hash-object) ha -w && block "git hash-object -w scrive nel repository: nel metodo non serve." ;;
+    credential|credential-*) block "git $sub legge o scrive le credenziali di GitHub (git credential fill le stampa): lo usa l'utente." ;;
     reflog) case "${r[0]:-}" in expire|delete) block "git reflog ${r[0]} cancella la storia locale: lo fa l'utente." ;; esac ;;
     worktree) case "${r[0]:-list}" in list) ;; *) block "git worktree non serve nel metodo." ;; esac ;;
     clone|init|submodule) block "git $sub non si usa nel metodo, qui né altrove: nel progetto creerebbe un repository annidato (o un sottomodulo), che git non attraversa; fuori non serve a nessun compito. Se serve davvero, lo fa l'utente nel suo terminale." ;;
@@ -364,7 +378,8 @@ analizza_gh() { # $1 indice di "gh" in argv
     secret) case "${w[1]:-}" in set|delete|remove) block "i segreti di GitHub li scrive l'utente: i valori non passano da Claude." ;; esac ;;
     release) case "${w[1]:-}" in create|delete|edit|upload|delete-asset) block "i rilasci li decide e li crea l'utente." ;; esac ;;
     auth) block "gh auth lo usa l'utente: stampa o cambia le credenziali." ;;
-    alias|extension|config) case "${w[1]:-}" in set|delete|import|install|upgrade|remove|create|exec|clear-cache) block "gh ${w[0]} ${w[1]} cambia gh: lo fa l'utente." ;; esac ;;
+    config) block "gh config lo usa l'utente: legge e cambia la configurazione di gh, accesso a GitHub compreso." ;;
+    alias|extension) case "${w[1]:-}" in set|delete|import|install|upgrade|remove|create|exec|clear-cache) block "gh ${w[0]} ${w[1]} cambia gh: lo fa l'utente." ;; esac ;;
     ruleset|cache|codespace|gpg-key|ssh-key) case "${w[1]:-}" in list|view|check|"") ;; *) block "gh ${w[0]} ${w[1]}: lo fa l'utente." ;; esac ;;
   esac
   return 0
@@ -405,11 +420,15 @@ credenziali_server() { # $1 percorso sul server, $2 come l'ha scritto Claude, $3
 }
 credenziali_locali() { # $1 percorso assoluto canonico, $2 come l'ha scritto Claude, $3 "contiene" (facoltativo)
   tocca_credenziali "$1" "${3:-}" && \
-    block "il comando arriverebbe alle credenziali di questo computer ('$2'): chiavi SSH, accessi di Docker, GitHub e Stripe, portachiavi e accesso di Claude Code non si leggono, non si copiano e non si montano (docs/due-postazioni.md, «Protezione del metodo»)."
+    block "il comando arriverebbe alle credenziali di questo computer ('$2'): chiavi SSH e GPG, accessi di Docker, GitHub e Stripe, portachiavi, profili dei browser e accesso di Claude Code non si leggono, non si copiano e non si montano (docs/due-postazioni.md, «Protezione del metodo»)."
   return 0
 }
-parola_locale() { # $1 parola di un comando: niente credenziali di questo computer; fuori dalla sandbox nemmeno sessioni salvate
-  local w="$1" v abs; local -a cand=()
+fuori_progetto() { # vero se la cartella in cui gira il comando è nota e fuori dal progetto
+  [ "$CWD" != "?" ] && [[ "$CWD" != "$PROJECT_DIR_SLASH" && "$CWD" != "$PROJECT_DIR_SLASH"/* ]]
+}
+parola_locale() { # $1 parola di un comando, $2 "contiene" se il programma legge le cartelle per intero (legge_cartelle):
+                  # niente credenziali di questo computer; fuori dalla sandbox nemmeno sessioni salvate
+  local w="$1" v abs modo scritto; local -a cand=()
   case "$w" in --*=*) w="${w#*=}" ;; -*) return 0 ;; esac
   cand+=("$w")
   [[ "$w" == *=* ]] && cand+=("${w#*=}")
@@ -417,11 +436,41 @@ parola_locale() { # $1 parola di un comando: niente credenziali di questo comput
   for v in "${cand[@]}"; do
     [ -n "$ESCLUSO" ] && [[ "$v" == *playwright/.auth* ]] && \
       block "il comando gira fuori dalla sandbox e nomina una sessione salvata delle prove ('$v'): è una credenziale, la usano solo i test, nella gabbia."
-    [[ "$v" == /* || "$v" == "~"* || "$v" == *..* || "$v" == [A-Za-z]:/* ]] || continue
+    scritto="$v"; modo="${2:-}"
+    [[ "$v" == file://* ]] && v="${v#file://}"   # curl file:///…
+    casa_in_chiaro "$v"; v="$CC"                # $HOME/…, ${HOME}/…, ~utente/…, /home/$USER/…
+    if [[ "$v" == *[*?[{]* ]]; then             # caratteri jolly o graffe: conta la cartella fissa che li precede, con ciò che contiene
+      v="${v%%[*?[{]*}"
+      case "$v" in */*) v="${v%/*}"; [ -z "$v" ] && v=/ ;; "~"*) ;; *) v=. ;; esac
+      modo=contiene
+    fi
+    # un percorso relativo si controlla quando il comando gira fuori dal progetto (dopo un cd)
+    [[ "$v" == /* || "$v" == "~"* || "$v" == *..* || "$v" == [A-Za-z]:/* ]] || fuori_progetto || continue
     abs="$(risolvi "$v")"; [ "$abs" = "?" ] && continue
-    credenziali_locali "$abs" "$v"
+    credenziali_locali "$abs" "$scritto" "$modo"
   done
   return 0
+}
+legge_cartelle() { # $1 indice del programma: vero se legge le cartelle per intero (grep -r, rg, find, tar, zip, cp -r, diff -r, ln)
+  local j a p="${argv[$1]##*/}"
+  case "$p" in
+    rg|ripgrep|ag|ack|ack-grep|ugrep|ug|rgrep|find|fd|fdfind|tar|bsdtar|gtar|zip|7z|7za|7zr|ln) return 0 ;;
+    grep|egrep|fgrep|zgrep|cp|diff) ;;
+    *) return 1 ;;
+  esac
+  for ((j=$1+1; j<n; j++)); do
+    a="${argv[$j]}"
+    case "$a" in
+      --) return 1 ;;
+      --recursive|--dereference-recursive|--directories=recurse) return 0 ;;
+      --archive) [ "$p" = cp ] && return 0 ;;
+      recurse) [[ "$p" == *grep ]] && return 0 ;;   # grep -d recurse
+      --*) ;;
+      -*[rR]*) return 0 ;;                          # grep -r -R, cp -r -R, diff -r
+      -*a*) [ "$p" = cp ] && return 0 ;;            # cp -a
+    esac
+  done
+  return 1
 }
 sorgente_locale() { # $1 percorso di questo computer che un comando fuori dalla sandbox legge: sorgenti di scp e rsync, volumi e cp di docker, «<»
   local t="$1" abs rel x r
@@ -574,12 +623,22 @@ uscita_docker() { # -o/--output di build, save, export: scrive sul computer
   return 0
 }
 compose_controlla() { # "docker compose config" in sola lettura: che cosa montano e con quali permessi girano i servizi
-  local out src
+  local out src abs
   [ "$CWD" = "?" ] && block "docker compose dopo un cd che non si può risolvere non si controlla."
   out="$(cd "$CWD" 2>/dev/null && docker compose "$@" config --format json 2>/dev/null)" || out=""
   [ -n "$out" ] || block "non riesco a leggere la configurazione di docker compose (docker compose … config): senza, non si può controllare che cosa monta. Se il file è giusto, il comando lo esegue l'utente."
-  while IFS= read -r src; do [ -n "$src" ] && monta "$src"; done < <(jq -r '.services[]?.volumes[]? | select(.type == "bind") | .source // empty' <<< "$out" 2>/dev/null)
-  while IFS= read -r src; do [ -n "$src" ] && monta "$src"; done < <(jq -r '.volumes[]?.driver_opts.device // empty' <<< "$out" 2>/dev/null)
+  while IFS= read -r src; do [ -n "$src" ] && monta "$src"; done < <(jq -r '.services[]?.volumes[]? | select(.type == "bind") | .source // empty' <<< "$out" 2>/dev/null | tr -d '\r')
+  while IFS= read -r src; do [ -n "$src" ] && monta "$src"; done < <(jq -r '.volumes[]?.driver_opts.device // empty' <<< "$out" 2>/dev/null | tr -d '\r')
+  # i file che compose legge fuori dalla sandbox per i container e per la costruzione: niente credenziali di questo computer
+  # (tr -d '\r': jq di Windows scrive CRLF; su Ubuntu non cambia nulla)
+  while IFS= read -r src; do [ -n "$src" ] && sorgente_locale "$src"; done < <(jq -r '[(.secrets // {})[]?, (.configs // {})[]?] | .[] | .file? // empty' <<< "$out" 2>/dev/null | tr -d '\r')
+  while IFS= read -r src; do
+    [ -n "$src" ] || continue
+    abs="$(risolvi "$src")"; [ "$abs" != "?" ] && credenziali_locali "$abs" "$src"
+  done < <(jq -r '.services[]?.env_file? // empty | (if type == "array" then .[] else . end) | (if type == "object" then .path else . end) // empty' <<< "$out" 2>/dev/null | tr -d '\r')
+  while IFS= read -r src; do [ -n "$src" ] && contesto_docker "$src"; done < <(jq -r '.services[]?.build? | objects | (.context // empty), ((.additional_contexts // {})[]?)' <<< "$out" 2>/dev/null | tr -d '\r')
+  jq -e '[.services[]?.build? | objects | (.ssh // []) | length > 0] | any' <<< "$out" >/dev/null 2>&1 && \
+    block "un servizio del file compose porterebbe nella costruzione l'agente SSH di questo computer (build.ssh), con l'accesso ai server: nel metodo non si usa."
   jq -e '[.services[]? | (.privileged == true) or ((.cap_add // []) | length > 0) or ((.devices // []) | length > 0)
           or ((.security_opt // []) | length > 0) or (.pid == "host") or (.userns_mode == "host") or (.network_mode == "host")
           or ((.volumes_from // []) | length > 0)] | any' <<< "$out" >/dev/null 2>&1 && \
@@ -693,7 +752,7 @@ codice_in_linea() { # codice passato a python -c, node -e e simili, o in un here
   local senza_esempi
   echo "$1" | grep -Eqi '\.claude|CLAUDE(\.local)?\.md|AVVIO\.md|metodo\.md|due-postazioni|compito-corrente|registro/|postazione|corsie\.txt|gestionale-negozi/|\.local/state|\.git/' && \
     block "un programma in linea che nomina i file del metodo non è permesso."
-  echo "$1" | grep -Eqi '\.ssh/|\.docker/|\.config/(gh|stripe)|\.gnupg|keyrings|\.credentials\.json|playwright/\.auth' && \
+  echo "$1" | grep -Eqi '\.ssh/|\.gnupg|\.docker/|\.config/(gh|stripe|google-chrome|chromium|bravesoftware|microsoft-edge)|hosts\.yml|keyrings|\.password-store|\.mozilla|snap/(firefox|chromium|thunderbird)|\.thunderbird|\.git-credentials|\.netrc|\.pgpass|\.credentials\.json|playwright/\.auth' && \
     block "un programma in linea che nomina le credenziali di questo computer o le sessioni salvate delle prove non è permesso."
   senza_esempi="$(printf '%s' "$1" | sed -E 's/[A-Za-z0-9._/-]*\.example[A-Za-z0-9._-]*//g')"
   printf '%s' "$senza_esempi" | grep -Eqi '\.env|/env/' && \
@@ -725,8 +784,10 @@ cambia_cartella() { # $1 indice di cd o pushd
   local j=$(( $1 + 1 ))
   while [ "$j" -lt "$n" ] && [[ "${argv[$j]}" == -* && "${argv[$j]}" != - ]]; do j=$((j+1)); done
   if [ "$j" -ge "$n" ]; then CWD="$(canon_path "$HOME")"; return 0; fi
-  if [[ "${segni[$j]}" == *d* || "${segni[$j]}" == *g* || "${segni[$j]}" == *b* || "${argv[$j]}" == - ]]; then CWD="?"; return 0; fi
-  CWD="$(risolvi "${argv[$j]}")"
+  if [[ "${segni[$j]}" == *g* || "${segni[$j]}" == *b* || "${argv[$j]}" == - ]]; then CWD="?"; return 0; fi
+  casa_in_chiaro "${argv[$j]}"   # cd $HOME, cd ~utente: la cartella è nota
+  if [[ "${segni[$j]}" == *d* ]] && [[ "$CC" == *'$'* || "$CC" == *'`'* ]]; then CWD="?"; return 0; fi
+  CWD="$(risolvi "$CC")"
   return 0
 }
 legge_stdin() { # $1 indice, $2 programma (shell o interprete): vero se non ha né uno script né il codice in un argomento
@@ -801,7 +862,7 @@ comandi_pnpm() { # i comandi che usano il database, il server di sviluppo o il b
 
 # --- un comando semplice ----------------------------------------------------------------------------
 analizza_da() { # $1 indice del nome del comando in argv
-  local i="$1" prog j a salva pth
+  local i="$1" prog j a salva pth ric="" modello
   [[ "${segni[$i]}" == *d* ]] && block "il nome del comando viene da una variabile o da un comando annidato: scrivilo per intero."
   prog="${argv[$i]##*/}"
   ultimo="$prog"
@@ -811,11 +872,27 @@ analizza_da() { # $1 indice del nome del comando in argv
       [ "${argv[$i]}" = "$prog" ] || block "scrivi $prog e basta, senza il percorso del programma."
       [ "$LIVELLO" = 1 ] && ESCLUSO="$prog" ;;
   esac
-  # in qualunque comando: il nome della postazione e i file di ambiente reali
+  # in qualunque comando: il nome della postazione, le credenziali di questo computer e i file di ambiente reali
+  if legge_cartelle "$i"; then   # un programma che legge le cartelle per intero: niente cartelle che contengono le credenziali
+    ric=contiene; fuori_progetto && credenziali_locali "$CWD" "$CWD" contiene
+  fi
+  modello=-1   # grep e simili: il primo argomento che non è un'opzione è il testo da cercare, non un file
+  case "$prog" in
+    grep|egrep|fgrep|zgrep|rgrep|rg|ripgrep|ag|ack|ack-grep|ugrep|ug)
+      for ((j=i+1; j<n; j++)); do
+        case "${argv[$j]}" in
+          --) modello=$((j+1)); break ;;
+          -e|-e?*|--regexp|--regexp=*|-f|-f?*|--file|--file=*|--files|--type-list) break ;;   # il testo sta in un'opzione, o non c'è
+          -*) ;;
+          *) modello="$j"; break ;;
+        esac
+      done ;;
+  esac
   for ((j=i; j<n; j++)); do
     a="${argv[$j]}"
+    [ "$j" = "$modello" ] && continue
     case "$a" in *imposta-postazione*|*hooks/imposta*) block "il nome della postazione lo imposta l'utente, nel suo terminale, una volta sola." ;; esac
-    [ "$prog" = ssh ] || parola_locale "$a"   # le credenziali di questo computer (per ssh gli argomenti sono il comando remoto)
+    [ "$prog" = ssh ] || parola_locale "$a" "$ric"   # (per ssh gli argomenti sono il comando remoto)
     [[ "$a" == -* || "$a" == *.example* ]] && continue
     [ "$prog" = ssh ] && continue    # per ssh gli argomenti sono il comando remoto: lo controlla segreti_remoti
     if [[ "$a" == *.env* || "$a" == */env/* ]]; then
