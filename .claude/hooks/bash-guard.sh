@@ -139,7 +139,7 @@ analizza_git() { # $1 indice di "git" in argv
     hash-object) ha -w && block "git hash-object -w scrive nel repository: nel metodo non serve." ;;
     reflog) case "${r[0]:-}" in expire|delete) block "git reflog ${r[0]} cancella la storia locale: lo fa l'utente." ;; esac ;;
     worktree) case "${r[0]:-list}" in list) ;; *) block "git worktree non serve nel metodo." ;; esac ;;
-    clone|init|submodule) block "git $sub creerebbe nel progetto un repository annidato (o un sottomodulo), che i controlli del metodo non attraversano: se serve davvero, lo fa l'utente nel suo terminale." ;;
+    clone|init|submodule) block "git $sub non si usa nel metodo, qui né altrove: nel progetto creerebbe un repository annidato (o un sottomodulo), che git non attraversa; fuori non serve a nessun compito. Se serve davvero, lo fa l'utente nel suo terminale." ;;
     config) git_config ;;
     remote) for a in "${r[@]}"; do case "$a" in -*) ;; add|set-url|rename|remove|rm|set-head|set-branches|prune|update) block "i remoti di git li cambia l'utente." ;; *) break ;; esac; done ;;
     clean) for a in "${r[@]}"; do { [ "$a" = --force ] || [[ "$a" == -* && "$a" != --* && "$a" == *f* ]]; } && block "git clean -f è distruttivo: se serve davvero, lo esegue l'utente."; done ;;
@@ -355,7 +355,12 @@ analizza_gh() { # $1 indice di "gh" in argv
         esac
       done
       m="${m^^}"; [ -n "$m" ] && [ "$m" != GET ] && block "gh api con il metodo $m scrive: con l'API si legge e basta." ;;
-    repo) case "${w[1]:-}" in edit|delete|rename|archive|unarchive|set-default) block "le impostazioni del repository le cambia l'utente." ;; esac ;;
+    repo) case "${w[1]:-}" in
+            edit|delete|rename|archive|unarchive|set-default) block "le impostazioni del repository le cambia l'utente." ;;
+            clone) block "gh repo clone non si usa nel metodo, come git clone: nel progetto creerebbe un repository annidato, che git non attraversa; fuori non serve a nessun compito. Se serve davvero, lo fa l'utente nel suo terminale." ;;
+            create|fork) block "gh repo ${w[1]} crea un repository su GitHub (e con --clone lo clona qui): lo fa l'utente." ;;
+            sync) block "gh repo sync aggiorna rami (anche con --force): nel metodo non serve." ;;
+          esac ;;
     secret) case "${w[1]:-}" in set|delete|remove) block "i segreti di GitHub li scrive l'utente: i valori non passano da Claude." ;; esac ;;
     release) case "${w[1]:-}" in create|delete|edit|upload|delete-asset) block "i rilasci li decide e li crea l'utente." ;; esac ;;
     auth) block "gh auth lo usa l'utente: stampa o cambia le credenziali." ;;

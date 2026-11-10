@@ -74,6 +74,8 @@
         "./.github/CODEOWNERS",
         "./.git/info/exclude",
         "./.git/info/attributes",
+        "./.git/CLAUDE.md",
+        "./.git/CLAUDE.local.md",
         "~/.local/state/gestionale-negozi"
       ]
     },
