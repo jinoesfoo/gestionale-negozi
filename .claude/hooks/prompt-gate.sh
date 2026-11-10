@@ -23,7 +23,7 @@ else
 fi
 fermo_se_alterato() {
   [ -z "${alterati// /}" ] && return 0
-  say "I file del metodo non sono quelli del commit corrente: $alterati. Finché non tornano a posto la fase NON cambia. Li rimette a posto l'utente, nel suo terminale: un file tracciato con git checkout -- <file>; un file nuovo (CLAUDE.local.md, .mcp.json, un CLAUDE.md in una sottocartella) cancellandolo; in .claude/settings.local.json restano solo le approvazioni (permissions con allow, deny e ask), le altre chiavi si tolgono; il registro si ricopia dalla copia degli hook; per la cartella .git, AVVIO.md, passo 4."
+  say "I file del metodo non sono quelli del commit corrente: $alterati. Finché non tornano a posto la fase NON cambia. Li rimette a posto l'utente, nel suo terminale: un file tracciato con git checkout -- <file>; un file nuovo (CLAUDE.local.md, .mcp.json, un CLAUDE.md in una sottocartella) cancellandolo; un collegamento simbolico a una cartella togliendolo (il progetto non ne usa); in .claude/settings.local.json restano solo le approvazioni (permissions con allow, deny e ask), le altre chiavi si tolgono; il registro si ricopia dalla copia degli hook; per la cartella .git, AVVIO.md, passo 4."
   exit 0
 }
 # Il fermo dei rilasci lo usano solo i compiti di yoo, uno alla volta (docs/due-postazioni.md, «Il server di test condiviso»):

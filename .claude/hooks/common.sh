@@ -230,10 +230,14 @@ git_cambiata() { [ -f "$GITDIR_FILE" ] && [ "$(impronta_git)" != "$(cat "$GITDIR
 
 # File del metodo diversi dal commit corrente, o nuovi e non tracciati. I nuovi li cerca find, non git ls-files: così si
 # vedono anche quelli nascosti da .gitignore o da .git/info/exclude (un test o un comando potrebbero averli nascosti apposta)
-# e quelli dentro un repository annidato, che git non attraversa. La ricerca non entra in node_modules a qualunque livello,
-# nelle .git dei repository annidati né in .next, dist e coverage della radice (docs/due-postazioni.md, «Limiti»); la .git
-# della radice invece la attraversa: la sandbox lascia scriverci, e Claude Code caricherebbe un CLAUDE.md anche lì quando
-# Claude legge un file dentro .git (per esempio MERGE_MSG). .claude/settings.local.json lo
+# e quelli dentro un repository annidato, che git non attraversa. La ricerca non entra in node_modules a qualunque livello
+# né in .next, dist e coverage della radice (docs/due-postazioni.md, «Limiti»); nelle cartelle .git invece entra, in quella
+# della radice e in quelle dei repository annidati (ne porta una anche una copia o un archivio estratto): la sandbox lascia
+# scriverci, e Claude Code caricherebbe un CLAUDE.md anche lì quando Claude legge un file dentro .git (per esempio
+# MERGE_MSG). Un collegamento simbolico che porta a una cartella, o a niente, conta come alterazione ovunque sia fuori
+# dalle cartelle saltate: find senza -L non lo attraversa, e dietro potrebbe esserci un CLAUDE.md che Claude Code
+# caricherebbe leggendo un file attraverso il collegamento; il progetto non ne usa (quelli di pnpm stanno dentro
+# node_modules). Un collegamento a un file è innocuo: se si chiama CLAUDE.md lo trova il nome. .claude/settings.local.json lo
 # scrive Claude Code stesso: non conta come file nuovo, ma il suo contenuto si controlla qui sotto. Gli errori di find (una
 # cartella non leggibile) restano nell'elenco e valgono come alterazione: una cartella resa illeggibile apposta non nasconde
 # nulla. Non conta solo «No such file or directory», una voce sparita fra la lettura della cartella e il suo controllo (un
@@ -243,7 +247,8 @@ errori_find() { grep -vE '^find: .*: No such file or directory$' | sed -E 's|^fi
 metodo_modificato() {
   (cd "$PROJECT_DIR" 2>/dev/null && git rev-parse -q --verify HEAD >/dev/null 2>&1 && {
     git diff --no-ext-diff --name-only HEAD -- "${METODO_PATHSPEC[@]}" 2>/dev/null
-    LC_ALL=C find . \( -name node_modules -o \( -name .git ! -path ./.git \) -o -path ./.next -o -path ./dist -o -path ./coverage \) -prune -o \
+    LC_ALL=C find . \( -type l ! -xtype f -printf 'collegamento %P -> %l\n' \) -o \
+      \( -name node_modules -o -path ./.next -o -path ./dist -o -path ./coverage \) -prune -o \
       \( -name CLAUDE.md -o -name CLAUDE.local.md -o -path '*/.claude/*' -o -path ./.mcp.json -o -path ./.gitmodules \
          -o -path ./.github/CODEOWNERS -o -path ./AVVIO.md -o -path ./docs/metodo.md -o -path ./docs/due-postazioni.md \) \
       ! -type d ! -path ./.claude/settings.local.json -print 2>&1 | errori_find \
