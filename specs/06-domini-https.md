@@ -40,7 +40,7 @@ Fissare la versione di `caddy` nelle due righe `FROM` con lo stesso numero.
 
 {$BASE_DOMAIN}, *.{$BASE_DOMAIN} {
 	tls {
-		dns cloudflare {$CF_API_TOKEN}
+		dns cloudflare {env.CF_API_TOKEN}
 	}
 	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	request_header -x-middleware-subrequest
@@ -56,7 +56,9 @@ Fissare la versione di `caddy` nelle due righe `FROM` con lo stesso numero.
 	reverse_proxy app:3000
 }
 ```
-[VERIFICA: sintassi di `servers { protocols … }`, di `request_header -<nome>` e del modulo DNS sulla versione di Caddy fissata.]
+Il token è scritto `{env.CF_API_TOKEN}` e non `{$CF_API_TOKEN}`: la forma con `$` Caddy la sostituisce quando legge il file, e il token finirebbe nella configurazione che `caddy adapt` e la porta di amministrazione di Caddy stampano; con `env.` nella configurazione resta il segnaposto, e il valore si legge solo quando serve. `BASE_DOMAIN` e `ACME_EMAIL` non sono segreti e restano con `$`, perché servono alla lettura del file.
+
+[VERIFICA: sintassi di `servers { protocols … }`, di `request_header -<nome>` e del modulo DNS, con il token scritto `{env.CF_API_TOKEN}`, sulla versione di Caddy fissata.]
 
 Il matcher `@email_webhook_foreign` limita `/api/webhooks/email` sull'host radice (e `www`) agli indirizzi da cui Brevo invia i webhook: è il secondo livello accanto al token `EMAIL_WEBHOOK_TOKEN` (FON-011, FON-T10), perché Brevo non firma le chiamate. Gli intervalli si scrivono nel Caddyfile (copiato nell'immagine): un loro cambio è una nuova revisione dell'immagine Caddy. [VERIFICA: intervalli IP correnti dei webhook di Brevo dalla sua documentazione; annotare la data del controllo in `infra/README.md`.]
 

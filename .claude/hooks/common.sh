@@ -264,9 +264,24 @@ git_cambiata() { [ -f "$GITDIR_FILE" ] && [ "$(impronta_git)" != "$(cat "$GITDIR
 # test che svuota test-results/ mentre arriva un messaggio): ciò che non c'è più non si può caricare. LC_ALL=C tiene i
 # messaggi di find in inglese, così il filtro vale con ogni lingua del sistema.
 errori_find() { grep -vE '^find: .*: No such file or directory$' | sed -E 's|^find: (.*)$|cartella non leggibile, find dice: \1|; s|^\./||'; }
+# A unione aperta (git merge fermo su un conflitto: quando main porta file del metodo la esegue l'utente) i file del
+# metodo arrivati da main sono già nella cartella ma non ancora in HEAD. Non contano come alterati, se sono identici a
+# quelli del commit che si sta unendo o di origin/main: altrimenti le parole chiave sarebbero rifiutate proprio quando la
+# procedura le chiede (TORNA AL CODICE o TORNA AI TEST per risolvere il conflitto). Un file del metodo diverso da tutti
+# e due conta come sempre. Si usa dentro la cartella del progetto.
+arrivati_con_unione() { # stdin: file del metodo diversi da HEAD -> stdout: quelli che non sono arrivati con l'unione aperta
+  local f
+  git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 || { cat; return 0; }
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    [ "$(impronta_qui "$f")" = "$(impronta_in MERGE_HEAD "$f")" ] && continue
+    uguale_a_main "$f" && continue
+    printf '%s\n' "$f"
+  done
+}
 metodo_modificato() {
   (cd "$PROJECT_DIR" 2>/dev/null && git rev-parse -q --verify HEAD >/dev/null 2>&1 && {
-    git diff --no-ext-diff --name-only HEAD -- "${METODO_PATHSPEC[@]}" 2>/dev/null
+    git diff --no-ext-diff --name-only HEAD -- "${METODO_PATHSPEC[@]}" 2>/dev/null | arrivati_con_unione
     LC_ALL=C find . \( -type l ! -xtype f -printf 'collegamento %P -> %l\n' \) -o \
       \( -name node_modules -o -path ./.next -o -path ./dist -o -path ./coverage \) -prune -o \
       \( -name CLAUDE.md -o -name CLAUDE.local.md -o -path '*/.claude/*' -o -path ./.mcp.json -o -path ./.gitmodules \
@@ -309,15 +324,19 @@ manifesto_test() {
     [ -f "$PROJECT_DIR/package.json" ] && echo "package.json#scripts"
   } | while IFS= read -r f; do printf '%s  %s\n' "$(impronta_qui "$f")" "$f"; done
 }
-# Alla fine della fase test (APPROVO test -> codice) si salva l'impronta e la versione di main di quel momento
+# Alla fine della fase test (APPROVO test -> codice) si salva l'impronta e, come base, il main che il ramo contiene in
+# quel momento (l'antenato comune con origin/main), non la punta di origin/main: i test che l'altra postazione ha unito
+# mentre questo compito era in piano o in fase test non sono ancora nella cartella, e arriveranno con l'allineamento.
 salva_manifesto_test() {
   mkdir -p "$STATE_DIR"
   manifesto_test > "$STATE_DIR/manifesto-test"
-  git -C "$PROJECT_DIR" rev-parse -q --verify origin/main > "$STATE_DIR/manifesto-main" 2>/dev/null || : > "$STATE_DIR/manifesto-main"
+  { git -C "$PROJECT_DIR" merge-base HEAD origin/main 2>/dev/null || git -C "$PROJECT_DIR" rev-parse -q --verify origin/main 2>/dev/null; } \
+    > "$STATE_DIR/manifesto-main" || : > "$STATE_DIR/manifesto-main"
 }
 cancella_manifesto_test() { rm -f "$STATE_DIR/manifesto-test" "$STATE_DIR/manifesto-main"; }
 # Test (o configurazione dei controlli) cambiati dopo la fase test. Non conta un file che ora è identico alla
-# versione di main, se main l'ha cambiato dopo l'impronta: è arrivato con l'allineamento, non da questo compito.
+# versione di main, se main l'ha cambiato dopo la base salvata con l'impronta: è arrivato con l'allineamento, non da
+# questo compito.
 test_cambiati() {
   [ -f "$STATE_DIR/manifesto-test" ] || return 0
   local base f m; base="$(cat "$STATE_DIR/manifesto-main" 2>/dev/null)"
@@ -336,7 +355,8 @@ registro_alterato() { [ -f "$LOG_COPY" ] && [ -f "$LOG_FILE" ] && ! cmp -s "$LOG
 # --- La gabbia ------------------------------------------------------------------------------------------
 # Il codice del progetto che gira fuori dalla sandbox di Claude Code (i controlli dello Stop e, con gabbia.sh,
 # test di integrazione, end-to-end, server di sviluppo, worker, migrazioni, CLI) gira in una gabbia di bubblewrap:
-# rete e progetto liberi, ma file del metodo, .git e registro in sola lettura, il resto del computer in sola lettura,
+# rete e progetto liberi, ma file del metodo, .git e registro in sola lettura, il resto del computer in sola lettura
+# (tranne le due cartelle di lavoro di pnpm, ~/.cache/pnpm e ~/.local/state/pnpm),
 # senza le credenziali di questo computer (CRED_LOCALI, qui sopra) né gli agenti SSH e GPG, e con i suoi processi soltanto
 # (--unshare-pid: da /proc/<pid>/root di un processo del computer si vedrebbe la sua radice, credenziali comprese).
 # Uscita 125: la gabbia non parte.

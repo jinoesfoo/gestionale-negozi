@@ -83,10 +83,14 @@ classifica() { # $1 percorso assoluto canonico in cui un comando scrive
     if [ -n "$ESCLUSO" ]; then case "$abs" in /tmp|/tmp/*|/dev/*) ;; *) block "$ESCLUSO gira fuori dalla sandbox: fuori dal progetto scrive solo in /tmp ('$rel'), perché lì nessun muro lo ferma." ;; esac; fi
     return 0 ;;
   esac
-  is_secret_file "$rel" && return 0                     # i file di ambiente li controlla la regola sui segreti
+  if is_secret_file "$rel" || [[ "$rel" == playwright/.auth || "$rel" == playwright/.auth/* ]]; then
+    # nella sandbox il file vero è mascherato e i comandi li ferma la regola sui segreti; fuori dalla sandbox non c'è altro muro
+    [ -n "$ESCLUSO" ] && block "$ESCLUSO gira fuori dalla sandbox e scriverebbe su '$rel', un file di ambiente reale o una sessione salvata delle prove: quei file li scrive solo l'utente."
+    is_secret_file "$rel" && return 0                   # i file di ambiente li controlla la regola sui segreti
+  fi
   case "$fase" in
     test) is_test_file "$rel" || is_test_tooling_file "$rel" || is_free_file "$rel" || \
-            block "in fase test da terminale si scrivono solo i test, la loro configurazione, le specifiche e i documenti ('$rel')." ;;
+            block "in fase test da terminale si scrivono solo i test, la loro configurazione, le specifiche e i documenti ('$rel'). La cartella di un file ammesso (.github/workflows, infra/scripts) non serve crearla con mkdir: la crea Write quando scrivi il file." ;;
     codice|revisione)
       is_test_file "$rel" && block "in fase $fase i test non si modificano, nemmeno da terminale ('$rel')."
       is_check_config "$rel" && block "in fase $fase la configurazione dei controlli resta ferma come i test ('$rel'): se va cambiata, l'utente scrive TORNA AI TEST." ;;
@@ -437,6 +441,7 @@ analizza_gh() { # $1 indice di "gh" in argv
 }
 
 # --- server -----------------------------------------------------------------------------------------
+MSG_SERVER="verso i server il nome si scrive così com'è, senza apici né barre rovesciate (ssh prod …, scp … test:<percorso>): la conferma che Claude Code chiede per prod guarda il testo del comando."
 host_ok() { # verso i server si va solo con i nomi test e prod della configurazione SSH, con il suo utente e la sua chiave:
            # così vale la conferma per prod, e Claude entra solo come deploy (AVVIO.md §1)
   local h="${1%%:*}"
@@ -468,7 +473,7 @@ credenziali_server() { # $1 percorso sul server, $2 come l'ha scritto Claude, $3
       block "il comando arriverebbe alle credenziali del server ('$2'): chiavi private, token e la configurazione di pgBackRest (chiavi S3 e cifratura) non si leggono né si copiano." ;;
   esac
   if [ "${3:-}" = copia ]; then   # copiare la cartella intera porterebbe con sé le chiavi private (anche quelle dell'host)
-    case "$1" in *.ssh|*.docker|*.config|*.config/gh|*.gnupg|/etc|/etc/|/etc/ssh|/etc/ssh/) block "la copia comprenderebbe le credenziali del server ('$2'): copia solo i file che servono." ;; esac
+    case "$1" in *.ssh|*.docker|*.config|*.config/gh|*.gnupg|/etc|/etc/|/etc/ssh|/etc/ssh/) block "la lettura o la copia di '$2' per intero comprenderebbe le credenziali del server: indica solo i file che servono." ;; esac
   fi
   return 0
 }
@@ -477,7 +482,7 @@ credenziali_locali() { # $1 percorso assoluto canonico, $2 come l'ha scritto Cla
     block "il comando arriverebbe alle credenziali di questo computer ('$2'): chiavi SSH e GPG, accessi di Docker, GitHub e della Stripe CLI, portachiavi e password di pass, profili dei browser e della posta, file di credenziali di git, curl e PostgreSQL e accesso di Claude Code non si leggono, non si copiano e non si montano (docs/due-postazioni.md, «Protezione del metodo»).${4:+ $4}"
   return 0
 }
-MSG_NOME="Il nome intero di una credenziale non si scrive in nessun punto del comando, perché l'hook non distingue un comando che la legge da un testo che la cita: un testo così (una nota, una guida) scrivilo con Write o Edit, o con cat > file <<'EOF'; nel messaggio di un commit e nel titolo e nel testo di una pull request passa (-m, --message, --title, --body)."
+MSG_NOME="Il nome intero di una credenziale non si scrive in nessun punto del comando, perché l'hook non distingue un comando che la legge da un testo che la cita: un testo così (una nota, una guida) scrivilo con Write o Edit, o con cat > file <<'EOF'; nel messaggio di un commit e nel titolo e nel testo di una pull request passa, se il testo è scritto direttamente dopo -m, --message, --title o --body, oppure dato con git commit -F - <<'EOF' e gh pr create --body-file - <<'EOF'; dentro \$(cat <<'EOF' …) no, perché lì il testo lo riceve cat."
 fuori_progetto() { # vero se la cartella in cui gira il comando è nota e fuori dal progetto
   [ "$CWD" != "?" ] && [[ "$CWD" != "$PROJECT_DIR_SLASH" && "$CWD" != "$PROJECT_DIR_SLASH"/* ]]
 }
@@ -503,7 +508,12 @@ coda_credenziali() { # $1 parte fissa di un percorso la cui base non si conosce 
       t="${t#*/}"
     done
   done
-  [ "${3:-}" = contiene ] && case "${r##*/}" in ""|home|"${HOME_SLASH##*/}") credenziali_locali "$HOME_SLASH" "$2" contiene ;; esac
+  if [ "${3:-}" = contiene ]; then
+    case "${r##*/}" in
+      "") block "il percorso '$2' non ha una parte fissa che l'hook possa controllare (viene da una variabile, da un comando o da ~utente), e questo programma legge le cartelle con tutto ciò che contengono: potrebbe essere anche la cartella di casa, con le credenziali. Scrivi le cartelle per intero (per esempio find src tests -name '*.ts')." ;;
+      home|"${HOME_SLASH##*/}") credenziali_locali "$HOME_SLASH" "$2" contiene ;;
+    esac
+  fi
   return 0
 }
 # Il nome intero di una credenziale di questo computer in un punto qualunque di una parola o di un testo: dopo un'opzione
@@ -608,7 +618,7 @@ file_ambiente() { # $1 parola: niente file di ambiente reali, nemmeno come valor
     [[ "$v" == *.env* || "$v" == */env/* ]] || continue
     pth="$v"; [[ "$v" =~ ^([^/@:]+@)?[A-Za-z0-9._-]+:(/.*)$ ]] && pth="${BASH_REMATCH[2]}"   # server:percorso
     case "$pth" in /*) ;; *) pth="$(rel_path "$(risolvi "$pth")")" ;; esac
-    is_secret_file "$pth" && block "il comando legge o modifica un file di ambiente reale ('$a'). Usa i file *.example; quelli dei server li gestisce l'utente."
+    is_secret_file "$pth" && block "il comando nomina un file di ambiente reale ('$a'): l'hook non distingue chi lo legge da chi ne usa solo il nome, quindi quel nome nei comandi non si scrive. Per i valori usa i file *.example; i file veri, anche quelli dei server, li gestisce l'utente. Se ti serve solo il nome (in .gitignore, in un filtro) scrivilo con Write o Edit."
   done
   return 0
 }
@@ -702,7 +712,12 @@ testi_non_percorsi() { # $1 indice del programma, $2 il programma: mette in SALT
     sort) separatori "$1" t ' --field-separator ' ;;
     join) separatori "$1" t '' ;;
     column) separatori "$1" so ' --separator --output-separator ' ;;
-    rsync) for ((j=$1+1; j<n; j++)); do case "${argv[$j]}" in --exclude=*|--include=*|--filter=*) SALTAP="$SALTAP$j " ;; esac; done ;;
+    rsync) for ((j=$1+1; j<n; j++)); do
+             case "${argv[$j]}" in
+               --exclude=*|--include=*|--filter=*) SALTAP="$SALTAP$j " ;;
+               --exclude|--include|--filter) SALTAP="$SALTAP$((j+1)) "; j=$((j+1)) ;;
+             esac
+           done ;;
     sed)
       for ((j=$1+1; j<n; j++)); do
         a="${argv[$j]}"
@@ -808,6 +823,8 @@ contesto_docker() { # $1 contesto di costruzione: docker lo legge fuori dalla sa
   credenziali_locali "$abs" "$1" contiene
   return 0
 }
+MSG_TRACCIA="sul server una shell con la traccia (bash -x, sh -x, set -x, -v, -o xtrace, -o verbose, SHELLOPTS) stampa ogni comando con i valori che legge, anche i segreti dei file di ambiente: non si usa. Lancia lo script senza traccia: dice da sé se è riuscito o fallito."
+LANCIATORI_REMOTI=' timeout nice nohup time stdbuf ionice setsid chrt taskset command builtin sudo doas '
 MSG_CERCA="Se è il testo che cerchi con grep, cercalo con un grep semplice e da solo (ssh test 'grep -n <testo> <file>'), oppure scrivilo come 'en[v]': un grep da solo non esegue nulla, mentre in una pipe o dentro un altro comando l'hook non distingue il testo cercato da un comando."
 grep_semplice() { # $1 comando che gira sul server: vero se è un solo grep (grep, egrep, fgrep), senza altri comandi, operatori,
                   # sostituzioni né heredoc: non esegue nulla, quindi le parole che cerca non sono comandi
@@ -830,6 +847,11 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
   local re_insp_ok="(image|imagetools|manifest|volume|network|buildx|builder|context|plugin)[[:space:]'\"]+inspect([[:space:]'\"<>]|\$)"
   local re_elenco="(^|[[:space:]'\"])(export|declare|typeset|readonly)([[:space:]]+-[a-zA-Z]+)*[[:space:]'\"]*\$"
   local re_set="(^|[[:space:]'\"])set[[:space:]'\"]*\$" re_dollaro="\\\$[A-Za-z_{('\"]"
+  # caddy adapt stampa la configurazione con le variabili {$NOME} già sostituite; una shell con -x o -v stampa ciò che legge
+  local re_caddy="(^|[[:space:]'\"/])caddy[[:space:]'\"]+adapt([[:space:]'\"<>]|\$)"
+  local re_setx="(^|[[:space:]'\"])set[[:space:]'\"]+(-[a-zA-Z]*[xv]|-o[[:space:]'\"]+(xtrace|verbose))"
+  local re_shx="(^|[[:space:]'\"/])(sh|bash|dash|zsh|ksh|mksh|ash|yash|posh|fish|tcsh|csh)([[:space:]'\"]+[-+][a-zA-Z]+)*[[:space:]'\"]+-[a-zA-Z]*[xv]"
+  local lanciato=0
   # Il $ non si ammette in nessuna forma, nemmeno tra apici: sul server il testo può finire in una shell annidata (sh -c,
   # docker exec), che lo espanderebbe con i suoi valori
   [[ "$1" =~ $re_dollaro || "$1" == *'`'* ]] && \
@@ -840,12 +862,9 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
   # variabili (export, declare, typeset, readonly senza nomi, set da solo) e niente docker inspect di un container;
   # docker compose config (anche /srv/app/dc config), che scrive i valori dei file di ambiente, ha bisogno di
   # un'opzione che non li legge (--no-env-resolution) o che non stampa la configurazione (-q, --services, …)
-  # La cartella dei file di ambiente, in qualunque punto del testo: prima degli altri controlli, così il messaggio è il suo
-  [[ "$1" =~ $re_cartella_env ]] && \
-    block "il comando sul server tocca la cartella dei file di ambiente (/srv/app/env): quei file li legge e li scrive solo l'utente."
-  # Un grep semplice e da solo non esegue nulla: le parole che cerca (env, inspect, printenv, process.env) non sono
-  # comandi. Di quel grep i controlli sul testo guardano tutte le parole tranne quelle cercate (testi_cercati, SALTA):
-  # il file letto resta controllato (grep -a . /proc/1/environ)
+  # Un grep semplice e da solo non esegue nulla: le parole che cerca (env, inspect, printenv, process.env, app.env) non
+  # sono comandi né percorsi. Di quel grep tutti i controlli guardano le parole tranne quelle cercate (testi_cercati,
+  # SALTA): il file letto resta controllato (grep -a . /proc/1/environ)
   if grep_semplice "$1"; then
     solo_grep=1
     while IFS= read -r riga; do w="${riga#W$'\t'}"; argv+=("${w#*$'\t'}"); done < <(printf '%s' "$1" | awk -f "$TOKENIZER")
@@ -855,10 +874,17 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
   else
     piano="$(printf '%s' "$1" | awk -f "$TOKENIZER" | awk -F'\t' '$1 == "W" { printf "%s ", $3 } $1 == "O" { printf "\n" }')"
   fi
+  # La cartella dei file di ambiente, in qualunque punto del testo: prima degli altri controlli, così il messaggio è il suo
+  if [ "$solo_grep" = 1 ]; then testo="$piano"; else testo="$1"; fi
+  [[ "$testo" =~ $re_cartella_env ]] && \
+    block "il comando sul server tocca la cartella dei file di ambiente (/srv/app/env): quei file li legge e li scrive solo l'utente."
   for testo in "$1" "$piano"; do
     ti=$((ti+1)); [ "$solo_grep" = 1 ] && [ "$ti" = 1 ] && continue
-    printf '%s' "$testo" | grep -Eq 'printenv|/environ|process\.env|(Deno|Bun)\.env|import\.meta\.env|os\.environ|getenv|ENV\[|%ENV|\$ENV\{|\$_ENV' && \
-      block "il comando sul server contiene una parola che, come comando o in un programma, stampa le variabili d'ambiente, che contengono i segreti (printenv, /proc/…/environ, process.env, os.environ e simili): non si usa. $MSG_CERCA"
+    printf '%s' "$testo" | grep -Eq 'printenv|/environ|(^|[^A-Za-z0-9_])environ([^A-Za-z0-9_]|$)|process\.env|(Deno|Bun)\.env|import\.meta\.env|os\.environ|getenv|ENV\[|%ENV|\$ENV\{|\$_ENV' && \
+      block "il comando sul server contiene una parola che, come comando o in un programma, stampa le variabili d'ambiente, che contengono i segreti (printenv, /proc/…/environ, caddy environ e l'opzione --environ, process.env, os.environ e simili): non si usa. $MSG_CERCA"
+    printf '%s' "$testo" | grep -Eq 'xtrace|SHELLOPTS|BASH_XTRACEFD' && block "$MSG_TRACCIA $MSG_CERCA"
+    printf '%s' "$testo" | grep -Eq ':2019([^0-9]|$)' && \
+      block "il comando sul server usa la porta 2019, quella di amministrazione di Caddy: restituisce la configurazione di Caddy, che può contenere il token di Cloudflare. Non si usa. $MSG_CERCA"
     while IFS= read -r pezzo; do
       [[ "$pezzo" =~ $re_env ]] && block "nel comando sul server la parola 'env' da sola non si usa, nemmeno dentro sh -c: come comando stamperebbe le variabili d'ambiente, che contengono i segreti, e come nome di cartella è quella dei file di ambiente, che legge e scrive solo l'utente. $MSG_CERCA"
       resto="$pezzo"
@@ -867,7 +893,10 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
         [[ "$dopo" =~ $re_lancia ]] || block "nel comando sul server $MSG_ENVP"
       done
       [[ "$pezzo" =~ $re_elenco || "$pezzo" =~ $re_set ]] && \
-        block "il comando sul server stamperebbe le variabili della shell (export, declare, typeset o readonly senza nomi, set da solo), che contengono i segreti: non si usa, nemmeno dentro sh -c."
+        block "il comando sul server stamperebbe le variabili della shell (export, declare, typeset o readonly senza nomi, set da solo), che contengono i segreti: non si usa, nemmeno dentro sh -c. $MSG_CERCA"
+      [[ "$pezzo" =~ $re_caddy ]] && \
+        block "caddy adapt sul server stampa la configurazione di Caddy con le variabili già sostituite, che possono essere segreti (il token di Cloudflare): non si usa. $MSG_CERCA"
+      { [[ "$pezzo" =~ $re_setx ]] || [[ "$pezzo" =~ $re_shx ]]; } && block "$MSG_TRACCIA $MSG_CERCA"
       [[ "$pezzo" =~ $re_insp ]] && ! [[ "$pezzo" =~ $re_insp_ok ]] && \
         block "nel comando sul server la parola 'inspect' da sola non si usa, nemmeno dentro sh -c: docker inspect di un container mostrerebbe le sue variabili d'ambiente, che contengono i segreti (per lo stato: dc ps, dc logs). $MSG_CERCA"
       [[ "$pezzo" =~ $re_dc ]] && [[ "$pezzo" =~ $re_cfg ]] || continue
@@ -877,7 +906,7 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
   while IFS= read -r riga; do
     if [ "${riga%%$'\t'*}" != W ]; then
       [ -n "$env_perc" ] && block "nel comando sul server $MSG_ENVP ('$env_perc')"
-      prec=""; inps=0; exec_visto=0; primo=1; continue
+      prec=""; inps=0; exec_visto=0; primo=1; lanciato=0; continue
     fi
     w="${riga#W$'\t'}"; s="${w%%$'\t'*}"; w="${w#*$'\t'}"; wi=$((wi+1))
     if [ -n "$env_perc" ]; then
@@ -893,7 +922,10 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
         *) block "ps con l'opzione e mostra l'ambiente dei processi, che contiene i segreti: sul server non si usa (bastano ps aux o ps -ef)." ;;
       esac
     fi
-    [ "${w##*/}" = ps ] && { [ "$primo" = 1 ] || [ "$exec_visto" = 1 ]; } && inps=1
+    # dopo un lanciatore (timeout 5 ps e, nice ps e) il comando è ancora ps; dopo dc o docker, ps è il loro sottocomando
+    [ "$primo" = 1 ] && [[ "$LANCIATORI_REMOTI" == *" ${w##*/} "* ]] && lanciato=1
+    case "${w##*/}" in dc|docker|compose|docker-compose) lanciato=0 ;; esac
+    [ "${w##*/}" = ps ] && { [ "$primo" = 1 ] || [ "$exec_visto" = 1 ] || [ "$lanciato" = 1 ]; } && inps=1
     [ "$w" = exec ] && exec_visto=1
     primo=0
     if [[ "$SALTA" != *" $wi "* ]]; then   # non è il testo cercato da un grep semplice
@@ -903,15 +935,16 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
         inspect) case "$prec" in image|imagetools|manifest|volume|network|buildx|builder|context|plugin) ;; *) block "nel comando sul server la parola 'inspect' da sola non si usa: docker inspect di un container mostrerebbe le sue variabili d'ambiente, che contengono i segreti (per lo stato: dc ps, dc logs). $MSG_CERCA" ;; esac ;;
       esac
     fi
+    prec="$w"
+    [[ "$SALTA" == *" $wi "* ]] && continue   # il testo cercato da un grep semplice è libero: non è un percorso
     [[ "$w" =~ $re_cartella_env ]] && block "il comando sul server tocca la cartella dei file di ambiente ('$w'): quei file li legge e li scrive solo l'utente."
     credenziali_server "$w" "$w"
-    prec="$w"
     [[ "$w" == *.example* ]] && continue
     [[ "$w" == *.env* || "$w" == */env/* || "$w" == env/* ]] && is_secret_file "$w" && \
       block "il comando sul server nomina un file di ambiente con i segreti ('$w'): quei file li legge e li scrive solo l'utente."
   done < <(printf '%s' "$1" | awk -f "$TOKENIZER")
   [ -n "$env_perc" ] && block "nel comando sul server $MSG_ENVP ('$env_perc')"
-  letture_remote "$1" "~"
+  letture_remote "$1" "~" "$SALTA"
   return 0
 }
 parola_remota() { # $1 parola del comando sul server, $2 la cartella corrente sul server (~, un percorso, ? se non si sa): niente
@@ -925,6 +958,9 @@ parola_remota() { # $1 parola del comando sul server, $2 la cartella corrente su
     -*) [[ "$w" =~ ^-[A-Za-z0-9]+=?([/~.].*)$ ]] || return 0; w="${BASH_REMATCH[1]}" ;;   # -v/srv/…, -f=/srv/…
   esac
   cand+=("$w")
+  # un volume di docker sul server: «sorgente:destinazione», oppure source= e src= di --mount
+  [[ "$w" =~ ^([/~.][^:,=]*):/ ]] && montaggio_remoto "${BASH_REMATCH[1]}" "$2" "$1"
+  [[ ",${w,,}" =~ ,(source|src)=([^,]*) ]] && montaggio_remoto "${BASH_REMATCH[2]}" "$2" "$1"
   if [[ "$w" == *[=,:]* ]]; then
     IFS='=,' read -ra pezzi <<< "$w"
     for c in "${pezzi[@]}"; do
@@ -952,6 +988,21 @@ percorso_remoto() { # $1 percorso sul server, $2 la cartella corrente, $3 come l
   credenziali_server "$p" "$3"
   return 0
 }
+montaggio_remoto() { # $1 la sorgente di un volume di docker sul server, $2 la cartella corrente, $3 la parola: non una cartella che
+                     # contiene i file di ambiente o le credenziali (docker run -v /srv/app:/a … li leggerebbe da dentro il container)
+  local p
+  case "$1" in
+    /*) p="$1" ;;
+    "~"|"~/"*) p="/~${1#\~}" ;;
+    .|./*|..|../*) case "$2" in "?") return 0 ;; "~"|"~/"*) p="/~${2#\~}/$1" ;; *) p="$2/$1" ;; esac ;;
+    *) return 0 ;;
+  esac
+  p="$(norm_path "$p")"; p="${p%/}"; [ -z "$p" ] && p=/
+  cartella_segreti_remota "$p" && \
+    block "sul server '$3' monterebbe in un container una cartella che contiene i file di ambiente o le credenziali: monta solo la cartella che serve (per esempio /srv/app/infra)."
+  credenziali_server "$p" "$3" copia
+  return 0
+}
 cartella_segreti_remota() { # $1 percorso normalizzato sul server (la casa è /~): vero se è una cartella che contiene i file di ambiente
                             # o le credenziali: /, /srv, /srv/app, /srv/app/env, /home, la cartella di un utente, /root, /etc
   case "$1" in /|/srv|/srv/app|/srv/app/env|/srv/app/env/*|/home|/root|/etc|/~) return 0 ;; esac
@@ -965,15 +1016,38 @@ letture_remote() { # $1 comando che gira sul server, $2 la cartella in cui parte
                    # una lettura per intero (grep -r, rg, find, tar, zip, cp -r, rsync), anche dentro sh -c '…' o docker exec, non
                    # parte da una cartella che li contiene (/, /srv, /srv/app, /home, la cartella di un utente, /root, /etc, le
                    # cartelle delle chiavi), né senza percorso dalla cartella corrente; tar -C sposta i nomi
-  local riga w primo prog="" ric=0 dato=0 salta=0 dazione=0 tdir=0 tbase="" espr=0 shell=0 testo=0 inizio=1 ainizio=0 rcwd="~"
+  local riga w primo prog="" ric=0 dato=0 salta=0 dazione=0 tdir=0 tbase="" espr=0 shell=0 sopz=0 ctesto=0 opz=0 inizio=1 ainizio=0 rcwd="~"
+  local liberi="${3:-}" wi=-1   # gli indici delle parole cercate da un grep semplice: non sono percorsi
   local -a parole=()
   [ -n "${2:-}" ] && rcwd="$2"
   while IFS= read -r riga; do
-    if [ "${riga%%$'\t'*}" != W ]; then [ "$prog" = cd ] && rcwd="~"; lettura_finita; inizio=1; shell=0; continue; fi   # cd da solo: la casa
-    w="${riga#W$'\t'}"; w="${w#*$'\t'}"
+    if [ "${riga%%$'\t'*}" != W ]; then [ "$prog" = cd ] && rcwd="~"; lettura_finita; inizio=1; shell=0; sopz=0; ctesto=0; continue; fi   # cd da solo: la casa
+    w="${riga#W$'\t'}"; w="${w#*$'\t'}"; wi=$((wi+1))
     primo="$inizio"; inizio=0
-    if [ "$testo" = 1 ]; then testo=0; letture_remote "$w" "$rcwd"; continue; fi   # sh -c '…': il testo è un altro comando
-    parola_remota "$w" "$rcwd"
+    if [ "$shell" != 0 ]; then   # dopo una shell (1) o dopo set (2) vengono le loro opzioni, fino alla prima parola che non lo è:
+                                 # con -x o -v la shell stampa ciò che legge; dopo -c quella parola è il testo di un altro comando
+      opz=1
+      case "$sopz" in
+        1) sopz=0; [[ "$w" == xtrace || "$w" == verbose ]] && block "$MSG_TRACCIA"; continue ;;   # -o <nome>
+        2) sopz=0; parola_remota "$w" "$rcwd"; continue ;;                                       # il valore di un'altra opzione
+        3) sopz=0; opz=0 ;;                                                                      # dopo «--» niente opzioni
+      esac
+      if [ "$opz" = 1 ]; then
+        case "$w" in
+          --) sopz=3; continue ;;
+          -o) sopz=1; continue ;;
+          +o|-O|+O|--rcfile|--init-file) sopz=2; continue ;;
+          --verbose|--xtrace) block "$MSG_TRACCIA" ;;
+          --*|+?*) continue ;;
+          -?*) [[ "$w" =~ ^-[a-zA-Z]*[xv] ]] && block "$MSG_TRACCIA"
+               [ "$shell" = 1 ] && [[ "$w" =~ ^-[a-zA-Z]*c ]] && ctesto=1
+               continue ;;
+        esac
+      fi
+      if [ "$shell" = 1 ] && [ "$ctesto" = 1 ]; then shell=0; ctesto=0; letture_remote "$w" "$rcwd"; continue; fi   # sh -c '…'
+      shell=0; ctesto=0
+    fi
+    [[ "$liberi" == *" $wi "* ]] || parola_remota "$w" "$rcwd"
     if [ "$primo" = 1 ] && [[ "$RISERVATE" == *" $w "* ]]; then inizio=1; continue; fi   # if, then, do, !, {: il comando viene dopo
     if [ "$salta" = 1 ]; then salta=0; continue; fi                         # il valore di un'opzione
     if [ "$dazione" = 1 ]; then dazione=0; [ "$w" = recurse ] && ric=1; continue; fi   # grep -d recurse
@@ -1000,7 +1074,7 @@ letture_remote() { # $1 comando che gira sul server, $2 la cartella in cui parte
     fi
     if [ -z "$prog" ]; then   # fuori dagli argomenti di un lettore: una shell con -c, o un lettore (anche dopo docker exec, nice, xargs)
       [[ "$SHELL_REMOTE" == *" ${w##*/} "* ]] && { shell=1; continue; }
-      if [ "$shell" = 1 ] && [[ "$w" =~ ^-[a-zA-Z]*c[a-zA-Z]*$ ]]; then testo=1; shell=0; continue; fi
+      [ "$primo" = 1 ] && [ "$w" = set ] && { shell=2; continue; }
       if [[ "$LETTORI_REMOTI" == *" ${w##*/} "* ]]; then
         prog="${w##*/}"; ainizio="$primo"
         case "$prog" in grep|egrep|fgrep|zgrep|cp|scp|gzip|gunzip|zcat|zstd|diff) ric=0 ;; *) ric=1 ;; esac   # questi solo con -r
@@ -1089,8 +1163,11 @@ lettura_remota() { # $1 cartella del server letta per intero, $2 come l'ha scrit
   return 0
 }
 analizza_ssh() { # $1 indice, $2 programma. ssh, scp e rsync girano fuori dalla sandbox: opzioni solo da un elenco
-  local i="$1" prog="$2" j a v rcmd=0; local -a pos=() psg=()
+  local i="$1" prog="$2" j a v rcmd=0 cancella=0 pd; local -a pos=() psg=()
   [ "$prog" = sftp ] && block "sftp non si usa nel metodo (legge comandi da eseguire sul tuo computer): per copiare file verso i server usa scp."
+  if [ $((n - i)) -eq 2 ]; then   # la sola versione, o l'aiuto: non va verso nessun server, e vale in ogni fase
+    case "$prog:${argv[$((i+1))]}" in ssh:-V|rsync:--version|rsync:-V|rsync:--help) return 0 ;; esac
+  fi
   case "$fase" in codice|revisione|chiusura) ;; *) block "i comandi verso i server (ssh, scp, rsync) si usano solo dentro un compito, nelle fasi codice, revisione e chiusura (fase attuale: $fase). Per un controllo in sola lettura chiedi all'utente di eseguirlo." ;; esac
   for ((j=i+1; j<n; j++)); do
     a="${argv[$j]}"
@@ -1107,6 +1184,10 @@ analizza_ssh() { # $1 indice, $2 programma. ssh, scp e rsync girano fuori dalla 
       scp:-[346CpqrTOv]*) [[ "${a:1}" =~ ^[346CpqrTOv]+$ ]] && continue ;;
       rsync:-e|rsync:--rsh) [ "${argv[$((j+1))]:-}" = ssh ] || block "con rsync si usa solo «-e ssh»: niente altri programmi né opzioni."; j=$((j+1)); continue ;;
       rsync:-e?*|rsync:--rsh=*) v="${a#-e}"; v="${v#--rsh=}"; [ "$v" = ssh ] || block "con rsync si usa solo «-e ssh»: niente altri programmi né opzioni."; continue ;;
+      rsync:--delete|rsync:--delete-after|rsync:--delete-delay) cancella=1; continue ;;
+      rsync:--exclude-from|rsync:--include-from) sorgente_locale "${argv[$((j+1))]:-}"; j=$((j+1)); continue ;;   # un file di questo computer, letto fuori dalla sandbox
+      rsync:--exclude-from=*|rsync:--include-from=*) sorgente_locale "${a#*=}"; continue ;;
+      rsync:--exclude|rsync:--include|rsync:--filter|rsync:--chmod|rsync:--chown|rsync:--timeout|rsync:--contimeout|rsync:--info) j=$((j+1)); continue ;;   # il valore nella parola dopo
       rsync:--*) rsync_lunga "$a" && continue ;;
       rsync:-*) [[ "${a:1}" =~ ^[avzrlptgoDhncuPiqH]+$ ]] && continue ;;
     esac
@@ -1114,6 +1195,7 @@ analizza_ssh() { # $1 indice, $2 programma. ssh, scp e rsync girano fuori dalla 
     pos+=("$a"); psg+=("${segni[$j]}")
   done
   if [ "$prog" = ssh ]; then
+    [ "${#pos[@]}" -gt 0 ] && [[ "${psg[0]}" == *q* ]] && block "$MSG_SERVER"
     [ "${#pos[@]}" -gt 0 ] && host_ok "${pos[0]}"
     [ "${#pos[@]}" -gt 1 ] && segreti_remoti "${pos[*]:1}"
     [ -n "$qui_testo" ] && segreti_remoti "$qui_testo"     # ssh test <<< '…': anche quello gira sul server
@@ -1129,6 +1211,7 @@ analizza_ssh() { # $1 indice, $2 programma. ssh, scp e rsync girano fuori dalla 
       { [ "${#pos[@]}" -ge 2 ] && [ "$k" -eq "$ultimo_k" ]; } || sorgente_locale "$a"   # una sorgente: scp e rsync la leggono fuori dalla sandbox
       continue
     fi
+    [[ "${psg[$k]}" == *q* ]] && block "$MSG_SERVER"
     [[ "$a" == *@* ]] && host_ok "${a%%:*}"   # il messaggio sull'utente
     [[ "$a" =~ $re_server ]] || \
       block "verso i server si scrive solo test:<percorso> o prod:<percorso> ('$a'): niente parentesi quadre, «@», doppi due punti né indirizzi (scp://, rsync://), che $prog legge come un server ma che il metodo non controlla."
@@ -1142,7 +1225,17 @@ analizza_ssh() { # $1 indice, $2 programma. ssh, scp e rsync girano fuori dalla 
       */env.example/*|*.example|*.example.*) ;;
       *) is_secret_file "$p" && block "il percorso '$a' è un file di ambiente con i segreti: quei file li legge e li scrive solo l'utente." ;;
     esac
-    if [ "${#pos[@]}" -ge 2 ] && [ "$k" -eq "$ultimo_k" ]; then credenziali_server "$p" "$a"; continue; fi   # la destinazione sul server
+    if [ "${#pos[@]}" -ge 2 ] && [ "$k" -eq "$ultimo_k" ]; then   # la destinazione sul server
+      credenziali_server "$p" "$a"
+      pd="${p%/}"; [ -z "$pd" ] && pd=/
+      case "$pd" in *.ssh|*.docker|*.gnupg|*.config/gh|/etc/ssh|/etc/pgbackrest)
+        block "la destinazione '$a' è una cartella di chiavi o di credenziali del server: lì si scrive solo un file preciso, con il suo nome (per esempio test:/home/deploy/.ssh/authorized_keys), così l'hook vede su che cosa scrivi." ;;
+      esac
+      if [ "$cancella" = 1 ] && { cartella_segreti_remota "$pd" || [[ "$pd" == *.config ]]; }; then
+        block "con --delete rsync cancella nella destinazione ciò che manca nella sorgente, e '$a' contiene i file di ambiente o le credenziali del server: indica la cartella precisa (per esempio test:/srv/app/infra/)."
+      fi
+      continue
+    fi
     { [ "$p" = /~ ] || [ "$p" = /root ] || [[ "$p" =~ ^/home/[^/]+$ ]]; } && \
       block "copiare tutta la cartella dell'utente del server ('$a') prenderebbe anche le sue credenziali: copia solo i file che servono."
     credenziali_server "$p" "$a" copia   # una sorgente sul server: non deve portare con sé i segreti
@@ -1225,15 +1318,20 @@ montaggio() { # --mount chiave=valore,…: solo le chiavi di un elenco; type=bin
   esac
   return 0
 }
-uscita_docker() { # -o/--output di build: una cartella, «-» (l'uscita del comando) oppure «type=…,dest=…»: docker scrive sul computer
+uscita_docker() { # -o/--output di build: «-» è l'uscita del comando; altrimenti docker scrive sul computer. Come lo legge Buildx:
+                  # un valore di un solo campo (senza virgole) che non comincia con «type=», in minuscolo, è per intero la cartella
+                  # di uscita, anche se contiene «=» (a=/../x è una cartella, e anche Type=/x); ogni altro valore è a campi,
+                  # «type=…,dest=…», e la cartella o il file è dest
   local v
   [ "$1" = - ] && return 0
-  if [[ "$1" != *=* ]]; then scrive "$1" ""; return 0; fi
-  valore_a_campi --output "$1"
+  [[ "$1" == *[=,\"]* || "$1" == *$'\n'* || "$1" == *$'\r'* ]] && valore_a_campi --output "$1"
+  if [[ "$1" != *,* && "$1" != type=* ]]; then scrive "$1" ""; return 0; fi
   campi_docker "$1" dest && for v in "${CAMPI[@]}"; do [ "$v" = - ] || scrive "$v" ""; done
   return 0
 }
-cache_docker() { # $1 --cache-to o --cache-from, $2 il valore: una cache locale è una cartella del computer, scritta o letta da docker
+cache_docker() { # $1 --cache-to o --cache-from, $2 il valore: una cache locale è una cartella del computer, scritta o letta da docker.
+                 # Qui Buildx non ha la forma «cartella da sola» di --output: un valore senza «=» è il nome di un'immagine, e
+                 # uno con «=» è sempre a campi (senza type= lo rifiuta)
   local v
   [[ "$2" == *=* ]] || return 0   # il nome di un'immagine
   valore_a_campi "$1" "$2"
@@ -1259,8 +1357,16 @@ opzione_driver() { # -o/--opt chiave=valore di volume create e network create: d
   [[ "$1" == *=* ]] && [ "${ch,,}" = device ] && monta "${1#*=}"
   return 0
 }
-rete_host() { # $1 comando e opzione, $2 valore: la rete, i processi e gli altri spazi dell'host danno al container accesso al computer
+rete_host() { # $1 comando e opzione, $2 valore: la rete, i processi e gli altri spazi dell'host danno al container accesso al computer.
+              # --network e --net hanno anche una forma a campi (name=host,alias=…), che Docker legge in minuscolo: la rete è name
+  local v
   [ "${2,,}" = host ] && block "docker $1 host dà al container, o alla costruzione, accesso al computer: nel metodo non si usa."
+  if [[ "$2" == *=* ]]; then
+    valore_a_campi "${1#* }" "$2"
+    campi_docker "${2,,}" name && for v in "${CAMPI[@]}"; do
+      [ "$v" = host ] && block "docker $1 $2 è la rete dell'host scritta a campi: dà al container accesso al computer, nel metodo non si usa."
+    done
+  fi
   return 0
 }
 copia_locale() { # vero se un argomento di docker cp è di questo computer, come lo legge Docker: un percorso assoluto, o che comincia
@@ -1273,31 +1379,103 @@ compose_config() { # $1 indice del sottocomando: docker compose config scrive ne
   for ((k=$1+1; k<n; k++)); do case "${argv[$k]}" in --no-env-resolution|-q|--quiet|--services|--images|--volumes|--networks|--profiles) return 0 ;; esac; done
   block "docker compose config scrive nell'uscita i valori dei file di ambiente dei servizi: aggiungi --no-env-resolution (oppure usa -q, --services, --images, --volumes)."
 }
-compose_controlla() { # "docker compose config" in sola lettura: che cosa montano e con quali permessi girano i servizi
-  local out src abs
+# I file compose si leggono da un elenco chiuso di chiavi, come le opzioni di Docker: Compose aggiunge spesso chiavi nuove
+# che danno accesso al computer o gli fanno eseguire programmi (provider, use_api_socket, pre_start, models, jobs), e
+# una chiave che l'hook non conosce ferma il comando. Gli elenchi vengono dai sorgenti di compose-go v2.16.2 e di
+# docker/compose v5.7.1, letti l'11/11/2026: sono le chiavi innocue e quelle che più sotto hanno il loro controllo.
+COMPOSE_CIMA_OK='["name","services","networks","volumes","secrets","configs","version"]'
+COMPOSE_SERVIZIO_OK='["attach","blkio_config","build","cap_drop","cgroup","command","configs","container_name","cpu_count","cpu_percent","cpu_period","cpu_quota","cpu_rt_period","cpu_rt_runtime","cpu_shares","cpus","cpuset","depends_on","deploy","develop","dns","dns_opt","dns_search","domainname","entrypoint","env_file","environment","expose","extra_hosts","group_add","healthcheck","hostname","image","init","ipc","isolation","label_file","labels","links","logging","mac_address","mem_limit","mem_reservation","mem_swappiness","memswap_limit","network_mode","networks","oom_kill_disable","oom_score_adj","pid","pids_limit","platform","ports","post_start","pre_stop","profiles","pull_policy","read_only","restart","scale","secrets","shm_size","stdin_open","stop_grace_period","stop_signal","storage_opt","sysctls","tmpfs","tty","ulimits","user","userns_mode","uts","volumes","working_dir"]'
+COMPOSE_BUILD_OK='["context","dockerfile","dockerfile_inline","args","labels","cache_from","cache_to","no_cache","no_cache_filter","additional_contexts","extra_hosts","isolation","secrets","tags","ulimits","platforms","target","pull","network","shm_size","provenance","sbom"]'
+compose_ha() { # $1 «f» o «p», poi le opzioni di compose prima del sottocomando: vero se fra loro c'è -f/--file, oppure -p/--project-name
+  local x="$1" a
+  shift
+  for a in "$@"; do
+    case "$x:$a" in f:-f*|f:--file|f:--file=*|p:-p*|p:--project-name|p:--project-name=*) return 0 ;; esac
+  done
+  return 1
+}
+compose_controlla() { # $1 "avvia" o "ferma", poi le opzioni di compose prima del sottocomando. "docker compose config" in sola
+                      # lettura: che cosa montano, con quali permessi girano e che cosa fanno eseguire i servizi. La
+                      # configurazione si legge con tutti i profili attivi (--profile '*'): un servizio di un profilo non
+                      # attivo «docker compose run <servizio>» lo avvia lo stesso. Con "ferma" (down, stop, rm, kill, pull e
+                      # simili) si guarda solo «provider», che Compose esegue anche lì
+  local modo="$1" out src abs ctx df fuori
+  shift
   [ "$CWD" = "?" ] && block "docker compose dopo un cd che non si può risolvere non si controlla."
-  out="$(cd "$CWD" 2>/dev/null && docker compose "$@" config --format json 2>/dev/null)" || out=""
-  [ -n "$out" ] || block "non riesco a leggere la configurazione di docker compose (docker compose … config): senza, non si può controllare che cosa monta. Se il file è giusto, il comando lo esegue l'utente."
+  # La configurazione si legge senza i file di ambiente dei servizi (--no-env-resolution: l'hook non li apre, e i loro
+  # percorsi restano nell'uscita) e senza i file compose remoti (include ed extends con git o oci://, che Compose
+  # scaricherebbe eseguendo git sul computer): con un file remoto la configurazione non si legge, e il comando si ferma
+  out="$(cd "$CWD" 2>/dev/null && COMPOSE_EXPERIMENTAL_GIT_REMOTE=false COMPOSE_EXPERIMENTAL_OCI_REMOTE=false \
+         docker compose --profile '*' "$@" config --no-env-resolution --format json 2>/dev/null)" || out=""
+  # con -p e senza -f down, stop, rm, kill e simili non leggono nessun file: lavorano per nome sui container che esistono
+  [ -z "$out" ] && [ "$modo" = ferma ] && compose_ha p "$@" && ! compose_ha f "$@" && return 0
+  [ -n "$out" ] || block "non riesco a leggere la configurazione di docker compose (docker compose … config): senza, non si può controllare che cosa monta e che cosa fa eseguire. Se il file è giusto, il comando lo esegue l'utente."
+  jq -e 'type == "object" and ((.services // {}) | type == "object")' <<< "$out" >/dev/null 2>&1 || \
+    block "la configurazione che docker compose stampa non ha la forma attesa (un oggetto con i servizi): così non si può controllare. Se il file è giusto, il comando lo esegue l'utente."
+  # un servizio con «provider» non è un container: docker compose esegue sul computer il programma indicato, con up e con down
+  jq -e '[.services[]? | objects | has("provider")] | any' <<< "$out" >/dev/null 2>&1 && \
+    block "un servizio del file compose ha «provider»: docker compose eseguirebbe un programma di questo computer, fuori dalla sandbox e dalla gabbia. Nel metodo non si usa."
+  # gli agganci girano anche con stop, restart e down (pre_stop) e con start (post_start)
+  jq -e '[.services[]? | objects | [(.post_start // [])[]?, (.pre_stop // [])[]? | objects | .privileged == true] | any] | any' <<< "$out" >/dev/null 2>&1 && \
+    block "un servizio del file compose ha un aggancio post_start o pre_stop con privilegi: il comando girerebbe nel container con tutti i permessi del kernel. Nel metodo non si usa."
+  [ "$modo" = ferma ] && return 0
   while IFS= read -r src; do [ -n "$src" ] && monta "$src"; done < <(jq -r '.services[]?.volumes[]? | select(.type == "bind") | .source // empty' <<< "$out" 2>/dev/null | tr -d '\r')
   while IFS= read -r src; do [ -n "$src" ] && monta "$src"; done < <(jq -r '.volumes[]?.driver_opts.device // empty' <<< "$out" 2>/dev/null | tr -d '\r')
   # i file che compose legge fuori dalla sandbox per i container e per la costruzione, e quelli che docker compose watch
   # copia nei container: niente credenziali di questo computer (tr -d '\r': jq di Windows scrive CRLF; su Ubuntu non cambia nulla)
   while IFS= read -r src; do [ -n "$src" ] && sorgente_locale "$src"; done < <(jq -r '[(.secrets // {})[]?, (.configs // {})[]?] | .[] | .file? // empty' <<< "$out" 2>/dev/null | tr -d '\r')
   while IFS= read -r src; do [ -n "$src" ] && sorgente_locale "$src"; done < <(jq -r '.services[]?.develop?.watch[]?.path? // empty' <<< "$out" 2>/dev/null | tr -d '\r')
+  while IFS= read -r src; do [ -n "$src" ] && sorgente_locale "$src"; done < <(jq -r '.services[]?.label_file? // empty | (if type == "array" then .[] else . end) | strings' <<< "$out" 2>/dev/null | tr -d '\r')
   while IFS= read -r src; do
     [ -n "$src" ] || continue
     abs="$(risolvi "$src")"; [ "$abs" != "?" ] && credenziali_locali "$abs" "$src"
   done < <(jq -r '.services[]?.env_file? // empty | (if type == "array" then .[] else . end) | (if type == "object" then .path else . end) // empty' <<< "$out" 2>/dev/null | tr -d '\r')
   while IFS= read -r src; do [ -n "$src" ] && contesto_docker "$src"; done < <(jq -r '.services[]?.build? | objects | (.context // empty), ((.additional_contexts // {})[]?)' <<< "$out" 2>/dev/null | tr -d '\r')
+  # il Dockerfile può stare fuori dal contesto (assoluto, o con ..): docker lo legge fuori dalla sandbox, come quello di -f
+  while IFS=$'\t' read -r ctx df; do
+    [ -n "$df" ] || continue
+    case "$df" in /*) sorgente_locale "$df" ;; *) case "$ctx" in *://*) ;; *) sorgente_locale "${ctx:-.}/$df" ;; esac ;; esac
+  done < <(jq -r '.services[]?.build? | objects | select((.dockerfile // "") != "") | [(.context // "."), .dockerfile] | @tsv' <<< "$out" 2>/dev/null | tr -d '\r')
+  # una cache locale della costruzione è una cartella del computer, scritta (cache_to) o letta (cache_from)
+  while IFS= read -r src; do [ -n "$src" ] && cache_docker --cache-to "$src"; done < <(jq -r '.services[]?.build? | objects | (.cache_to // [])[] | strings' <<< "$out" 2>/dev/null | tr -d '\r')
+  while IFS= read -r src; do [ -n "$src" ] && cache_docker --cache-from "$src"; done < <(jq -r '.services[]?.build? | objects | (.cache_from // [])[] | strings' <<< "$out" 2>/dev/null | tr -d '\r')
   jq -e '[.services[]?.build? | objects | (.ssh // []) | length > 0] | any' <<< "$out" >/dev/null 2>&1 && \
     block "un servizio del file compose porterebbe nella costruzione l'agente SSH di questo computer (build.ssh), con l'accesso ai server: nel metodo non si usa."
-  jq -e '[.services[]? | (.privileged == true) or ((.cap_add // []) | length > 0) or ((.devices // []) | length > 0)
+  jq -e '[.services[]? | objects | (.privileged == true) or ((.cap_add // []) | length > 0) or ((.devices // []) | length > 0)
           or ((.device_cgroup_rules // []) | length > 0) or ((.security_opt // []) | length > 0) or (.pid == "host")
           or (.ipc == "host") or (.uts == "host") or (.cgroup == "host") or (.userns_mode == "host") or (.network_mode == "host")
-          or ((.volumes_from // []) | length > 0)
+          or ((.volumes_from // []) | length > 0) or (.use_api_socket == true) or ((.gpus // []) | length > 0)
+          or ([.network_mode, .pid, .ipc | strings | startswith("container:")] | any)
+          or ((.deploy.resources.reservations.devices? // []) | length > 0)
+          or ([(.post_start // [])[]?, (.pre_stop // [])[]?, (.develop.watch? // [])[]?.exec? | objects | .privileged == true] | any)
           or (if (.build | type) == "object" then (.build.privileged == true) or (.build.network == "host")
               or ((.build.entitlements // []) | length > 0) else false end)] | any' <<< "$out" >/dev/null 2>&1 && \
-    block "un servizio del file compose ha permessi speciali sul computer (privileged, cap_add, devices, security_opt, pid, ipc, rete o volumi dell'host, una costruzione privilegiata): nel metodo non si usano."
+    block "un servizio del file compose ha permessi speciali sul computer (privileged, cap_add, devices, gpus, security_opt, pid, ipc, rete o volumi dell'host, il socket di Docker con use_api_socket, un aggancio post_start o pre_stop o un comando di watch con privilegi, una costruzione privilegiata): nel metodo non si usano."
+  jq -e '[.services[]?.volumes[]? | objects | (.type // "volume") | IN("bind", "volume", "tmpfs", "image") | not] | any' <<< "$out" >/dev/null 2>&1 && \
+    block "un volume del file compose non è di un tipo che il metodo usa (bind, volume, tmpfs, image): gli altri tipi non si controllano."
+  jq -e '[.services[]?.logging? | objects | (.driver // "json-file") | IN("json-file", "local", "none") | not] | any' <<< "$out" >/dev/null 2>&1 && \
+    block "un servizio del file compose manda i log con un driver che il metodo non usa: ammessi json-file, local e none (gli altri aprono connessioni o leggono file dal computer)."
+  jq -e '[(.secrets // {})[]?, (.configs // {})[]? | objects | (.environment // "") != ""] | any' <<< "$out" >/dev/null 2>&1 && \
+    block "un segreto o una config del file compose prende il valore da una variabile d'ambiente di questo computer («environment»): nel metodo non si usa, i valori vengono dai file."
+  jq -e '[.services[]? | objects | ((.pre_start // []) | length > 0)] | any' <<< "$out" >/dev/null 2>&1 && \
+    block "un servizio del file compose ha «pre_start»: è un container in più, con volumi e permessi suoi, che l'hook non controlla. Nel metodo non si usa."
+  # una rete che si chiama «host» è la rete del computer, anche dichiarata come rete esterna
+  jq -e '[(.networks // {})[]? | objects | ((.name // "") | ascii_downcase) == "host"] | any' <<< "$out" >/dev/null 2>&1 && \
+    block "una rete del file compose si chiama «host»: è la rete di questo computer, e darebbe ai container accesso al computer. Nel metodo non si usa."
+  # i modelli («models» in cima al file) non compaiono nella configurazione in JSON: con up, create e run Compose esegue
+  # sul computer il programma dei modelli di Docker, con le opzioni scritte nel file. Una versione di Compose che non
+  # conosce --models non conosce nemmeno i modelli
+  src="$(cd "$CWD" 2>/dev/null && COMPOSE_EXPERIMENTAL_GIT_REMOTE=false COMPOSE_EXPERIMENTAL_OCI_REMOTE=false \
+         docker compose --profile '*' "$@" config --no-env-resolution --models 2>/dev/null | tr -d '[:space:]')" || src=""
+  [ -n "$src" ] && block "il file compose ha dei modelli («models»): docker compose eseguirebbe sul computer il programma dei modelli di Docker, con le opzioni scritte nel file. Nel metodo non si usa."
+  # tutto il resto: solo le chiavi degli elenchi (una chiave vuota, o che comincia con «x-», non conta)
+  fuori="$(jq -r --argjson cima "$COMPOSE_CIMA_OK" --argjson srv "$COMPOSE_SERVIZIO_OK" --argjson bld "$COMPOSE_BUILD_OK" '
+      def piene: to_entries[] | select((.value == null or .value == false or .value == "" or .value == [] or .value == {}) | not) | select(.key | startswith("x-") | not);
+      [ (piene | select(.key as $k | ($cima | any(. == $k)) | not) | .key),
+        ((.services // {}) | to_entries[] | .key as $s | .value | objects | piene | select(.key as $k | ($srv | any(. == $k)) | not) | "services.\($s).\(.key)"),
+        ((.services // {}) | to_entries[] | .key as $s | .value | objects | .build | objects | piene | select(.key as $k | ($bld | any(. == $k)) | not) | "services.\($s).build.\(.key)")
+      ] | unique | join(", ")' <<< "$out" 2>/dev/null | tr -d '\r')" || block "la configurazione di docker compose non si lascia leggere chiave per chiave: così non si può controllare."
+  [ -n "$fuori" ] && block "il file compose usa chiavi che non sono fra quelle che il metodo ammette ($fuori): l'hook legge i file compose da un elenco chiuso di chiavi, perché una chiave che non conosce potrebbe dare a un container, o a Compose stesso, accesso a questo computer. Se quella chiave serve, il comando lo esegue l'utente."
   return 0
 }
 DOCKER_SUB=' attach build builder buildx commit compose container context cp create diff events exec export history image images import info inspect kill load login logout logs manifest network pause plugin port ps pull push rename restart rm rmi run save search start stats stop system tag top trust unpause update version volume wait '
@@ -1433,10 +1611,10 @@ docker_tabella() { # $1 comando di Docker, con il nome che gli dà docker_chiave
                    # meno le opzioni che il metodo non ammette. Un'opzione che qui manca ferma il comando
   DINT=1
   case "$1" in
-    run) DCB=Pdiqt; DCV=ehlmpuvw; DINT=0
+    run) DCB=Pdiqt; DCV=aehlmpuvw; DINT=0
       DLB=" --detach --help --init --interactive --no-healthcheck --publish-all --quiet --read-only --rm --sig-proxy --tty "
       DLV=" --add-host --attach --cgroupns --cidfile --cpus --detach-keys --dns --entrypoint --env --env-file --expose --health-cmd --health-interval --health-retries --health-start-period --health-timeout --hostname --ipc --label --label-file --memory --memory-swap --mount --name --net --network --network-alias --pid --pids-limit --platform --publish --pull --restart --shm-size --stop-signal --stop-timeout --tmpfs --ulimit --user --userns --uts --volume --workdir " ;;
-    create) DCB=Piqt; DCV=ehlmpuvw; DINT=0
+    create) DCB=Piqt; DCV=aehlmpuvw; DINT=0
       DLB=" --help --init --interactive --no-healthcheck --publish-all --quiet --read-only --rm --tty "
       DLV=" --add-host --attach --cgroupns --cidfile --cpus --dns --entrypoint --env --env-file --expose --health-cmd --health-interval --health-retries --health-start-period --health-timeout --hostname --ipc --label --label-file --memory --memory-swap --mount --name --net --network --network-alias --pid --pids-limit --platform --publish --pull --restart --shm-size --stop-signal --stop-timeout --tmpfs --ulimit --user --userns --uts --volume --workdir " ;;
     exec) DCB=dhit; DCV=euw; DINT=0
@@ -1741,21 +1919,21 @@ docker_tabella() { # $1 comando di Docker, con il nome che gli dà docker_chiave
   return 0
 }
 analizza_docker() { # $1 indice. Docker gira fuori dalla sandbox e un container può tutto: solo i sottocomandi di un elenco e, prima,
-                    # solo le opzioni globali -D e -l; di ogni comando solo le opzioni della tabella, lette come le legge Docker;
+                    # solo le opzioni globali -D, -l, --help e --version (-v); di ogni comando solo le opzioni della tabella, lette come le legge Docker;
                     # volumi, montaggi, file letti e scritti, contesti, copie e file compose si controllano. Lascia in DFINE
                     # l'indice della prima parola che va al container e in DINERTI gli indici delle opzioni e dei loro valori
                     # (li usa analizza_da)
   local i="$1" j a sub sec="" k cj CHIAVE="" DCB DCV DLB DLV DINT; local -a pos=() cglob=() CAMPI=()
   DFINE="$n"; DINERTI=" "
   j=$((i+1))
-  while [ "$j" -lt "$n" ]; do   # le opzioni globali di docker (solo -D e -l)
+  while [ "$j" -lt "$n" ]; do   # le opzioni globali di docker (solo -D, -l, --help, --version e -v)
     a="${argv[$j]}"
     [[ "${segni[$j]}" == *d* ]] && block "docker gira fuori dalla sandbox: niente argomenti decisi da variabili, scrivili per intero."
     case "$a" in
-      -D|--debug|--help|--version|--log-level=*|-l?*) DINERTI="$DINERTI$j "; j=$((j+1)); continue ;;
+      -D|--debug|--help|--version|-v|--log-level=*|-l?*) DINERTI="$DINERTI$j "; j=$((j+1)); continue ;;
       -l|--log-level) DINERTI="$DINERTI$j $((j+1)) "; j=$((j+2)); continue ;;
       -H*|--host|--host=*|-c*|--context|--context=*|--config|--config=*|--tls*) block "docker $a cambia il demone, la configurazione o le chiavi di Docker: nel metodo non si usa." ;;
-      -*) block "docker $a: prima del sottocomando il metodo ammette solo -D e -l (--log-level), perché un'opzione sconosciuta con il suo valore nasconderebbe il sottocomando." ;;
+      -*) block "docker $a: prima del sottocomando il metodo ammette solo -D (--debug), -l (--log-level), --help e --version (-v), perché un'opzione sconosciuta con il suo valore nasconderebbe il sottocomando." ;;
     esac
     break
   done
@@ -1773,7 +1951,8 @@ analizza_docker() { # $1 indice. Docker gira fuori dalla sandbox e un container 
     CHIAVE="compose $sec"
     docker_leggi $((cj+1)) "$CHIAVE"
     case "$sec" in
-      up|run|create|start|restart|watch|build|scale) compose_controlla "${cglob[@]}" ;;
+      up|run|create|start|restart|watch|build|scale) compose_controlla avvia "${cglob[@]}" ;;
+      down|stop|rm|kill|pull|pause|unpause) compose_controlla ferma "${cglob[@]}" ;;   # down esegue anche lui il programma di un «provider»
       config) compose_config "$cj" ;;
     esac
   else
@@ -1862,14 +2041,14 @@ analizza_scritture() { # $1 indice, $2 programma
 codice_in_linea() { # codice passato a python -c, node -e e simili, o in un heredoc: niente file del metodo, segreti, git e server
   local senza_esempi
   echo "$1" | grep -Eqi '\.claude|CLAUDE(\.local)?\.md|AVVIO\.md|metodo\.md|due-postazioni|compito-corrente|registro/|postazione|corsie\.txt|gestionale-negozi/|\.local/state|\.git/' && \
-    block "un programma in linea che nomina i file del metodo non è permesso."
+    block "un programma in linea che nomina i file del metodo non è permesso. Vale anche per il percorso assoluto del progetto, che contiene il nome della sua cartella: nel codice in linea usa percorsi relativi (./package.json), oppure metti il codice in un file e lancia quello."
   echo "$1" | grep -Eqi '\.ssh/|\.gnupg|\.docker/|\.config/(gh|stripe|google-chrome|chromium|bravesoftware|microsoft-edge)|hosts\.yml|keyrings|\.password-store|\.mozilla|snap/(firefox|chromium|thunderbird)|\.thunderbird|\.git-credentials|\.netrc|\.pgpass|\.credentials\.json|playwright/\.auth' && \
     block "un programma in linea che nomina le credenziali di questo computer o le sessioni salvate delle prove non è permesso."
   senza_esempi="$(printf '%s' "$1" | sed -E 's/[A-Za-z0-9._/-]*\.example[A-Za-z0-9._-]*//g')"
   printf '%s' "$senza_esempi" | grep -Eqi '\.env|/env/' && \
-    block "un programma in linea che nomina un file di ambiente non è permesso: i segreti non si leggono. Usa i file *.example."
+    block "un programma in linea che contiene «.env» o «/env/» non è permesso: l'hook non distingue il nome di un file di ambiente, che non si legge, da process.env o os.environ. Per una variabile d'ambiente usa printenv <NOME>; per i valori di esempio i file *.example; altrimenti metti il codice in un file e lancia quello."
   printf '%s' "$1" | grep -Eq '(^|[^A-Za-z0-9_.-])(git|gh|ssh|scp|rsync|sftp|docker|curl|wget|sudo)([^A-Za-z0-9_.-]|$)' && \
-    block "un programma in linea che lancia git, gh, ssh, docker, curl o wget non si controlla: esegui quel comando per intero, da solo."
+    block "un programma in linea che contiene la parola git, gh, ssh, scp, rsync, sftp, docker, curl, wget o sudo non si controlla, perché l'hook non distingue un testo cercato da un comando lanciato: se cerchi quel testo usa grep (grep -n docker <file>), se lanci il comando eseguilo per intero, da solo."
   return 0
 }
 sed_esegue() { # $1 script di sed: GNU sed esegue un comando con «e» (e <comando>, o il flag e di s///): allora lo script si

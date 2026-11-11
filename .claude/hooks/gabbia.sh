@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # I comandi del progetto che usano il database, il server di sviluppo o il browser non funzionano nella sandbox
 # di Claude Code: lì localhost è privato, e PostgreSQL non c'è. Girano fuori dalla sandbox, ma dentro la gabbia
-# di common.sh: rete e progetto liberi; file del metodo, .git, registro e resto del computer in sola lettura;
+# di common.sh: rete e progetto liberi; file del metodo, .git, registro e resto del computer in sola lettura (tranne
+# le due cartelle di lavoro di pnpm, ~/.cache/pnpm e ~/.local/state/pnpm);
 # niente credenziali di questo computer (chiavi SSH e GPG, accessi di Docker, GitHub e della Stripe CLI, portachiavi e password di pass, profili dei browser e della posta, file di credenziali di git, curl e PostgreSQL, accesso di Claude Code,
 # e ~/.config/gh), niente agenti SSH e GPG, e solo i suoi processi.
 # Uso, dalla cartella del progetto, da solo nella riga (è un comando escluso dalla sandbox, settings.json):
