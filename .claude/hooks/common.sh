@@ -337,7 +337,9 @@ registro_alterato() { [ -f "$LOG_COPY" ] && [ -f "$LOG_FILE" ] && ! cmp -s "$LOG
 # Il codice del progetto che gira fuori dalla sandbox di Claude Code (i controlli dello Stop e, con gabbia.sh,
 # test di integrazione, end-to-end, server di sviluppo, worker, migrazioni, CLI) gira in una gabbia di bubblewrap:
 # rete e progetto liberi, ma file del metodo, .git e registro in sola lettura, il resto del computer in sola lettura,
-# senza le credenziali di questo computer (CRED_LOCALI, qui sopra) né gli agenti SSH e GPG. Uscita 125: la gabbia non parte.
+# senza le credenziali di questo computer (CRED_LOCALI, qui sopra) né gli agenti SSH e GPG, e con i suoi processi soltanto
+# (--unshare-pid: da /proc/<pid>/root di un processo del computer si vedrebbe la sua radice, credenziali comprese).
+# Uscita 125: la gabbia non parte.
 gabbia() {
   command -v bwrap >/dev/null 2>&1 || { echo "manca bubblewrap (bwrap): sudo apt install bubblewrap (AVVIO.md, passo 1)" >&2; return 125; }
   local p c; local -a a=(--ro-bind / / --dev-bind /dev /dev --proc /proc --tmpfs /tmp --bind "$PROJECT_DIR" "$PROJECT_DIR")
@@ -352,7 +354,7 @@ gabbia() {
   done
   [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ] && a+=(--tmpfs "$XDG_RUNTIME_DIR")   # agenti SSH e GPG, portachiavi, D-Bus
   for p in /run/docker.sock /var/run/docker.sock; do [ -S "$p" ] && a+=(--ro-bind /dev/null "$p"); done
-  bwrap "${a[@]}" --new-session --die-with-parent --unsetenv SSH_AUTH_SOCK --unsetenv DOCKER_HOST \
+  bwrap "${a[@]}" --new-session --die-with-parent --unshare-pid --unsetenv SSH_AUTH_SOCK --unsetenv DOCKER_HOST \
     --unsetenv GH_TOKEN --unsetenv GITHUB_TOKEN --setenv NEXT_TELEMETRY_DISABLED 1 --chdir "$PROJECT_DIR" -- "$@"
   local rc=$?
   [ "$rc" = 1 ] && ! bwrap --ro-bind / / --dev /dev true >/dev/null 2>&1 && { echo "la gabbia (bubblewrap) non parte: su Ubuntu 24.04 serve il profilo AppArmor di AVVIO.md, passo 1" >&2; return 125; }

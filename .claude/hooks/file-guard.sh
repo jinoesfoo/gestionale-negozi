@@ -37,7 +37,7 @@ case "$rel" in
 esac
 modo=""; [ "$tool" = Grep ] && modo=contiene
 tocca_credenziali "$(canon_path "$path")" "$modo" && \
-  block "'$path' contiene credenziali di questo computer (chiavi SSH e GPG, accessi di Docker, GitHub e Stripe, portachiavi, profili dei browser, accesso di Claude Code): non si legge né si modifica."
+  block "'$path' contiene credenziali di questo computer (chiavi SSH e GPG, accessi di Docker, GitHub e della Stripe CLI, portachiavi e password di pass, profili dei browser e della posta, file di credenziali di git, curl e PostgreSQL, accesso di Claude Code): non si legge né si modifica."
 
 # Le letture sono sempre permesse (tranne i segreti e le credenziali)
 case "$tool" in Read|Grep) exit 0 ;; esac
