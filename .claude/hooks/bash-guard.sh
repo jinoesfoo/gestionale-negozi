@@ -114,10 +114,14 @@ scrive() { # $1 percorso, $2 segni (d, g, b), $3 cartella base facoltativa
 
 # --- commit -----------------------------------------------------------------------------------------
 controlla_commit() { # il commit porta solo il lavoro del compito corrente
-  local f vietati="" altre="" id cambiati
+  local f vietati="" altre="" id cambiati mh
+  mh="$(merge_head)" || mh=""
   while IFS= read -r f; do
     [ -z "$f" ] && continue
-    uguale_a_main "$f" || vietati="$vietati $f"     # una modifica identica a main (arrivata con l'unione) va bene
+    uguale_a_main "$f" && continue                  # una modifica identica a main (arrivata con l'unione) va bene
+    # a unione aperta, anche identica al commit che si sta unendo: intanto origin/main può essere andato avanti
+    [ -n "$mh" ] && [ "$(impronta_qui "$f")" = "$(impronta_in "$mh" "$f")" ] && continue
+    vietati="$vietati $f"
   done < <(git -C "$PROJECT_DIR" status --porcelain --untracked-files=all 2>/dev/null | cut -c4- | sed 's/.* -> //' | \
            grep -E '(^|/)\.claude/|CLAUDE(\.local)?\.md$|^\.mcp\.json$|^\.gitmodules$|^\.github/CODEOWNERS$|^\.vscode/|^\.idea/|^AVVIO\.md$|^docs/metodo\.md$|^docs/due-postazioni\.md$|^registro/' | grep -v -x -F "$LOG_REL")
   [ -n "$vietati" ] && block "il commit porterebbe modifiche a file che cambia solo l'utente (o al registro dell'altra postazione):$vietati. Non vanno nel commit: chiedi all'utente."
@@ -127,7 +131,7 @@ controlla_commit() { # il commit porta solo il lavoro del compito corrente
   [ -n "$altre" ] && block "il commit spunterebbe compiti diversi da $task:$altre. Si spunta solo la casella del compito corrente."
   registro_alterato && block "il registro di questa postazione è diverso dalla copia degli hook ($LOG_COPY): così non va nel commit. Chiedi all'utente."
   cambiati="$(test_cambiati | tr '\n' ' ')"
-  [ -n "${cambiati// /}" ] && block "i test o la configurazione dei controlli sono cambiati dopo la fase test: $cambiati. Il commit non li porta: l'utente decide (TORNA AL CODICE e poi TORNA AI TEST, se un test va davvero corretto)."
+  [ -n "${cambiati// /}" ] && block "i test o la configurazione dei controlli sono cambiati dopo la fase test: $cambiati. Il commit non li porta: se un test va davvero corretto, l'utente scrive TORNA AI TEST (in fase chiusura prima TORNA AL CODICE); altrimenti il file va rimesso com'era."
   return 0
 }
 

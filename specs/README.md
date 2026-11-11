@@ -8,7 +8,7 @@ Documento di riferimento a monte: "Progetto tecnico — Fase 0: piattaforma" (ve
 
 1. Il metodo (`CLAUDE.md`, la cartella `.claude/` con gli hook e i comandi `/stato`, `/revisione`, `/chiudi-compito`, `docs/metodo.md`) deve essere presente nel repository **prima di FON-T01**: senza gli hook e i comandi del metodo nessun compito si può eseguire. Con due postazioni (8/11/2026) il repository parte già dal commit «Specifiche e metodo», che contiene queste specifiche, il metodo, `docs/due-postazioni.md` e `AVVIO.md`: l'installazione segue `AVVIO.md`, e FON-T01 non fa un commit iniziale. Fase e postazione stanno fuori dal progetto, nella cartella di stato degli hook; il registro delle approvazioni sta in `registro/`, uno per postazione.
 2. Lavora **un'area alla volta, nell'ordine sotto**. Ogni area ha tre parti: *Requisiti* (cosa deve succedere, con criteri di accettazione), *Progetto* (come è fatto), *Compiti* (passi in ordine, ciascuno con i test che lo chiudono).
-3. Chiedi a Claude Code di eseguire un compito alla volta: "Esegui il compito FON-T03 di `specs/01-fondamenta.md`". Il compito è finito solo quando i suoi test passano e la casella è spuntata.
+3. Un compito alla volta: l'utente lo apre scrivendo `INIZIA FON-T03`, da solo sulla prima riga del messaggio (`docs/metodo.md`), e Claude lo porta avanti fase per fase. Il compito è finito solo quando i suoi test passano e la casella è spuntata.
 4. Se durante lo sviluppo una specifica si rivela sbagliata o incompleta, **si corregge prima la specifica**, poi il codice.
 
 ## Ordine delle aree

@@ -12,7 +12,7 @@ Sei un revisore senior indipendente. Non hai scritto queste modifiche e non devi
 2. Leggi `CLAUDE.md`, `specs/00-costituzione.md` e l'area di `specs/` che contiene il compito, per intero.
 3. Esegui `git fetch origin` e leggi tutte le modifiche del compito rispetto a `main` (il `main` locale può essere vecchio: l'altra postazione unisce le sue pull request):
    - di norma rispetto al punto in cui il ramo si stacca da `origin/main`: `git diff "$(git merge-base HEAD origin/main)"`, che comprende commit, modifiche già messe nell'indice e modifiche non salvate;
-   - se è in corso un'unione con main (esiste `.git/MERGE_HEAD`), rispetto a `origin/main` stesso: `git diff origin/main`, altrimenti le modifiche di main che stanno arrivando sembrerebbero lavoro del compito;
+   - se è in corso un'unione con main (esiste `.git/MERGE_HEAD`), rispetto al commit che si sta unendo: `git diff MERGE_HEAD`, altrimenti le modifiche di main che stanno arrivando sembrerebbero lavoro del compito (non `origin/main`: il `git fetch` appena fatto può averlo portato più avanti, e le sue modifiche nuove sembrerebbero, al contrario, tolte dal compito);
    - più i file nuovi non ancora tracciati (`git status --porcelain --untracked-files=all`), letti per intero.
 4. Verifica, in quest'ordine:
    - **Sicurezza e separazione dei negozi:** accessi ai dati fuori da `withShop`, tabelle con `shop_id` senza RLS, permessi in più rispetto all'elenco consentito, funzioni `SECURITY DEFINER` fuori elenco o con ruoli sbagliati, segreti nel codice o nei log, controlli di ruolo e modulo mancanti sul server.

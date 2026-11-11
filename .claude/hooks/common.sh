@@ -269,12 +269,21 @@ errori_find() { grep -vE '^find: .*: No such file or directory$' | sed -E 's|^fi
 # quelli del commit che si sta unendo o di origin/main: altrimenti le parole chiave sarebbero rifiutate proprio quando la
 # procedura le chiede (TORNA AL CODICE o TORNA AI TEST per risolvere il conflitto). Un file del metodo diverso da tutti
 # e due conta come sempre. Si usa dentro la cartella del progetto.
+merge_head() { # il commit che si sta unendo, se c'è un'unione aperta: letto dal file .git/MERGE_HEAD, non con rev-parse,
+               # che prenderebbe anche un ramo o un tag chiamato MERGE_HEAD
+  local h
+  [ -f "$PROJECT_DIR/.git/MERGE_HEAD" ] || return 1
+  h="$(head -n 1 "$PROJECT_DIR/.git/MERGE_HEAD" 2>/dev/null)"
+  [[ "$h" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || return 1
+  git -C "$PROJECT_DIR" cat-file -e "$h^{commit}" 2>/dev/null || return 1
+  printf '%s\n' "$h"
+}
 arrivati_con_unione() { # stdin: file del metodo diversi da HEAD -> stdout: quelli che non sono arrivati con l'unione aperta
-  local f
-  git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 || { cat; return 0; }
+  local f m
+  m="$(merge_head)" || { cat; return 0; }
   while IFS= read -r f; do
     [ -z "$f" ] && continue
-    [ "$(impronta_qui "$f")" = "$(impronta_in MERGE_HEAD "$f")" ] && continue
+    [ "$(impronta_qui "$f")" = "$(impronta_in "$m" "$f")" ] && continue
     uguale_a_main "$f" && continue
     printf '%s\n' "$f"
   done
@@ -334,17 +343,27 @@ salva_manifesto_test() {
     > "$STATE_DIR/manifesto-main" || : > "$STATE_DIR/manifesto-main"
 }
 cancella_manifesto_test() { rm -f "$STATE_DIR/manifesto-test" "$STATE_DIR/manifesto-main"; }
-# Test (o configurazione dei controlli) cambiati dopo la fase test. Non conta un file che ora è identico alla
-# versione di main, se main l'ha cambiato dopo la base salvata con l'impronta: è arrivato con l'allineamento, non da
-# questo compito.
+# Test (o configurazione dei controlli) cambiati dopo la fase test. Non conta un file che ora è identico a una versione
+# di main che l'ha cambiato dopo la base salvata con l'impronta: è arrivato con l'allineamento, non da questo compito.
+# Le versioni di main sono tre: la punta di origin/main, il main che il ramo già contiene (un file che l'altra postazione
+# ha cambiato due volte arriva prima nella versione di mezzo) e il commit che un'unione aperta sta portando.
 test_cambiati() {
   [ -f "$STATE_DIR/manifesto-test" ] || return 0
-  local base f m; base="$(cat "$STATE_DIR/manifesto-main" 2>/dev/null)"
+  local base f m qui b r; local -a versioni=()
+  base="$(cat "$STATE_DIR/manifesto-main" 2>/dev/null)"
+  if [ -n "$base" ]; then
+    versioni=(origin/main)
+    r="$(git -C "$PROJECT_DIR" merge-base HEAD origin/main 2>/dev/null)" && versioni+=("$r")
+    r="$(merge_head)" && versioni+=("$r")
+  fi
   diff <(cat "$STATE_DIR/manifesto-test") <(manifesto_test) | sed -n -E 's/^[<>] [0-9a-z]+  //p' | sort -u | \
   while IFS= read -r f; do
     if [ -n "$base" ]; then
-      m="$(impronta_in origin/main "$f")"
-      [ "$(impronta_in "$base" "$f")" != "$m" ] && [ "$(impronta_qui "$f")" = "$m" ] && continue
+      qui="$(impronta_qui "$f")"; b="$(impronta_in "$base" "$f")"
+      for r in "${versioni[@]}"; do
+        m="$(impronta_in "$r" "$f")"
+        [ "$b" != "$m" ] && [ "$qui" = "$m" ] && continue 2
+      done
     fi
     echo "$f"
   done
