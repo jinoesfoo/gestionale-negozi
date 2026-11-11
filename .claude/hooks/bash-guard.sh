@@ -468,11 +468,12 @@ credenziali_server() { # $1 percorso sul server, $2 come l'ha scritto Claude, $3
   fi
   return 0
 }
-credenziali_locali() { # $1 percorso assoluto canonico, $2 come l'ha scritto Claude, $3 "contiene" (facoltativo)
+credenziali_locali() { # $1 percorso assoluto canonico, $2 come l'ha scritto Claude, $3 "contiene" (facoltativo), $4 una frase in più
   tocca_credenziali "$1" "${3:-}" && \
-    block "il comando arriverebbe alle credenziali di questo computer ('$2'): chiavi SSH e GPG, accessi di Docker, GitHub e della Stripe CLI, portachiavi e password di pass, profili dei browser e della posta, file di credenziali di git, curl e PostgreSQL e accesso di Claude Code non si leggono, non si copiano e non si montano (docs/due-postazioni.md, «Protezione del metodo»)."
+    block "il comando arriverebbe alle credenziali di questo computer ('$2'): chiavi SSH e GPG, accessi di Docker, GitHub e della Stripe CLI, portachiavi e password di pass, profili dei browser e della posta, file di credenziali di git, curl e PostgreSQL e accesso di Claude Code non si leggono, non si copiano e non si montano (docs/due-postazioni.md, «Protezione del metodo»).${4:+ $4}"
   return 0
 }
+MSG_NOME="Il nome intero di una credenziale non si scrive in nessun punto del comando, perché l'hook non distingue un comando che la legge da un testo che la cita: un testo così (una nota, una guida) scrivilo con Write o Edit, o con cat > file <<'EOF'; nel messaggio di un commit e nel titolo e nel testo di una pull request passa (-m, --message, --title, --body)."
 fuori_progetto() { # vero se la cartella in cui gira il comando è nota e fuori dal progetto
   [ "$CWD" != "?" ] && [[ "$CWD" != "$PROJECT_DIR_SLASH" && "$CWD" != "$PROJECT_DIR_SLASH"/* ]]
 }
@@ -501,14 +502,59 @@ coda_credenziali() { # $1 parte fissa di un percorso la cui base non si conosce 
   [ "${3:-}" = contiene ] && case "${r##*/}" in ""|home|"${HOME_SLASH##*/}") credenziali_locali "$HOME_SLASH" "$2" contiene ;; esac
   return 0
 }
+# Il nome intero di una credenziale di questo computer in un punto qualunque di una parola o di un testo: dopo un'opzione
+# corta con «=» (-v=/…), dopo «@», «:», «,», in file://host/…, prima di una variabile (~/.config/gh/$f), in mezzo a una
+# frase. La casa vale scritta per esteso, con ~, $HOME, ${HOME}, ~utente o /home/$USER; il percorso finisce al primo spazio,
+# apice o operatore, e si prova intero e tagliato a ogni «:», «,», «;», «=», «$» e carattere jolly; «.», «..», le barre
+# doppie e i collegamenti si risolvono. Con "testo" (un heredoc, che può essere lungo) contano solo i nomi scritti con la
+# casa, senza risolvere i collegamenti.
+FINE_PERCORSO=$' \t\n\'"`|&<>()'
+PRIMA_PERCORSO=$' \t\n=:,;@<(\'"'
+TAGLI_PERCORSO=':,;=$*?[{'
+nomi_interi() { # $1 parola o testo, $2 "testo" (facoltativo)
+  local t="$1" i n r c abs fatti=" "
+  [[ "$t" == */* ]] || return 0
+  if [[ "$t" == *'$'* ]]; then
+    t="${t//'${HOME}'/$HOME_SLASH}"; t="${t//'$HOME'/$HOME_SLASH}"
+    t="${t//'${XDG_CONFIG_HOME}'/$HOME_SLASH/.config}"; t="${t//'$XDG_CONFIG_HOME'/$HOME_SLASH/.config}"
+    t="${t//'${XDG_DATA_HOME}'/$HOME_SLASH/.local/share}"; t="${t//'$XDG_DATA_HOME'/$HOME_SLASH/.local/share}"
+    if [ -n "$UTENTE" ]; then t="${t//'${USER}'/$UTENTE}"; t="${t//'${LOGNAME}'/$UTENTE}"; t="${t//'$USER'/$UTENTE}"; t="${t//'$LOGNAME'/$UTENTE}"; fi
+  fi
+  [ -n "$UTENTE" ] && [[ "$t" == *"~$UTENTE/"* ]] && t="${t//"~$UTENTE/"/"~/"}"
+  [ "${2:-}" = testo ] && [[ "$t" != *"$HOME_SLASH/"* && "$t" != *"~/"* ]] && return 0
+  n=${#t}
+  for ((i=0; i<n; i++)); do
+    case "${t:i:1}" in
+      '~') [[ "${t:i+1:1}" == / ]] || continue
+           { [ "$i" = 0 ] || [[ "${t:i-1:1}" == ["$PRIMA_PERCORSO"] ]]; } || continue
+           r="$HOME_SLASH${t:i+1}" ;;
+      /) if [[ "${t:i:${#HOME_SLASH}+1}" == "$HOME_SLASH/" ]]; then r="${t:i}"   # la casa per esteso, in qualunque punto
+         elif [ "${2:-}" != testo ] && { [ "$i" = 0 ] || [[ "${t:i-1:1}" == ["$PRIMA_PERCORSO"] ]]; }; then r="${t:i}"
+         else continue; fi ;;
+      *) continue ;;
+    esac
+    c="${r%%["$FINE_PERCORSO"]*}"
+    while :; do   # il percorso intero, poi tagliato a ogni separatore, dall'ultimo al primo
+      if [ -n "$c" ] && [[ "$fatti" != *" $c "* ]]; then
+        fatti="$fatti$c "
+        if [ "${2:-}" = testo ]; then abs="$(norm_path "$c")"; else abs="$(canon_path "$c")"; fi
+        tocca_credenziali "$abs" && credenziali_locali "$abs" "$c" "" "$MSG_NOME"
+      fi
+      [[ "$c" == *["$TAGLI_PERCORSO"]* ]] || break
+      c="${c%["$TAGLI_PERCORSO"]*}"
+    done
+  done
+  return 0
+}
 parola_locale() { # $1 parola di un comando; $2 "contiene" se il programma legge le cartelle per intero (legge_cartelle),
                   # "antenati" per un programma qualunque (niente cartelle che contengono le credenziali; dopo una variabile conta
                   # solo la parte fissa), vuoto per uno che non legge il contenuto delle cartelle (SICURI); $3 i segni della
                   # parola: niente credenziali di questo computer; fuori dalla sandbox nemmeno sessioni salvate
-  local w="$1" v abs modo scritto re_att='^-[A-Za-z0-9]+([/~@.$<].*)$'; local -a cand=() seg=()
+  local w="$1" v abs modo scritto re_att='^-[A-Za-z0-9]+=?([/~@.$<].*)$'; local -a cand=() seg=()
+  nomi_interi "$w"                              # il nome intero di una credenziale, in qualunque punto della parola
   case "$w" in
     --*=*) w="${w#*=}" ;;
-    -*) [[ "$w" =~ $re_att ]] || return 0; w="${BASH_REMATCH[1]}" ;;   # il valore attaccato a un'opzione corta: -T/…, -C~/…
+    -*) [[ "$w" =~ $re_att ]] || return 0; w="${BASH_REMATCH[1]}" ;;   # il valore attaccato a un'opzione corta: -T/…, -C~/…, -v=/…
   esac
   cand+=("$w")
   if [[ "$w" == *=* ]]; then
@@ -542,10 +588,16 @@ parola_locale() { # $1 parola di un comando; $2 "contiene" se il programma legge
   done
   return 0
 }
-file_ambiente() { # $1 parola: niente file di ambiente reali, nemmeno come valore di un'opzione (--env-file=…, src=…, @…)
+file_ambiente() { # $1 parola: niente file di ambiente reali, nemmeno come valore di un'opzione (--env-file=…, -f.env.app, src=…,
+                  # @…) o prima di «:» e «,» (./.env.app:/x)
   local a="$1" v pth; local -a cand=()
-  case "$a" in --*=*) cand+=("${a#*=}") ;; -*) ;; *) cand+=("$a") ;; esac
+  case "$a" in
+    --*=*) cand+=("${a#*=}") ;;
+    -*) [[ "$a" =~ ^-[A-Za-z0-9]+=?([./~].*)$ ]] && cand+=("${BASH_REMATCH[1]}") ;;
+    *) cand+=("$a") ;;
+  esac
   [[ "$a" =~ (^|[,=])(source|src)=([^,]+) ]] && cand+=("${BASH_REMATCH[3]}")
+  for v in "${cand[@]}"; do [[ "$v" == ?*[:,]* ]] && cand+=("${v%%[:,]*}"); done
   for v in "${cand[@]}"; do
     v="${v#[@<]}"
     [[ "$v" == *.example* ]] && continue
@@ -589,6 +641,106 @@ testi_cercati() { # $1 indice da cui partono le opzioni, $2 programma (grep e si
       *) [ "$dato" = 0 ] && { SALTA="$SALTA$j "; dato=1; } ;;
     esac
   done
+  return 0
+}
+testi_messaggio() { # $1 indice di git o di gh, $2 il programma: mette in SALTA il testo di un messaggio, che è una frase e non un
+                    # percorso (git commit, tag, merge e stash con -m o --message; gh pr e gh issue con --title e --body)
+  local j a sub=""
+  for ((j=$1+1; j<n; j++)); do
+    a="${argv[$j]}"
+    if [ -z "$sub" ]; then
+      case "$2:$a" in
+        git:-C|gh:-R|gh:--repo|gh:--hostname) j=$((j+1)) ;;
+        *:-*) ;;
+        *) sub="$a"; case "$2:$sub" in git:commit|git:tag|git:merge|git:stash|gh:pr|gh:issue) ;; *) return 0 ;; esac ;;
+      esac
+      continue
+    fi
+    case "$2:$a" in
+      *:--) return 0 ;;
+      git:-m|git:--message|gh:-t|gh:--title|gh:-b|gh:--body) SALTA="$SALTA$((j+1)) "; j=$((j+1)) ;;
+      git:--message=*|gh:--title=*|gh:--body=*) SALTA="$SALTA$j " ;;
+      git:-[a-zA-Z]*m) SALTA="$SALTA$((j+1)) "; j=$((j+1)) ;;   # -am "…"
+      git:-m?*) SALTA="$SALTA$j " ;;                            # -m"…"
+    esac
+  done
+  return 0
+}
+separatori() { # $1 indice del programma, $2 le lettere delle opzioni corte che prendono un separatore, $3 le lunghe: il
+               # separatore (cut -d/, sort -t /, paste -d,) va in SALTAP
+  local j a g k
+  for ((j=$1+1; j<n; j++)); do
+    a="${argv[$j]}"
+    case "$a" in
+      --) return 0 ;;
+      --*=*) [[ "$3" == *" ${a%%=*} "* ]] && SALTAP="$SALTAP$j " ;;
+      --*) [[ "$3" == *" $a "* ]] && { SALTAP="$SALTAP$((j+1)) "; j=$((j+1)); } ;;
+      -?*) g="${a#-}"
+           for ((k=0; k<${#g}; k++)); do
+             [[ "$2" == *"${g:$k:1}"* ]] || continue
+             if [ $((k+1)) -lt "${#g}" ]; then SALTAP="$SALTAP$j "; else SALTAP="$SALTAP$((j+1)) "; j=$((j+1)); fi
+             break
+           done ;;
+    esac
+  done
+  return 0
+}
+testi_non_percorsi() { # $1 indice del programma, $2 il programma: mette in SALTAP gli indici delle parole che per il programma sono
+                       # un testo e non un percorso: lo script di sed, il programma di awk e il suo separatore, il codice in
+                       # linea di un interprete, i separatori di cut, paste, sort, join e column, gli insiemi di tr, le parole
+                       # di [[ … ]], i filtri di rsync. Lì una «/» iniziale e i caratteri jolly non indicano una cartella
+                       # (sed -n '/^[0-9]/p', cut -d/, [[ $p == /* ]]); resta il controllo sui nomi interi delle credenziali
+                       # e sui file di ambiente
+  local j a dato=0
+  case "$2" in
+    '[['|tr) for ((j=$1+1; j<n; j++)); do SALTAP="$SALTAP$j "; done ;;
+    cut|paste) separatori "$1" d ' --delimiter --delimiters --output-delimiter ' ;;
+    sort) separatori "$1" t ' --field-separator ' ;;
+    join) separatori "$1" t '' ;;
+    column) separatori "$1" so ' --separator --output-separator ' ;;
+    rsync) for ((j=$1+1; j<n; j++)); do case "${argv[$j]}" in --exclude=*|--include=*|--filter=*) SALTAP="$SALTAP$j " ;; esac; done ;;
+    sed)
+      for ((j=$1+1; j<n; j++)); do
+        a="${argv[$j]}"
+        case "$a" in
+          --) [ "$dato" = 0 ] && SALTAP="$SALTAP$((j+1)) "; return 0 ;;
+          -e|--expression) SALTAP="$SALTAP$((j+1)) "; dato=1; j=$((j+1)) ;;
+          --expression=*) SALTAP="$SALTAP$j "; dato=1 ;;
+          -f|--file) dato=1; j=$((j+1)) ;;
+          --file=*) dato=1 ;;
+          -l|--line-length) j=$((j+1)) ;;
+          --*) ;;
+          -*e) SALTAP="$SALTAP$((j+1)) "; dato=1; j=$((j+1)) ;;   # -ne '<script>'
+          -*f) dato=1; j=$((j+1)) ;;
+          -*) ;;
+          *) [ "$dato" = 0 ] && { SALTAP="$SALTAP$j "; dato=1; } ;;
+        esac
+      done ;;
+    awk|gawk|mawk|nawk)
+      for ((j=$1+1; j<n; j++)); do
+        a="${argv[$j]}"
+        case "$a" in
+          --) [ "$dato" = 0 ] && SALTAP="$SALTAP$((j+1)) "; return 0 ;;
+          -F|--field-separator) SALTAP="$SALTAP$((j+1)) "; j=$((j+1)) ;;
+          -F?*|--field-separator=*) SALTAP="$SALTAP$j " ;;
+          -e|--source) SALTAP="$SALTAP$((j+1)) "; dato=1; j=$((j+1)) ;;
+          -e?*|--source=*) SALTAP="$SALTAP$j "; dato=1 ;;
+          -f|--file|-E|--exec) dato=1; j=$((j+1)) ;;
+          -f?*|--file=*|--exec=*) dato=1 ;;
+          -v|--assign|-i|--include|-l|--load|-W) j=$((j+1)) ;;
+          -*) ;;
+          *) [ "$dato" = 0 ] && SALTAP="$SALTAP$j "; return 0 ;;   # dopo il programma vengono i file e le assegnazioni
+        esac
+      done ;;
+    perl|ruby)
+      for ((j=$1+1; j<n; j++)); do
+        case "${argv[$j]}" in --) return 0 ;; -e|-E|-[a-zA-Z]*e|-[a-zA-Z]*E) SALTAP="$SALTAP$((j+1)) "; j=$((j+1)) ;; esac
+      done ;;
+    python|python3|python3.[0-9]*|node|nodejs|deno|bun|php)
+      for ((j=$1+1; j<n; j++)); do
+        case "${argv[$j]}" in --) return 0 ;; -c|-e|--eval|-r|-p|--print) SALTAP="$SALTAP$((j+1)) "; j=$((j+1)) ;; esac
+      done ;;
+  esac
   return 0
 }
 legge_cartelle() { # $1 indice del programma: vero se legge le cartelle per intero (grep -r, rg, find, tar, zip, cp -r, diff -r, ln,
@@ -652,11 +804,25 @@ contesto_docker() { # $1 contesto di costruzione: docker lo legge fuori dalla sa
   credenziali_locali "$abs" "$1" contiene
   return 0
 }
+MSG_CERCA="Se è il testo che cerchi con grep, cercalo con un grep semplice e da solo (ssh test 'grep -n <testo> <file>'), oppure scrivilo come 'en[v]': un grep da solo non esegue nulla, mentre in una pipe o dentro un altro comando l'hook non distingue il testo cercato da un comando."
+grep_semplice() { # $1 comando che gira sul server: vero se è un solo grep (grep, egrep, fgrep), senza altri comandi, operatori,
+                  # sostituzioni né heredoc: non esegue nulla, quindi le parole che cerca non sono comandi
+  [ "$(printf '%s' "$1" | awk -f "$TOKENIZER" | awk -F'\t' '
+        NR == 1 { p = ($1 == "W" && $2 !~ /[dgb]/) ? $3 : "" }
+        $1 != "W" { altro = 1 }
+        END { if (!altro && (p == "grep" || p == "egrep" || p == "fgrep")) print "si" }')" = si ]
+}
 segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segreti (file di ambiente, variabili dei processi, chiavi)
-  local riga w s prec="" pezzo piano testo inps=0 exec_visto=0 primo=1
+  local riga w s prec="" pezzo piano testo inps=0 exec_visto=0 primo=1 solo_grep=0 wi=-1 ti=0 n=0 SALTA=" "; local -a argv=()
+  local re_cartella_env='/srv/app/env([^A-Za-z0-9_.-]|$)'
   local re_dc="^(dc|compose|docker-compose)[[:space:]'\"]" re_cfg="(^|[[:space:]'\"])(config|convert)([[:space:]'\"<>]|\$)"
   local re_ok="(^|[[:space:]'\"])(--no-env-resolution|-q|--quiet|--services|--images|--volumes|--networks|--profiles)([[:space:]'\"<>]|\$)"
   local re_env="(^|[[:space:]'\"])env([[:space:]'\"<>]|\$)" re_insp="(^|[[:space:]'\"])inspect([[:space:]'\"<>]|\$)"
+  # env scritto con il percorso (/usr/bin/env): va bene quando lancia un comando (la parola dopo non è un'opzione né
+  # un'assegnazione), non quando stampa le variabili (in fondo, o con sole opzioni)
+  local re_envp="(^|[[:space:]'\"])[^[:space:]'\"]*/env([[:space:]'\"<>]|\$)(.*)\$" re_lancia="^[[:space:]]+[A-Za-z0-9_./~][^[:space:]='\"]*([[:space:]'\"<>]|\$)"
+  local resto dopo env_perc=""
+  local MSG_ENVP="con il percorso (/usr/bin/env) 'env' si usa solo per lanciare un comando, scritto subito dopo: da solo, o con opzioni e assegnazioni, stamperebbe le variabili d'ambiente, che contengono i segreti."
   local re_insp_ok="(image|imagetools|manifest|volume|network|buildx|builder|context|plugin)[[:space:]'\"]+inspect([[:space:]'\"<>]|\$)"
   local re_elenco="(^|[[:space:]'\"])(export|declare|typeset|readonly)([[:space:]]+-[a-zA-Z]+)*[[:space:]'\"]*\$"
   local re_set="(^|[[:space:]'\"])set[[:space:]'\"]*\$" re_dollaro="\\\$[A-Za-z_{('\"]"
@@ -670,23 +836,47 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
   # variabili (export, declare, typeset, readonly senza nomi, set da solo) e niente docker inspect di un container;
   # docker compose config (anche /srv/app/dc config), che scrive i valori dei file di ambiente, ha bisogno di
   # un'opzione che non li legge (--no-env-resolution) o che non stampa la configurazione (-q, --services, …)
-  piano="$(printf '%s' "$1" | awk -f "$TOKENIZER" | awk -F'\t' '$1 == "W" { printf "%s ", $3 } $1 == "O" { printf "\n" }')"
+  # Un grep semplice e da solo non esegue nulla: le parole che cerca (env, inspect, printenv, process.env) non sono
+  # comandi. Di quel grep i controlli sul testo guardano tutte le parole tranne quelle cercate (testi_cercati, SALTA):
+  # il file letto resta controllato (grep -a . /proc/1/environ)
+  if grep_semplice "$1"; then
+    solo_grep=1
+    while IFS= read -r riga; do w="${riga#W$'\t'}"; argv+=("${w#*$'\t'}"); done < <(printf '%s' "$1" | awk -f "$TOKENIZER")
+    n=${#argv[@]}; testi_cercati 1 grep
+    piano=""; for wi in "${!argv[@]}"; do [[ "$SALTA" == *" $wi "* ]] || piano="$piano${argv[$wi]} "; done
+    wi=-1
+  else
+    piano="$(printf '%s' "$1" | awk -f "$TOKENIZER" | awk -F'\t' '$1 == "W" { printf "%s ", $3 } $1 == "O" { printf "\n" }')"
+  fi
   for testo in "$1" "$piano"; do
+    ti=$((ti+1)); [ "$solo_grep" = 1 ] && [ "$ti" = 1 ] && continue
     printf '%s' "$testo" | grep -Eq 'printenv|/environ|process\.env|(Deno|Bun)\.env|import\.meta\.env|os\.environ|getenv|ENV\[|%ENV|\$ENV\{|\$_ENV' && \
-      block "il comando sul server stamperebbe le variabili d'ambiente, che contengono i segreti: non si usa."
+      block "il comando sul server contiene una parola che, come comando o in un programma, stampa le variabili d'ambiente, che contengono i segreti (printenv, /proc/…/environ, process.env, os.environ e simili): non si usa. $MSG_CERCA"
     while IFS= read -r pezzo; do
-      [[ "$pezzo" =~ $re_env ]] && block "il comando sul server stamperebbe le variabili d'ambiente ('env'), che contengono i segreti: non si usa, nemmeno dentro sh -c."
+      [[ "$pezzo" =~ $re_env ]] && block "nel comando sul server la parola 'env' da sola non si usa, nemmeno dentro sh -c: come comando stamperebbe le variabili d'ambiente, che contengono i segreti. $MSG_CERCA"
+      resto="$pezzo"
+      while [[ "$resto" =~ $re_envp ]]; do   # ogni env scritto con il percorso, anche dentro sh -c
+        dopo="${BASH_REMATCH[2]}${BASH_REMATCH[3]}"; resto="${BASH_REMATCH[3]}"
+        [[ "$dopo" =~ $re_lancia ]] || block "nel comando sul server $MSG_ENVP"
+      done
       [[ "$pezzo" =~ $re_elenco || "$pezzo" =~ $re_set ]] && \
         block "il comando sul server stamperebbe le variabili della shell (export, declare, typeset o readonly senza nomi, set da solo), che contengono i segreti: non si usa, nemmeno dentro sh -c."
       [[ "$pezzo" =~ $re_insp ]] && ! [[ "$pezzo" =~ $re_insp_ok ]] && \
-        block "docker inspect di un container sul server mostrerebbe le sue variabili d'ambiente, che contengono i segreti: non si usa, nemmeno dentro sh -c (per lo stato: dc ps, dc logs)."
+        block "nel comando sul server la parola 'inspect' da sola non si usa, nemmeno dentro sh -c: docker inspect di un container mostrerebbe le sue variabili d'ambiente, che contengono i segreti (per lo stato: dc ps, dc logs). $MSG_CERCA"
       [[ "$pezzo" =~ $re_dc ]] && [[ "$pezzo" =~ $re_cfg ]] || continue
       [[ "$pezzo" =~ $re_ok ]] || block "docker compose config sul server (anche /srv/app/dc config) scrive nell'uscita i valori dei file di ambiente dei servizi, cioè i segreti: aggiungi --no-env-resolution (oppure usa -q, --services, --images, --volumes)."
     done < <(printf '%s\n' "$testo" | tr ';|&()' '\n\n\n\n\n' | sed -E "s#(^|[[:space:]/'\"(])(dc|compose|docker-compose)([[:space:]'\"])#\1\n\2\3#g")
   done
   while IFS= read -r riga; do
-    if [ "${riga%%$'\t'*}" != W ]; then prec=""; inps=0; exec_visto=0; primo=1; continue; fi
-    w="${riga#W$'\t'}"; s="${w%%$'\t'*}"; w="${w#*$'\t'}"
+    if [ "${riga%%$'\t'*}" != W ]; then
+      [ -n "$env_perc" ] && block "nel comando sul server $MSG_ENVP ('$env_perc')"
+      prec=""; inps=0; exec_visto=0; primo=1; continue
+    fi
+    w="${riga#W$'\t'}"; s="${w%%$'\t'*}"; w="${w#*$'\t'}"; wi=$((wi+1))
+    if [ -n "$env_perc" ]; then
+      { [[ "$w" == -* ]] || [[ "$w" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; } && block "nel comando sul server $MSG_ENVP ('$env_perc $w')"
+      env_perc=""
+    fi
     [[ "$s" == *d* ]] && block "nel comando sul server niente variabili né \$(…): il server le espanderebbe con i suoi valori, che possono essere segreti. Scrivi i valori per intero."
     [[ "$s" == *g* || "$s" == *b* ]] && block "nel comando sul server niente caratteri jolly fuori dagli apici ('$w'): potrebbero arrivare ai file di ambiente. Scrivi i nomi per intero."
     # ps con l'opzione e (alla maniera BSD, senza trattino: ps e, ps auxe, ps eww) stampa l'ambiente dei processi
@@ -699,41 +889,68 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
     [ "${w##*/}" = ps ] && { [ "$primo" = 1 ] || [ "$exec_visto" = 1 ]; } && inps=1
     [ "$w" = exec ] && exec_visto=1
     primo=0
-    case "$w" in
-      env) block "il comando sul server stamperebbe le variabili d'ambiente ('env'), che contengono i segreti: non si usa." ;;
-      inspect) case "$prec" in image|imagetools|manifest|volume|network|buildx|builder|context|plugin) ;; *) block "docker inspect di un container sul server mostrerebbe le sue variabili d'ambiente, che contengono i segreti: non si usa (per lo stato: dc ps, dc logs)." ;; esac ;;
-      /srv/app/env|/srv/app/env/*) block "il comando sul server tocca la cartella dei file di ambiente ('$w'): quei file li legge e li scrive solo l'utente." ;;
-    esac
+    if [[ "$SALTA" != *" $wi "* ]]; then   # non è il testo cercato da un grep semplice
+      case "$w" in
+        env) block "nel comando sul server la parola 'env' da sola non si usa: come comando stamperebbe le variabili d'ambiente, che contengono i segreti. $MSG_CERCA" ;;
+        */env) env_perc="$w" ;;
+        inspect) case "$prec" in image|imagetools|manifest|volume|network|buildx|builder|context|plugin) ;; *) block "nel comando sul server la parola 'inspect' da sola non si usa: docker inspect di un container mostrerebbe le sue variabili d'ambiente, che contengono i segreti (per lo stato: dc ps, dc logs). $MSG_CERCA" ;; esac ;;
+      esac
+    fi
+    [[ "$w" =~ $re_cartella_env ]] && block "il comando sul server tocca la cartella dei file di ambiente ('$w'): quei file li legge e li scrive solo l'utente."
     credenziali_server "$w" "$w"
     prec="$w"
     [[ "$w" == *.example* ]] && continue
     [[ "$w" == *.env* || "$w" == */env/* || "$w" == env/* ]] && is_secret_file "$w" && \
       block "il comando sul server nomina un file di ambiente con i segreti ('$w'): quei file li legge e li scrive solo l'utente."
   done < <(printf '%s' "$1" | awk -f "$TOKENIZER")
+  [ -n "$env_perc" ] && block "nel comando sul server $MSG_ENVP ('$env_perc')"
   letture_remote "$1" "~"
   return 0
 }
 parola_remota() { # $1 parola del comando sul server, $2 la cartella corrente sul server (~, un percorso, ? se non si sa): niente
-                  # cartella né file di ambiente, niente credenziali del server, anche dopo un cd e con . e .. (la casa diventa /~)
+                  # cartella né file di ambiente, niente credenziali del server, anche dopo un cd e con . e .. (la casa diventa
+                  # /~). Si prova la parola intera e ogni suo pezzo che può essere un percorso: dopo «=», dopo «,» e «:», e
+                  # tagliato al «:» o alla «,» che lo segue (-v ./env:/e, type=bind,source=/srv/app/env,target=/e)
+  local w="$1" c t; local -a cand=() pezzi=()
+  case "$w" in ""|-) return 0 ;; esac
+  case "$w" in
+    --*=*) w="${w#*=}" ;;
+    -*) [[ "$w" =~ ^-[A-Za-z0-9]+=?([/~.].*)$ ]] || return 0; w="${BASH_REMATCH[1]}" ;;   # -v/srv/…, -f=/srv/…
+  esac
+  cand+=("$w")
+  if [[ "$w" == *[=,:]* ]]; then
+    IFS='=,' read -ra pezzi <<< "$w"
+    for c in "${pezzi[@]}"; do
+      [ -n "$c" ] && cand+=("$c")
+      t="$c"; while [[ "$t" == *:* ]]; do t="${t%:*}"; [ -n "$t" ] && cand+=("$t"); done
+    done
+  fi
+  for c in "${cand[@]}"; do percorso_remoto "$c" "$2" "$1"; done
+  return 0
+}
+percorso_remoto() { # $1 percorso sul server, $2 la cartella corrente, $3 come l'ha scritto Claude
   local w="$1" p
-  case "$w" in --*=*|[A-Za-z_]*=*) w="${w#*=}" ;; esac
-  case "$w" in ""|-*) return 0 ;; esac
   case "$w" in
     /*) p="$w" ;;
     "~"|"~/"*) p="/~${w#\~}" ;;
-    "~"*) block "sul server niente ~utente ('$1'): scrivi il percorso per intero." ;;
+    "~"*) block "sul server niente ~utente ('$3'): scrivi il percorso per intero." ;;
     *) case "$2" in "?") return 0 ;; "~"|"~/"*) p="/~${2#\~}/$w" ;; *) p="$2/$w" ;; esac ;;
   esac
   p="$(norm_path "$p")"; [ -z "$p" ] && p=/
-  case "$p" in /srv/app/env|/srv/app/env/*) block "il comando sul server tocca la cartella dei file di ambiente ('$1'): quei file li legge e li scrive solo l'utente." ;; esac
+  case "$p" in /srv/app/env|/srv/app/env/*) block "il comando sul server tocca la cartella dei file di ambiente ('$3'): quei file li legge e li scrive solo l'utente." ;; esac
   case "$p" in
     */env.example/*|*.example|*.example.*) ;;
-    *) is_secret_file "$p" && block "il comando sul server nomina un file di ambiente con i segreti ('$1'): quei file li legge e li scrive solo l'utente." ;;
+    *) is_secret_file "$p" && block "il comando sul server nomina un file di ambiente con i segreti ('$3'): quei file li legge e li scrive solo l'utente." ;;
   esac
-  credenziali_server "$p" "$1"
+  credenziali_server "$p" "$3"
   return 0
 }
-LETTORI_REMOTI=' grep egrep fgrep zgrep rgrep rg ripgrep ag ack ack-grep find fd fdfind tar bsdtar gtar zip 7z 7za cp rsync '
+cartella_segreti_remota() { # $1 percorso normalizzato sul server (la casa è /~): vero se è una cartella che contiene i file di ambiente
+                            # o le credenziali: /, /srv, /srv/app, /srv/app/env, /home, la cartella di un utente, /root, /etc
+  case "$1" in /|/srv|/srv/app|/srv/app/env|/srv/app/env/*|/home|/root|/etc|/~) return 0 ;; esac
+  [[ "$1" =~ ^/home/[^/]+$ ]]
+}
+LETTORI_REMOTI=' grep egrep fgrep zgrep rgrep rg ripgrep ag ack ack-grep find fd fdfind tar bsdtar gtar zip 7z 7za 7zr cp rsync scp gzip gunzip zcat zstd diff rclone '
 SHELL_REMOTE=' sh bash dash zsh ksh mksh ash yash posh fish tcsh csh '
 RISERVATE=' ! { } ( if then else elif fi do done while until esac time '
 letture_remote() { # $1 comando che gira sul server, $2 la cartella in cui parte (~ se manca): ogni parola, risolta dalla cartella
@@ -779,7 +996,7 @@ letture_remote() { # $1 comando che gira sul server, $2 la cartella in cui parte
       if [ "$shell" = 1 ] && [[ "$w" =~ ^-[a-zA-Z]*c[a-zA-Z]*$ ]]; then testo=1; shell=0; continue; fi
       if [[ "$LETTORI_REMOTI" == *" ${w##*/} "* ]]; then
         prog="${w##*/}"; ainizio="$primo"
-        case "$prog" in grep|egrep|fgrep|zgrep|cp) ric=0 ;; *) ric=1 ;; esac
+        case "$prog" in grep|egrep|fgrep|zgrep|cp|scp|gzip|gunzip|zcat|zstd|diff) ric=0 ;; *) ric=1 ;; esac   # questi solo con -r
       fi
       continue
     fi
@@ -787,6 +1004,7 @@ letture_remote() { # $1 comando che gira sul server, $2 la cartella in cui parte
       case "$prog" in
         grep|egrep|fgrep|zgrep|rgrep|rg|ripgrep|ag|ack|ack-grep) opzione_lettore "$w" ;;
         cp) [[ "$w" == --recursive || "$w" == --archive || "$w" =~ ^-[a-zA-Z]*[rRa] ]] && ric=1 ;;
+        scp|gzip|gunzip|zcat|zstd|diff) [[ "$w" == --recursive || "$w" =~ ^-[a-zA-Z0-9]*[rR] ]] && ric=1 ;;
         tar|bsdtar|gtar) case "$w" in
                            -C|--directory) tdir=1 ;;
                            --directory=*) tbase="${w#*=}" ;;
@@ -858,7 +1076,7 @@ lettura_remota() { # $1 cartella del server letta per intero, $2 come l'ha scrit
        esac ;;
   esac
   p="$(norm_path "$p")"; p="${p%/}"; [ -z "$p" ] && p=/
-  { case "$p" in /|/srv|/srv/app|/srv/app/env|/srv/app/env/*|/home|/root|/etc|/~) true ;; *) [[ "$p" =~ ^/home/[^/]+$ ]] ;; esac; } && \
+  cartella_segreti_remota "$p" && \
     block "una lettura per intero di '$2' sul server arriverebbe ai file di ambiente o alle credenziali (/srv/app/env, le chiavi, il token di GHCR): indica la cartella che serve (per esempio /srv/app/infra)."
   credenziali_server "$p" "$2" copia
   return 0
@@ -894,13 +1112,19 @@ analizza_ssh() { # $1 indice, $2 programma. ssh, scp e rsync girano fuori dalla 
     [ -n "$qui_testo" ] && segreti_remoti "$qui_testo"     # ssh test <<< '…': anche quello gira sul server
     return 0
   fi
-  local k p ultimo_k=$(( ${#pos[@]} - 1 ))
+  # scp e rsync prendono per un server ogni argomento che ha i due punti prima della prima barra ([prod]:/x, root@[test]:/x,
+  # @test:/x, scp://test/x): qui si ammettono solo test:<percorso> e prod:<percorso>, così valgono i controlli sul percorso
+  # e la conferma per la produzione
+  local k p ultimo_k=$(( ${#pos[@]} - 1 )) re_server='^[A-Za-z0-9._-]+:([^:]|$)'
   for k in "${!pos[@]}"; do
     a="${pos[$k]}"
-    if ! [[ "$a" =~ ^([^/@:]+@)?[A-Za-z0-9._-]+: ]]; then   # un percorso di questo computer
+    if [[ "${a%%/*}" != *:* ]]; then   # un percorso di questo computer
       { [ "${#pos[@]}" -ge 2 ] && [ "$k" -eq "$ultimo_k" ]; } || sorgente_locale "$a"   # una sorgente: scp e rsync la leggono fuori dalla sandbox
       continue
     fi
+    [[ "$a" == *@* ]] && host_ok "${a%%:*}"   # il messaggio sull'utente
+    [[ "$a" =~ $re_server ]] || \
+      block "verso i server si scrive solo test:<percorso> o prod:<percorso> ('$a'): niente parentesi quadre, «@», doppi due punti né indirizzi (scp://, rsync://), che $prog legge come un server ma che il metodo non controlla."
     host_ok "${a%%:*}"
     [[ "${a#*:}" == *[*?[]* ]] && block "nei percorsi del server niente caratteri jolly ('$a'): scrivi i nomi per intero."
     p="${a#*:}"   # il percorso sul server, normalizzato: relativo alla casa dell'utente (/~), con . e .. risolti
@@ -915,10 +1139,11 @@ analizza_ssh() { # $1 indice, $2 programma. ssh, scp e rsync girano fuori dalla 
     { [ "$p" = /~ ] || [ "$p" = /root ] || [[ "$p" =~ ^/home/[^/]+$ ]]; } && \
       block "copiare tutta la cartella dell'utente del server ('$a') prenderebbe anche le sue credenziali: copia solo i file che servono."
     credenziali_server "$p" "$a" copia   # una sorgente sul server: non deve portare con sé i segreti
-    case "$p" in /|/srv|/srv/app) block "la copia comprenderebbe la cartella dei file di ambiente del server ('$a'): quei file li gestisce solo l'utente. Copia solo le cartelle che servono." ;; esac
+    cartella_segreti_remota "$p" && \
+      block "la copia comprenderebbe i file di ambiente o le credenziali del server ('$a'): quei file li gestisce solo l'utente. Copia solo le cartelle che servono (per esempio test:/srv/app/infra)."
   done
   if [ "${#pos[@]}" -ge 2 ]; then   # destinazione locale (copia dal server o copia locale): è una scrittura
-    a="${pos[-1]}"; [[ "$a" =~ ^([^/@:]+@)?[A-Za-z0-9._-]+: ]] || scrive "$a" "${psg[-1]}"
+    a="${pos[-1]}"; [[ "${a%%/*}" == *:* ]] || scrive "$a" "${psg[-1]}"
   fi
   return 0
 }
@@ -936,24 +1161,77 @@ monta() { # una cartella dell'host montata in un container: solo una sottocartel
   sorgente_locale "$1"   # niente file di ambiente o sessioni salvate nel container
   return 0
 }
-volume() { # -v sorgente:destinazione, --mount type=bind,source=…
-  local v="$1" src
-  [[ "$v" == *volume-opt=* || "$v" == *volume-driver=* ]] && \
-    block "--mount con volume-opt o volume-driver può legare una cartella del computer a un volume: nel metodo non si usa."
-  if [[ "$v" == *source=* || "$v" == *src=* ]]; then src="$(sed -n -E 's/.*(source|src)=([^,]+).*/\2/p' <<< "$v")"; else src="${v%%:*}"; fi
-  case "$src" in /*|.*|~*|[A-Za-z]:/*) monta "$src" ;; esac   # un nome senza / è un volume di Docker, non una cartella
+NOME_VOLUME='^[A-Za-z0-9][A-Za-z0-9_.-]*$'
+sorgente_volume() { # $1 la sorgente di un volume, $2 il valore intero: una cartella del computer (per Docker comincia con / o con .;
+                    # qui anche con ~, che la shell espande), che si controlla, oppure il nome di un volume di Docker (lettere,
+                    # cifre, «_», «.», «-»); ogni altra forma ferma il comando
+  case "$1" in
+    /*|.*|"~"*) monta "$1" ;;
+    *) [[ "$1" =~ $NOME_VOLUME ]] || block "il volume '$2' non è né una sottocartella del progetto (./cartella) né un volume con nome (lettere, cifre, «_», «.», «-»): scrivilo in una di queste due forme." ;;
+  esac
   return 0
 }
-uscita_docker() { # -o/--output di build, save, export: scrive sul computer
-  local v="$1" d
-  if [[ "$v" == *dest=* ]]; then d="$(sed -n -E 's/.*dest=([^,]+).*/\1/p' <<< "$v")"; scrive "$d" ""
-  elif [[ "$v" != *type=* ]]; then scrive "$v" ""; fi
+volume() { # -v sorgente:destinazione[:opzioni]; senza i due punti è un volume anonimo, che sta solo nel container
+  [[ "$1" == *:* ]] || return 0
+  sorgente_volume "${1%%:*}" "$1"
+}
+campi_docker() { # $1 un valore «chiave=valore,chiave=valore», poi i nomi di una chiave -> CAMPI, tutti i suoi valori; vero se ce
+                 # n'è almeno uno. Le chiavi non distinguono le maiuscole, come le legge Docker (Src= vale src=); di una chiave
+                 # ripetuta Docker tiene l'ultimo valore, e qui si controllano tutti
+  local campo ch nome t="$1"; local -a pezzi=()
+  CAMPI=(); shift
+  IFS=, read -ra pezzi <<< "$t"
+  for campo in "${pezzi[@]}"; do
+    [[ "$campo" == *=* ]] || continue
+    ch="${campo%%=*}"; ch="${ch,,}"
+    for nome in "$@"; do [ "$ch" = "$nome" ] && CAMPI+=("${campo#*=}"); done
+  done
+  [ "${#CAMPI[@]}" -gt 0 ]
+}
+valore_a_campi() { # $1 opzione, $2 il suo valore a campi: Docker lo legge come una riga CSV, dove le virgolette racchiudono un campo
+                   # con le virgole, e di un valore su più righe legge solo la prima. Niente virgolette né spazi: così l'hook lo
+                   # divide come Docker
+  [[ "$2" == *'"'* || "$2" == *[[:space:]]* ]] && \
+    block "docker $1: nel valore niente virgolette né spazi ('$2'). Docker lo legge a campi separati da virgole, e l'hook deve dividerlo allo stesso modo."
+  return 0
+}
+montaggio() { # --mount chiave=valore,…: solo le chiavi di un elenco; type=bind e ogni sorgente che è una cartella si controllano
+  local campo ch val tipo="" v; local -a pezzi=() sorgenti=()
+  valore_a_campi --mount "$1"
+  IFS=, read -ra pezzi <<< "$1"
+  for campo in "${pezzi[@]}"; do
+    ch="${campo%%=*}"; ch="${ch,,}"; val=""; [[ "$campo" == *=* ]] && val="${campo#*=}"
+    case "$ch" in
+      type) tipo="${val,,}" ;;
+      source|src) sorgenti+=("$val") ;;
+      target|dst|destination|readonly|ro|consistency|bind-propagation|bind-nonrecursive|bind-recursive|bind-create-src|volume-nocopy|volume-label|volume-subpath|tmpfs-size|tmpfs-mode) ;;
+      volume-opt|volume-driver) block "--mount con volume-opt o volume-driver può legare una cartella del computer a un volume: nel metodo non si usa." ;;
+      *) block "--mount con la chiave '${campo%%=*}' non è fra quelle che il metodo usa (type, source, target, readonly e simili)." ;;
+    esac
+  done
+  case "$tipo" in
+    bind) [ "${#sorgenti[@]}" -gt 0 ] || block "--mount type=bind senza la sorgente non si controlla."
+          for v in "${sorgenti[@]}"; do monta "$v"; done ;;
+    ""|volume) for v in "${sorgenti[@]}"; do sorgente_volume "$v" "$1"; done ;;
+    tmpfs) ;;
+    *) block "--mount type=$tipo non è fra i tipi che il metodo usa (bind, volume, tmpfs)." ;;
+  esac
+  return 0
+}
+uscita_docker() { # -o/--output di build: una cartella, «-» (l'uscita del comando) oppure «type=…,dest=…»: docker scrive sul computer
+  local v
+  [ "$1" = - ] && return 0
+  if [[ "$1" != *=* ]]; then scrive "$1" ""; return 0; fi
+  valore_a_campi --output "$1"
+  campi_docker "$1" dest && for v in "${CAMPI[@]}"; do [ "$v" = - ] || scrive "$v" ""; done
   return 0
 }
 cache_docker() { # $1 --cache-to o --cache-from, $2 il valore: una cache locale è una cartella del computer, scritta o letta da docker
-  [[ "$2" == *type=local* ]] || return 0
-  if [ "$1" = --cache-to ]; then uscita_docker "$2"
-  elif [[ "$2" =~ (^|,)(src|source)=([^,]+) ]]; then sorgente_locale "${BASH_REMATCH[3]}"; fi
+  local v
+  [[ "$2" == *=* ]] || return 0   # il nome di un'immagine
+  valore_a_campi "$1" "$2"
+  if [ "$1" = --cache-to ]; then campi_docker "$2" dest && for v in "${CAMPI[@]}"; do scrive "$v" ""; done
+  else campi_docker "$2" src source && for v in "${CAMPI[@]}"; do sorgente_locale "$v"; done; fi
   return 0
 }
 contesto_aggiuntivo() { # --build-context nome=valore: un'immagine o un indirizzo vanno bene; una cartella si controlla come il contesto
@@ -961,8 +1239,26 @@ contesto_aggiuntivo() { # --build-context nome=valore: un'immagine o un indirizz
   case "$v" in *://*|target:*) return 0 ;; esac
   contesto_docker "$v"
 }
-segreto_docker() { # --secret id=…,src=… (o source=): docker legge il file fuori dalla sandbox, come una sorgente
-  [[ "$1" =~ (^|,)(src|source)=([^,]+) ]] && sorgente_locale "${BASH_REMATCH[3]}"
+segreto_docker() { # --secret id=…,src=… (o source=): docker legge il file fuori dalla sandbox, come una sorgente; senza src e senza
+                   # env il file è quello che ha il nome dell'id
+  local v
+  valore_a_campi --secret "$1"
+  if campi_docker "$1" src source; then for v in "${CAMPI[@]}"; do sorgente_locale "$v"; done
+  elif ! campi_docker "$1" env && campi_docker "$1" id; then for v in "${CAMPI[@]}"; do sorgente_locale "$v"; done; fi
+  return 0
+}
+opzione_driver() { # -o/--opt chiave=valore di volume create e network create: device= lega una cartella (o un disco) del computer
+  local ch="${1%%=*}"
+  [[ "$1" == *=* ]] && [ "${ch,,}" = device ] && monta "${1#*=}"
+  return 0
+}
+rete_host() { # $1 comando e opzione, $2 valore: la rete, i processi e gli altri spazi dell'host danno al container accesso al computer
+  [ "${2,,}" = host ] && block "docker $1 host dà al container, o alla costruzione, accesso al computer: nel metodo non si usa."
+  return 0
+}
+copia_locale() { # vero se un argomento di docker cp è di questo computer, come lo legge Docker: un percorso assoluto, o che comincia
+                 # con «.» (o con ~, che la shell espande), anche se contiene i due punti; oppure uno senza i due punti
+  case "$1" in -) return 1 ;; /*|.*|"~"*) return 0 ;; *:*) return 1 ;; esac
   return 0
 }
 compose_config() { # $1 indice del sottocomando: docker compose config scrive nell'uscita i valori dei file di ambiente dei servizi
@@ -999,8 +1295,6 @@ compose_controlla() { # "docker compose config" in sola lettura: che cosa montan
 }
 DOCKER_SUB=' attach build builder buildx commit compose container context cp create diff events exec export history image images import info inspect kill load login logout logs manifest network pause plugin port ps pull push rename restart rm rmi run save search start stats stop system tag top trust unpause update version volume wait '
 COMPOSE_SUB=' attach build config convert cp create down events exec images kill logs ls pause port ps pull push restart rm run scale start stats stop top unpause up version volumes wait watch '
-DOCKER_RUN_SOLE=' --rm --detach --interactive --tty --init --read-only --no-healthcheck --quiet --publish-all --help '
-DOCKER_RUN_VALORE=' --name --env --env-file --publish --workdir --entrypoint --user --network --net --network-alias --volume --mount --tmpfs --label --label-file --platform --pull --restart --memory --memory-swap --cpus --add-host --hostname --stop-timeout --stop-signal --health-cmd --health-interval --health-retries --health-timeout --health-start-period --shm-size --ulimit --expose --dns --cidfile --pid --ipc --uts --cgroupns --userns --sig-proxy --attach --detach-keys --pids-limit '
 docker_secondo() { # $1 comando di gestione di docker, $2 il suo sottocomando: vero se è fra quelli che il metodo usa
   case "$1:$2" in
     container:attach|container:commit|container:cp|container:create|container:diff|container:exec|container:export|\
@@ -1017,153 +1311,506 @@ docker_secondo() { # $1 comando di gestione di docker, $2 il suo sottocomando: v
   esac
   return 1
 }
-docker_valore() { # $1 opzione di docker run o docker create, $2 il suo valore
-  case "$1" in
-    -v|--volume|--mount) volume "$2" ;;
-    --network|--net|--pid|--ipc|--uts|--cgroupns|--userns) [ "$2" = host ] && block "docker $1 host dà al container accesso al computer: nel metodo non si usa." ;;
-    --cidfile) scrive "$2" "" ;;
-    --env-file|--label-file) sorgente_locale "$2" ;;   # docker legge il file fuori dalla sandbox
+docker_chiave() { # $1 comando di docker, $2 il suo sottocomando (vuoto se non ne ha) -> CHIAVE, il nome del comando in docker_tabella
+  case "$1:$2" in
+    *:) CHIAVE="$1" ;;
+    container:ls|container:list|container:ps) CHIAVE=ps ;;
+    container:inspect|container:prune|image:inspect|image:prune) CHIAVE="$1 $2" ;;
+    container:*) CHIAVE="$2" ;;
+    image:build|builder:build|buildx:build|buildx:b) CHIAVE=build ;;
+    image:ls|image:list) CHIAVE=images ;;
+    image:rm) CHIAVE=rmi ;;
+    image:*) CHIAVE="$2" ;;
+    builder:ls|builder:inspect|builder:du) CHIAVE="buildx $2" ;;
+    volume:list|network:list|context:list|plugin:list) CHIAVE="$1 ls" ;;
+    system:events|system:info) CHIAVE="$2" ;;
+    *) CHIAVE="$1 $2" ;;
+  esac
+}
+docker_opzione() { # $1 comando (come in docker_tabella), $2 opzione, $3 il suo valore: i controlli sui valori che toccano questo
+                   # computer (cartelle montate, file letti e scritti, rete e processi dell'host)
+  local c="$1"
+  [ "$c" = create ] && c=run
+  case "$c:$2" in
+    run:-v|run:--volume|"compose run:-v"|"compose run:--volume"|"compose run:--volumes") volume "$3" ;;
+    run:--mount) montaggio "$3" ;;
+    run:--network|run:--net|run:--pid|run:--ipc|run:--uts|run:--cgroupns|run:--userns|build:--network) rete_host "$1 $2" "$3" ;;
+    run:--cidfile|build:--iidfile|build:--metadata-file|save:-o|save:--output|export:-o|export:--output|"compose config:-o"|"compose config:--output")
+      scrive "$3" "" ;;
+    run:--env-file|run:--label-file|exec:--env-file|"compose run:--env-from-file"|load:-i|load:--input|build:-f|build:--file|\
+    compose:-f|compose:--file|compose:--env-file)
+      [ "$3" = - ] || sorgente_locale "$3" ;;   # docker lo legge fuori dalla sandbox («-» è stdin)
+    build:-o|build:--output) uscita_docker "$3" ;;
+    build:--cache-to|build:--cache-from) cache_docker "$2" "$3" ;;
+    build:--build-context) contesto_aggiuntivo "$3" ;;
+    build:--secret) segreto_docker "$3" ;;
+    compose:--project-directory|compose:--workdir) contesto_docker "$3" ;;
+    "volume create:-o"|"volume create:--opt"|"network create:-o"|"network create:--opt") opzione_driver "$3" ;;
   esac
   return 0
 }
-analizza_docker() { # $1 indice. Docker gira fuori dalla sandbox e un container può tutto: solo i sottocomandi e le opzioni globali di
-                    # un elenco; docker run e docker create solo con le opzioni di un elenco; volumi, file compose, contesti, copie
-                    # e uscite si controllano
-  local i="$1" j a v sub="" sec="" csub="" cj=-1 salta k g c eff drun=0; local -a pos=() cglob=()
-  for ((j=i+1; j<n; j++)); do
+docker_vietata() { # $1 comando, $2 un'opzione che non sta in docker_tabella
+  case "$2" in
+    --privileged|--cap-add|--device|--device-cgroup-rule|--security-opt|--volumes-from|--volume-driver|--allow|--gpus|--runtime|--use-api-socket|--cgroup-parent)
+      block "docker $1 $2 dà al container, o alla costruzione, accesso al computer: nel metodo non si usa." ;;
+    --ssh) block "docker $1 --ssh porterebbe nella costruzione l'agente SSH di questo computer, con l'accesso ai server: nel metodo non si usa." ;;
+  esac
+  block "docker $1 $2 non è fra le opzioni che il metodo usa con questo comando: l'hook legge le opzioni come le legge Docker, da un elenco, e un'opzione che non conosce nasconderebbe il resto del comando. Se serve, il comando lo esegue l'utente."
+}
+docker_leggi() { # $1 indice della prima parola da leggere, $2 il comando (come in docker_tabella): legge le opzioni come le legge
+                 # Docker (--nome=valore, --nome valore, -x valore, -xvalore, -x=valore, le corte in gruppo), solo quelle della
+                 # tabella. Per ogni opzione con un valore chiama docker_opzione. Mette in pos gli argomenti, in DINERTI gli indici
+                 # delle opzioni e dei loro valori, in DFINE l'indice della prima parola che Docker non legge più (dopo l'immagine
+                 # di run o il container di exec viene il comando del container), altrimenti n
+  local j="$1" chiave="$2" a g k c v
+  docker_tabella "$chiave" || block "docker $chiave: l'hook non ha l'elenco delle opzioni di questo comando, quindi non lo può controllare. Se serve, lo esegue l'utente."
+  pos=(); DFINE="$n"
+  while [ "$j" -lt "$n" ]; do
     a="${argv[$j]}"
     [[ "${segni[$j]}" == *d* ]] && block "docker gira fuori dalla sandbox: niente argomenti decisi da variabili, scrivili per intero."
-    if [ -z "$sub" ]; then   # le opzioni globali di docker (solo -D e -l), poi il sottocomando, da un elenco
-      case "$a" in
-        -D|--debug|--help|--version|--log-level=*|-l?*) continue ;;
-        -l|--log-level) j=$((j+1)); continue ;;
-        -H*|--host|--host=*|-c*|--context|--context=*|--config|--config=*|--tls*) block "docker $a cambia il demone, la configurazione o le chiavi di Docker: nel metodo non si usa." ;;
-        -*) block "docker $a: prima del sottocomando il metodo ammette solo -D e -l (--log-level), perché un'opzione sconosciuta con il suo valore nasconderebbe il sottocomando." ;;
-      esac
-      case "$a" in login|logout) block "docker $a lo fa l'utente, nel suo terminale: l'accesso a GHCR è un segreto (AVVIO.md §1)." ;; esac
-      [[ "$DOCKER_SUB" == *" $a "* ]] || block "docker $a non è fra i comandi di Docker che il metodo usa: se serve, lo esegue l'utente."
-      sub="$a"
-      case "$sub" in container|image|builder|buildx|context|plugin|trust|volume|network|system|manifest|compose) ;; *) sec="$sub" ;; esac
-      { [ "$sec" = run ] || [ "$sec" = create ]; } && drun=1
-      continue
-    fi
-    if [ -z "$sec" ]; then
-      if [ "$sub" = compose ]; then   # le opzioni di compose, da un elenco, poi il suo sottocomando
-        case "$a" in
-          -f|--file|-p|--project-name|--project-directory|--env-file|--profile|--ansi|--progress|--parallel|--workdir) cglob+=("$a" "${argv[$((j+1))]:-}"); j=$((j+1)); continue ;;
-          --file=*|--project-name=*|--project-directory=*|--env-file=*|--profile=*|--ansi=*|--progress=*|--parallel=*|--workdir=*|-f?*|-p?*|\
-          --all-resources|--compatibility|--dry-run|--verbose|--no-ansi|--help) cglob+=("$a"); continue ;;
-          -*) block "docker compose $a: prima del sottocomando il metodo ammette solo -f, -p, --project-directory, --env-file, --profile, --ansi, --progress, --parallel, --dry-run e --compatibility." ;;
-        esac
-        [[ "$COMPOSE_SUB" == *" $a "* ]] || block "docker compose $a non è fra i comandi di Compose che il metodo usa: se serve, lo esegue l'utente."
-        sec="$a"; csub="$a"; cj="$j"; continue
-      fi
-      case "$sub:$a" in buildx:--builder) j=$((j+1)); continue ;; buildx:--builder=*|*:--help) continue ;; esac
-      [[ "$a" == -* ]] && block "docker $sub $a: prima del sottocomando non si usano opzioni (tranne docker buildx --builder)."
-      if ! docker_secondo "$sub" "$a"; then
-        case "$sub" in
-          context) block "docker context $a cambia il demone a cui parla Docker, come -H: nel metodo non si usa." ;;
-          plugin|trust) block "docker $sub $a cambia Docker o le sue chiavi: lo fa l'utente." ;;
-          buildx) [ "$a" = bake ] && block "docker buildx bake legge da un file contesti, segreti e l'agente SSH, che l'hook non controlla: nel metodo non si usa (docker build, oppure docker compose build)." ;;
-        esac
-        block "docker $sub $a non è fra i comandi di Docker che il metodo usa: se serve, lo esegue l'utente."
-      fi
-      sec="$a"
-      [ "$sub" = container ] && { [ "$sec" = run ] || [ "$sec" = create ]; } && drun=1
-      continue
-    fi
-    if [ "$drun" = 1 ]; then   # docker run e docker create: solo le opzioni di un elenco; dopo l'immagine viene il comando del container
-      case "$a" in
-        --*=*) k="${a%%=*}"; v="${a#*=}" ;;
-        --*) k="$a"; v="" ;;
-        -?*) k="" ;;
-        *) break ;;
-      esac
-      if [ -n "$k" ]; then
-        if [[ "$DOCKER_RUN_VALORE" == *" $k "* ]]; then
-          if [[ "$a" != *=* ]]; then j=$((j+1)); v="${argv[$j]:-}"; [[ "${segni[$j]:-}" == *d* ]] && block "docker gira fuori dalla sandbox: niente argomenti decisi da variabili, scrivili per intero."; fi
-          docker_valore "$k" "$v"
-        elif [[ "$DOCKER_RUN_SOLE" != *" $k "* ]]; then
-          block "docker $sec $k non è fra le opzioni che il metodo usa con docker run e docker create (accesso al computer, dispositivi, permessi, programmi): se serve, il comando lo esegue l'utente."
-        fi
-        continue
-      fi
-      g="${a#-}"   # opzioni corte, anche in gruppo (-it, -dv/x:/y, -e K=V): quelle con un valore prendono il resto o la parola dopo
-      for ((k=0; k<${#g}; k++)); do
-        c="${g:$k:1}"
-        case "$c" in
-          [epwuvlmh])
-            if [ $((k+1)) -lt "${#g}" ]; then v="${g:$((k+1))}"
-            else j=$((j+1)); v="${argv[$j]:-}"; [[ "${segni[$j]:-}" == *d* ]] && block "docker gira fuori dalla sandbox: niente argomenti decisi da variabili, scrivili per intero."; fi
-            docker_valore "-$c" "$v"; break ;;
-          [ditqP]) continue ;;
-          *) block "docker $sec -$c non è fra le opzioni che il metodo usa con docker run e docker create: se serve, il comando lo esegue l'utente." ;;
-        esac
-      done
-      continue
-    fi
     case "$a" in
-      --privileged|--cap-add|--cap-add=*|--device|--device=*|--device-cgroup-rule|--device-cgroup-rule=*|--security-opt|--security-opt=*|\
-      --volumes-from|--volumes-from=*|--volume-driver|--volume-driver=*|--allow|--allow=*|\
-      --pid=host|--userns=host|--ipc=host|--uts=host|--cgroupns=host|--network=host|--net=host)
-        block "docker $a dà al container, o alla costruzione, accesso al computer: nel metodo non si usa." ;;
-      --pid|--userns|--ipc|--uts|--cgroupns|--network|--net)
-        [ "${argv[$((j+1))]:-}" = host ] && block "docker $a host dà al container accesso al computer: nel metodo non si usa."
-        j=$((j+1)); continue ;;
-      -v|--volume|--mount) volume "${argv[$((j+1))]:-}"; j=$((j+1)); continue ;;
-      -v?*|--volume=*|--mount=*) v="${a#-v}"; v="${v#--volume=}"; v="${v#--mount=}"; volume "$v"; continue ;;
-      -o|--opt|--output)
-        v="${argv[$((j+1))]:-}"; j=$((j+1))
-        case "$sub" in
-          volume|network) [[ "$v" == device=* ]] && monta "${v#device=}" ;;   # le opzioni del driver
-          *) [ "$a" != --opt ] && uscita_docker "$v" ;;                       # un file o una cartella in uscita (build, save, export, container export, image save)
-        esac
-        continue ;;
-      --opt=device=*) monta "${a#--opt=device=}"; continue ;;
-      --output=*) uscita_docker "${a#--output=}"; continue ;;
-      --cache-to|--cache-from) cache_docker "$a" "${argv[$((j+1))]:-}"; j=$((j+1)); continue ;;
-      --cache-to=*|--cache-from=*) cache_docker "${a%%=*}" "${a#*=}"; continue ;;
-      --cidfile|--iidfile|--metadata-file) scrive "${argv[$((j+1))]:-}" "${segni[$((j+1))]}"; j=$((j+1)); continue ;;
-      --cidfile=*|--iidfile=*|--metadata-file=*) scrive "${a#*=}" ""; continue ;;
-      --build-context) contesto_aggiuntivo "${argv[$((j+1))]:-}"; j=$((j+1)); continue ;;
-      --build-context=*) contesto_aggiuntivo "${a#--build-context=}"; continue ;;
-      --secret) segreto_docker "${argv[$((j+1))]:-}"; j=$((j+1)); continue ;;
-      --secret=*) segreto_docker "${a#--secret=}"; continue ;;
-      --ssh|--ssh=*) block "docker $sec --ssh porterebbe nella costruzione l'agente SSH di questo computer, con l'accesso ai server: nel metodo non si usa." ;;
-      --*) continue ;;
-      -[a-zA-Z]*)   # opzioni corte in gruppo (-itv, -dv/x:/y): un -v può stare in fondo
-        g="${a#-}"; salta=0
+      --)   # chiude le opzioni: il resto sono argomenti
+        DINERTI="$DINERTI$j "; j=$((j+1))
+        if [ "$DINT" = 0 ]; then
+          if [ "$j" -lt "$n" ]; then pos+=("${argv[$j]}"); DFINE=$((j+1)); fi
+        else
+          for ((; j<n; j++)); do pos+=("${argv[$j]}"); done
+        fi
+        return 0 ;;
+      -test.*) block "docker $chiave $a: una parola che comincia con «-test.» Docker la scarta in silenzio: non si usa." ;;
+      --*=*)
+        DINERTI="$DINERTI$j "; c="${a%%=*}"
+        if [[ "$DLV" == *" $c "* ]]; then docker_opzione "$chiave" "$c" "${a#*=}"
+        elif [[ "$DLB" != *" $c "* ]]; then docker_vietata "$chiave" "$c"; fi ;;
+      --?*)
+        DINERTI="$DINERTI$j "
+        if [[ "$DLV" == *" $a "* ]]; then   # il valore è la parola dopo, qualunque sia
+          j=$((j+1)); [ "$j" -lt "$n" ] || block "docker $chiave $a vuole un valore."
+          [[ "${segni[$j]}" == *d* ]] && block "docker gira fuori dalla sandbox: niente argomenti decisi da variabili, scrivili per intero."
+          DINERTI="$DINERTI$j "; docker_opzione "$chiave" "$a" "${argv[$j]}"
+        elif [[ "$DLB" != *" $a "* ]]; then docker_vietata "$chiave" "$a"; fi ;;
+      -?*)
+        DINERTI="$DINERTI$j "; g="${a#-}"
+        # prima del sottocomando di compose le parole le divide cobra, che vede il valore nella parola dopo solo per
+        # un'opzione corta scritta da sola (-f <file>): lì niente gruppi di opzioni corte
+        [ "$chiave" = compose ] && [ "${#g}" -gt 1 ] && [[ "$DCB" == *"${g:0:1}"* ]] && \
+          block "docker compose $a: prima del sottocomando le opzioni corte si scrivono una per volta (-f <file> -p <nome>)."
         for ((k=0; k<${#g}; k++)); do
           c="${g:$k:1}"
-          case "$c" in
-            [itdPq]) continue ;;
-            v) if [ $((k+1)) -lt "${#g}" ]; then volume "${g:$((k+1))}"; else volume "${argv[$((j+1))]:-}"; salta=1; fi; break ;;
-            *) break ;;   # il resto del gruppo è il valore di un'altra opzione
-          esac
-        done
-        j=$((j+salta)); continue ;;
+          if [[ "$c" == [A-Za-z0-9] && "$DCV" == *"$c"* ]]; then   # con un valore: il resto del gruppo, senza l'«=» iniziale, o la parola dopo
+            v="${g:$((k+1))}"
+            if [ -n "$v" ]; then [[ "$v" == =?* ]] && v="${v#=}"
+            else
+              j=$((j+1)); [ "$j" -lt "$n" ] || block "docker $chiave -$c vuole un valore."
+              [[ "${segni[$j]}" == *d* ]] && block "docker gira fuori dalla sandbox: niente argomenti decisi da variabili, scrivili per intero."
+              DINERTI="$DINERTI$j "; v="${argv[$j]}"
+            fi
+            docker_opzione "$chiave" "-$c" "$v"; break
+          elif [[ "$c" == [A-Za-z0-9] && "$DCB" == *"$c"* ]]; then
+            [[ "${g:$((k+1))}" == =?* ]] && break   # -x=true: il resto del gruppo è il valore di questa opzione
+          else
+            docker_vietata "$chiave" "-$c"
+          fi
+        done ;;
+      *)
+        pos+=("$a")
+        if [ "$DINT" = 0 ]; then DFINE=$((j+1)); return 0; fi ;;
     esac
-    pos+=("$a")
+    j=$((j+1))
   done
-  eff="$sec"; [ "$eff" = b ] && eff=build   # docker buildx b è docker buildx build
-  [ "$sub" = compose ] && case "$csub" in
-    up|run|create|start|restart|watch|build|scale) compose_controlla "${cglob[@]}" ;;
-    config|convert) compose_config "$cj" ;;
+  return 0
+}
+docker_tabella() { # $1 comando di Docker, con il nome che gli dà docker_chiave -> le sue opzioni: DCB le corte senza valore, DCV le corte
+                   # con un valore, DLB le lunghe senza valore, DLV le lunghe con un valore, DINT 0 se valgono solo prima del primo
+                   # argomento. Elenco generato dai sorgenti di docker/cli, docker/buildx e docker/compose (letti l'11/11/2026),
+                   # meno le opzioni che il metodo non ammette. Un'opzione che qui manca ferma il comando
+  DINT=1
+  case "$1" in
+    run) DCB=Pdiqt; DCV=ehlmpuvw; DINT=0
+      DLB=" --detach --help --init --interactive --no-healthcheck --publish-all --quiet --read-only --rm --sig-proxy --tty "
+      DLV=" --add-host --attach --cgroupns --cidfile --cpus --detach-keys --dns --entrypoint --env --env-file --expose --health-cmd --health-interval --health-retries --health-start-period --health-timeout --hostname --ipc --label --label-file --memory --memory-swap --mount --name --net --network --network-alias --pid --pids-limit --platform --publish --pull --restart --shm-size --stop-signal --stop-timeout --tmpfs --ulimit --user --userns --uts --volume --workdir " ;;
+    create) DCB=Piqt; DCV=ehlmpuvw; DINT=0
+      DLB=" --help --init --interactive --no-healthcheck --publish-all --quiet --read-only --rm --tty "
+      DLV=" --add-host --attach --cgroupns --cidfile --cpus --dns --entrypoint --env --env-file --expose --health-cmd --health-interval --health-retries --health-start-period --health-timeout --hostname --ipc --label --label-file --memory --memory-swap --mount --name --net --network --network-alias --pid --pids-limit --platform --publish --pull --restart --shm-size --stop-signal --stop-timeout --tmpfs --ulimit --user --userns --uts --volume --workdir " ;;
+    exec) DCB=dhit; DCV=euw; DINT=0
+      DLB=" --detach --help --interactive --tty "
+      DLV=" --detach-keys --env --env-file --user --workdir " ;;
+    cp) DCB=Lahq; DCV=""; DINT=1
+      DLB=" --archive --follow-link --help --quiet "
+      DLV=" " ;;
+    attach) DCB=h; DCV=""; DINT=1
+      DLB=" --help --no-stdin --sig-proxy "
+      DLV=" --detach-keys " ;;
+    commit) DCB=hp; DCV=acm; DINT=0
+      DLB=" --help --no-pause --pause "
+      DLV=" --author --change --message " ;;
+    export) DCB=h; DCV=o; DINT=1
+      DLB=" --help "
+      DLV=" --output " ;;
+    update) DCB=h; DCV=cm; DINT=1
+      DLB=" --help "
+      DLV=" --blkio-weight --cpu-period --cpu-quota --cpu-rt-period --cpu-rt-runtime --cpu-shares --cpus --cpuset-cpus --cpuset-mems --kernel-memory --memory --memory-reservation --memory-swap --pids-limit --restart " ;;
+    logs) DCB=fht; DCV=n; DINT=1
+      DLB=" --details --follow --help --timestamps "
+      DLV=" --since --tail --until " ;;
+    ps) DCB=ahlqs; DCV=fn; DINT=1
+      DLB=" --all --help --latest --no-trunc --quiet --size "
+      DLV=" --filter --format --last " ;;
+    rm) DCB=fhlv; DCV=""; DINT=1
+      DLB=" --force --help --link --volumes "
+      DLV=" " ;;
+    stop) DCB=h; DCV=st; DINT=1
+      DLB=" --help "
+      DLV=" --signal --time --timeout " ;;
+    start) DCB=ahi; DCV=""; DINT=1
+      DLB=" --attach --help --interactive "
+      DLV=" --detach-keys " ;;
+    restart) DCB=h; DCV=st; DINT=1
+      DLB=" --help "
+      DLV=" --signal --time --timeout " ;;
+    kill) DCB=h; DCV=s; DINT=1
+      DLB=" --help "
+      DLV=" --signal " ;;
+    "container inspect") DCB=hs; DCV=f; DINT=1
+      DLB=" --help --size "
+      DLV=" --format " ;;
+    inspect) DCB=hs; DCV=f; DINT=1
+      DLB=" --help --size "
+      DLV=" --format --type " ;;
+    stats) DCB=ah; DCV=""; DINT=1
+      DLB=" --all --help --no-stream --no-trunc "
+      DLV=" --format " ;;
+    top) DCB=h; DCV=""; DINT=0
+      DLB=" --help "
+      DLV=" " ;;
+    wait) DCB=h; DCV=""; DINT=1
+      DLB=" --help "
+      DLV=" " ;;
+    port) DCB=h; DCV=""; DINT=1
+      DLB=" --help "
+      DLV=" " ;;
+    rename) DCB=h; DCV=""; DINT=1
+      DLB=" --help "
+      DLV=" " ;;
+    pause) DCB=h; DCV=""; DINT=1
+      DLB=" --help "
+      DLV=" " ;;
+    unpause) DCB=h; DCV=""; DINT=1
+      DLB=" --help "
+      DLV=" " ;;
+    diff) DCB=h; DCV=""; DINT=1
+      DLB=" --help "
+      DLV=" " ;;
+    "container prune") DCB=fh; DCV=""; DINT=1
+      DLB=" --force --help "
+      DLV=" --filter " ;;
+    build) DCB=Dhq; DCV=cfmot; DINT=1
+      DLB=" --check --compress --debug --disable-content-trust --force-rm --help --load --no-cache --pull --push --quiet --rm --squash "
+      DLV=" --add-host --annotation --attest --build-arg --build-context --builder --cache-from --cache-to --call --cpu-period --cpu-quota --cpu-shares --cpuset-cpus --cpuset-mems --file --iidfile --label --memory --memory-swap --metadata-file --network --no-cache-filter --output --platform --progress --provenance --resource --sbom --secret --shm-size --tag --target --ulimit " ;;
+    pull) DCB=ahq; DCV=""; DINT=1
+      DLB=" --all-tags --disable-content-trust --help --quiet "
+      DLV=" --platform " ;;
+    push) DCB=ahq; DCV=""; DINT=1
+      DLB=" --all-tags --disable-content-trust --help --quiet "
+      DLV=" --platform " ;;
+    tag) DCB=h; DCV=""; DINT=0
+      DLB=" --help "
+      DLV=" " ;;
+    images) DCB=ahq; DCV=f; DINT=1
+      DLB=" --all --digests --help --no-trunc --quiet --tree "
+      DLV=" --filter --format " ;;
+    rmi) DCB=fh; DCV=""; DINT=1
+      DLB=" --force --help --no-prune "
+      DLV=" --platform " ;;
+    save) DCB=h; DCV=o; DINT=1
+      DLB=" --help "
+      DLV=" --output --platform " ;;
+    load) DCB=hq; DCV=i; DINT=1
+      DLB=" --help --quiet "
+      DLV=" --input --platform " ;;
+    import) DCB=h; DCV=cm; DINT=1
+      DLB=" --help "
+      DLV=" --change --message --platform " ;;
+    history) DCB=Hhq; DCV=""; DINT=1
+      DLB=" --help --human --no-trunc --quiet "
+      DLV=" --format --platform " ;;
+    "image inspect") DCB=h; DCV=f; DINT=1
+      DLB=" --help "
+      DLV=" --format --platform " ;;
+    "image prune") DCB=afh; DCV=""; DINT=1
+      DLB=" --all --force --help "
+      DLV=" --filter " ;;
+    search) DCB=h; DCV=f; DINT=1
+      DLB=" --help --no-trunc "
+      DLV=" --filter --format --limit " ;;
+    "manifest inspect") DCB=hv; DCV=""; DINT=1
+      DLB=" --help --insecure --verbose "
+      DLV=" " ;;
+    "trust inspect") DCB=h; DCV=""; DINT=1
+      DLB=" --help --pretty "
+      DLV=" " ;;
+    "buildx ls") DCB=Dh; DCV=""; DINT=1
+      DLB=" --debug --help --no-trunc "
+      DLV=" --builder --format --timeout " ;;
+    "buildx inspect") DCB=Dh; DCV=""; DINT=1
+      DLB=" --bootstrap --debug --help "
+      DLV=" --builder --timeout " ;;
+    "buildx version") DCB=Dh; DCV=""; DINT=1
+      DLB=" --debug --help "
+      DLV=" --builder " ;;
+    "buildx du") DCB=Dh; DCV=""; DINT=1
+      DLB=" --debug --help --verbose "
+      DLV=" --builder --filter --format --timeout " ;;
+    "buildx prune") DCB=Dafh; DCV=""; DINT=1
+      DLB=" --all --debug --force --help --verbose "
+      DLV=" --builder --filter --keep-storage --max-used-space --min-free-space --reserved-space --timeout " ;;
+    "builder prune") DCB=Dafh; DCV=""; DINT=1
+      DLB=" --all --debug --force --help --verbose "
+      DLV=" --builder --filter --keep-storage --max-used-space --min-free-space --reserved-space --timeout " ;;
+    "volume create") DCB=h; DCV=do; DINT=1
+      DLB=" --help "
+      DLV=" --driver --label --name --opt " ;;
+    "volume inspect") DCB=h; DCV=f; DINT=1
+      DLB=" --help "
+      DLV=" --format " ;;
+    "volume ls") DCB=hq; DCV=f; DINT=1
+      DLB=" --cluster --help --quiet "
+      DLV=" --filter --format " ;;
+    "volume prune") DCB=afh; DCV=""; DINT=1
+      DLB=" --all --force --help "
+      DLV=" --filter " ;;
+    "volume rm") DCB=fh; DCV=""; DINT=1
+      DLB=" --force --help "
+      DLV=" " ;;
+    "network connect") DCB=h; DCV=""; DINT=1
+      DLB=" --help "
+      DLV=" --alias --driver-opt --gw-priority --ip --ip6 --link --link-local-ip " ;;
+    "network create") DCB=h; DCV=do; DINT=1
+      DLB=" --attachable --config-only --help --ingress --internal --ipv4 --ipv6 "
+      DLV=" --aux-address --config-from --driver --gateway --ip-range --ipam-driver --ipam-opt --label --opt --scope --subnet " ;;
+    "network disconnect") DCB=fh; DCV=""; DINT=1
+      DLB=" --force --help "
+      DLV=" " ;;
+    "network inspect") DCB=hv; DCV=f; DINT=1
+      DLB=" --help --verbose "
+      DLV=" --format " ;;
+    "network ls") DCB=hq; DCV=f; DINT=1
+      DLB=" --help --no-trunc --quiet "
+      DLV=" --filter --format " ;;
+    "network prune") DCB=fh; DCV=""; DINT=1
+      DLB=" --force --help "
+      DLV=" --filter " ;;
+    "network rm") DCB=fh; DCV=""; DINT=1
+      DLB=" --force --help "
+      DLV=" " ;;
+    "system df") DCB=hv; DCV=""; DINT=1
+      DLB=" --help --verbose "
+      DLV=" --format " ;;
+    "system prune") DCB=afh; DCV=""; DINT=1
+      DLB=" --all --force --help --volumes "
+      DLV=" --filter " ;;
+    events) DCB=h; DCV=f; DINT=1
+      DLB=" --help "
+      DLV=" --filter --format --since --until " ;;
+    info) DCB=h; DCV=f; DINT=1
+      DLB=" --help "
+      DLV=" --format " ;;
+    version) DCB=h; DCV=f; DINT=1
+      DLB=" --help "
+      DLV=" --format " ;;
+    "context ls") DCB=hq; DCV=""; DINT=1
+      DLB=" --help --quiet "
+      DLV=" --format " ;;
+    "context inspect") DCB=h; DCV=f; DINT=1
+      DLB=" --help "
+      DLV=" --format " ;;
+    "context show") DCB=h; DCV=""; DINT=1
+      DLB=" --help "
+      DLV=" " ;;
+    "plugin ls") DCB=hq; DCV=f; DINT=1
+      DLB=" --help --no-trunc --quiet "
+      DLV=" --filter --format " ;;
+    "plugin inspect") DCB=h; DCV=f; DINT=1
+      DLB=" --help "
+      DLV=" --format " ;;
+    compose) DCB=hv; DCV=fp; DINT=0
+      DLB=" --all-resources --compatibility --dry-run --help --no-ansi --verbose --version "
+      DLV=" --ansi --env-file --file --insecure-registry --parallel --profile --progress --project-directory --project-name --workdir " ;;
+    "compose attach") DCB=h; DCV=""; DINT=1
+      DLB=" --dry-run --help --no-stdin --sig-proxy "
+      DLV=" --detach-keys --index " ;;
+    "compose build") DCB=hq; DCV=m; DINT=1
+      DLB=" --check --compress --dry-run --force-rm --help --no-cache --no-rm --parallel --print --pull --push --quiet --with-dependencies "
+      DLV=" --build-arg --builder --memory --progress --provenance --sbom " ;;
+    "compose config") DCB=hq; DCV=o; DINT=1
+      DLB=" --dry-run --help --images --lock-image-digests --models --networks --no-consistency --no-env-resolution --no-interpolate --no-normalize --no-path-resolution --profiles --quiet --resolve-image-digests --services --variables --volumes "
+      DLV=" --format --hash --output " ;;
+    "compose cp") DCB=Lah; DCV=""; DINT=1
+      DLB=" --all --archive --dry-run --follow-link --help "
+      DLV=" --index " ;;
+    "compose create") DCB=hy; DCV=""; DINT=1
+      DLB=" --build --dry-run --force-recreate --help --no-build --no-recreate --quiet-pull --remove-orphans --y --yes "
+      DLV=" --pull --scale " ;;
+    "compose down") DCB=hv; DCV=t; DINT=1
+      DLB=" --dry-run --help --remove-orphans --volume --volumes "
+      DLV=" --rmi --timeout " ;;
+    "compose events") DCB=h; DCV=""; DINT=1
+      DLB=" --dry-run --help --json "
+      DLV=" --since --until " ;;
+    "compose exec") DCB=Tdhit; DCV=euw; DINT=0
+      DLB=" --detach --dry-run --help --interactive --no-TTY --no-tty --tty "
+      DLV=" --env --index --user --workdir " ;;
+    "compose images") DCB=hq; DCV=""; DINT=1
+      DLB=" --dry-run --help --quiet "
+      DLV=" --format " ;;
+    "compose kill") DCB=h; DCV=s; DINT=1
+      DLB=" --dry-run --help --remove-orphans "
+      DLV=" --signal " ;;
+    "compose logs") DCB=fht; DCV=n; DINT=1
+      DLB=" --dry-run --follow --help --no-color --no-log-prefix --timestamps "
+      DLV=" --index --since --tail --until " ;;
+    "compose ls") DCB=ahq; DCV=""; DINT=1
+      DLB=" --all --dry-run --help --quiet "
+      DLV=" --filter --format " ;;
+    "compose pause") DCB=h; DCV=""; DINT=1
+      DLB=" --dry-run --help "
+      DLV=" " ;;
+    "compose port") DCB=h; DCV=""; DINT=1
+      DLB=" --dry-run --help "
+      DLV=" --index --protocol " ;;
+    "compose ps") DCB=ahq; DCV=""; DINT=1
+      DLB=" --all --dry-run --help --no-trunc --orphans --quiet --services "
+      DLV=" --filter --format --status " ;;
+    "compose pull") DCB=hq; DCV=""; DINT=1
+      DLB=" --dry-run --help --ignore-buildable --ignore-pull-failures --include-deps --no-parallel --parallel --quiet "
+      DLV=" --policy " ;;
+    "compose push") DCB=hq; DCV=""; DINT=1
+      DLB=" --dry-run --help --ignore-missing --ignore-push-failures --include-deps --quiet "
+      DLV=" " ;;
+    "compose restart") DCB=h; DCV=t; DINT=1
+      DLB=" --dry-run --help --no-deps "
+      DLV=" --timeout " ;;
+    "compose rm") DCB=afhsv; DCV=""; DINT=1
+      DLB=" --all --dry-run --force --help --stop --volumes "
+      DLV=" " ;;
+    "compose run") DCB=PTdhiqt; DCV=elpuvw; DINT=0
+      DLB=" --build --detach --dry-run --help --interactive --no-TTY --no-deps --no-recreate --no-tty --quiet --quiet-build --quiet-pull --remove-orphans --rm --service-ports --tty --use-aliases "
+      DLV=" --entrypoint --env --env-from-file --label --labels --name --publish --pull --user --volume --volumes --workdir " ;;
+    "compose scale") DCB=h; DCV=""; DINT=1
+      DLB=" --dry-run --help --no-deps "
+      DLV=" " ;;
+    "compose start") DCB=h; DCV=""; DINT=1
+      DLB=" --dry-run --help --wait "
+      DLV=" --wait-timeout " ;;
+    "compose stats") DCB=ah; DCV=""; DINT=1
+      DLB=" --aggregate --all --all-projects --dry-run --help --no-stream --no-trunc "
+      DLV=" --format " ;;
+    "compose stop") DCB=h; DCV=t; DINT=1
+      DLB=" --dry-run --help "
+      DLV=" --timeout " ;;
+    "compose top") DCB=h; DCV=""; DINT=1
+      DLB=" --dry-run --help "
+      DLV=" " ;;
+    "compose unpause") DCB=h; DCV=""; DINT=1
+      DLB=" --dry-run --help "
+      DLV=" " ;;
+    "compose up") DCB=Vdhwy; DCV=t; DINT=1
+      DLB=" --abort-on-container-exit --abort-on-container-failure --always-recreate-deps --attach-dependencies --build --detach --dry-run --force-recreate --help --menu --no-build --no-color --no-deps --no-log-prefix --no-recreate --no-start --quiet-build --quiet-pull --remove-orphans --renew-anon-volumes --timestamps --wait --watch --y --yes "
+      DLV=" --attach --exit-code-from --no-attach --pull --scale --timeout --wait-timeout " ;;
+    "compose version") DCB=h; DCV=f; DINT=1
+      DLB=" --dry-run --help --short "
+      DLV=" --format " ;;
+    "compose volumes") DCB=hq; DCV=""; DINT=1
+      DLB=" --dry-run --help --quiet "
+      DLV=" --format " ;;
+    "compose wait") DCB=h; DCV=""; DINT=1
+      DLB=" --down-project --dry-run --help "
+      DLV=" " ;;
+    "compose watch") DCB=h; DCV=""; DINT=1
+      DLB=" --dry-run --help --no-up --prune --quiet "
+      DLV=" " ;;
+    *) return 1 ;;
   esac
-  if [ "$eff" = cp ] && [ "${#pos[@]}" -ge 2 ]; then   # docker cp, docker container cp, docker compose cp
-    if [[ "${pos[-1]}" != *:* ]]; then scrive "${pos[-1]}" ""   # dal container a questo computer: una scrittura
-    else for ((k=0; k<${#pos[@]}-1; k++)); do [[ "${pos[$k]}" == *:* || "${pos[$k]}" == - ]] || sorgente_locale "${pos[$k]}"; done   # nel container: una lettura fuori dalla sandbox
-    fi
+  return 0
+}
+analizza_docker() { # $1 indice. Docker gira fuori dalla sandbox e un container può tutto: solo i sottocomandi di un elenco e, prima,
+                    # solo le opzioni globali -D e -l; di ogni comando solo le opzioni della tabella, lette come le legge Docker;
+                    # volumi, montaggi, file letti e scritti, contesti, copie e file compose si controllano. Lascia in DFINE
+                    # l'indice della prima parola che va al container e in DINERTI gli indici delle opzioni e dei loro valori
+                    # (li usa analizza_da)
+  local i="$1" j a sub sec="" k cj CHIAVE="" DCB DCV DLB DLV DINT; local -a pos=() cglob=() CAMPI=()
+  DFINE="$n"; DINERTI=" "
+  j=$((i+1))
+  while [ "$j" -lt "$n" ]; do   # le opzioni globali di docker (solo -D e -l)
+    a="${argv[$j]}"
+    [[ "${segni[$j]}" == *d* ]] && block "docker gira fuori dalla sandbox: niente argomenti decisi da variabili, scrivili per intero."
+    case "$a" in
+      -D|--debug|--help|--version|--log-level=*|-l?*) DINERTI="$DINERTI$j "; j=$((j+1)); continue ;;
+      -l|--log-level) DINERTI="$DINERTI$j $((j+1)) "; j=$((j+2)); continue ;;
+      -H*|--host|--host=*|-c*|--context|--context=*|--config|--config=*|--tls*) block "docker $a cambia il demone, la configurazione o le chiavi di Docker: nel metodo non si usa." ;;
+      -*) block "docker $a: prima del sottocomando il metodo ammette solo -D e -l (--log-level), perché un'opzione sconosciuta con il suo valore nasconderebbe il sottocomando." ;;
+    esac
+    break
+  done
+  [ "$j" -lt "$n" ] || return 0
+  [[ "${segni[$j]}" == *d* ]] && block "docker gira fuori dalla sandbox: niente argomenti decisi da variabili, scrivili per intero."
+  sub="${argv[$j]}"; j=$((j+1))
+  case "$sub" in login|logout) block "docker $sub lo fa l'utente, nel suo terminale: l'accesso a GHCR è un segreto (AVVIO.md §1)." ;; esac
+  [[ "$DOCKER_SUB" == *" $sub "* ]] || block "docker $sub non è fra i comandi di Docker che il metodo usa: se serve, lo esegue l'utente."
+  if [ "$sub" = compose ]; then   # le opzioni di compose, poi il suo sottocomando, da un elenco
+    k="$j"; docker_leggi "$j" compose
+    [ "${#pos[@]}" -gt 0 ] || return 0
+    cj=$((DFINE-1)); sec="${pos[0]}"; cglob=("${argv[@]:$k:$((cj-k))}")
+    [[ "$COMPOSE_SUB" == *" $sec "* ]] || block "docker compose $sec non è fra i comandi di Compose che il metodo usa: se serve, lo esegue l'utente."
+    [ "$sec" = convert ] && sec=config
+    CHIAVE="compose $sec"
+    docker_leggi $((cj+1)) "$CHIAVE"
+    case "$sec" in
+      up|run|create|start|restart|watch|build|scale) compose_controlla "${cglob[@]}" ;;
+      config) compose_config "$cj" ;;
+    esac
+  else
+    case "$sub" in
+      container|image|builder|buildx|context|plugin|trust|volume|network|system|manifest)
+        while [ "$j" -lt "$n" ]; do   # docker buildx --builder <nome> <sottocomando>
+          a="${argv[$j]}"
+          [[ "${segni[$j]}" == *d* ]] && block "docker gira fuori dalla sandbox: niente argomenti decisi da variabili, scrivili per intero."
+          case "$sub:$a" in
+            buildx:--builder) DINERTI="$DINERTI$j $((j+1)) "; j=$((j+2)); continue ;;
+            buildx:--builder=*|*:--help) DINERTI="$DINERTI$j "; j=$((j+1)); continue ;;
+            *:-*) block "docker $sub $a: prima del sottocomando non si usano opzioni (tranne docker buildx --builder)." ;;
+          esac
+          break
+        done
+        [ "$j" -lt "$n" ] || return 0
+        sec="${argv[$j]}"; j=$((j+1))
+        if ! docker_secondo "$sub" "$sec"; then
+          case "$sub" in
+            context) block "docker context $sec cambia il demone a cui parla Docker, come -H: nel metodo non si usa." ;;
+            plugin|trust) block "docker $sub $sec cambia Docker o le sue chiavi: lo fa l'utente." ;;
+            buildx) [ "$sec" = bake ] && block "docker buildx bake legge da un file contesti, segreti e l'agente SSH, che l'hook non controlla: nel metodo non si usa (docker build, oppure docker compose build)." ;;
+          esac
+          block "docker $sub $sec non è fra i comandi di Docker che il metodo usa: se serve, lo esegue l'utente."
+        fi ;;
+    esac
+    docker_chiave "$sub" "$sec"
+    docker_leggi "$j" "$CHIAVE"
   fi
-  if [ "$eff" = build ]; then   # il contesto di costruzione, in qualunque posizione fra le opzioni: si controlla ogni argomento
-    for k in "${!pos[@]}"; do contesto_docker "${pos[$k]}"; done
-  fi
+  case "$CHIAVE" in   # gli argomenti che sono file o cartelle di questo computer
+    cp|"compose cp")   # la sorgente si legge fuori dalla sandbox; la destinazione è una scrittura
+      if [ "${#pos[@]}" -ge 2 ]; then
+        for ((k=0; k<${#pos[@]}-1; k++)); do copia_locale "${pos[$k]}" && sorgente_locale "${pos[$k]}"; done
+        copia_locale "${pos[-1]}" && scrive "${pos[-1]}" ""
+      fi ;;
+    build) for a in "${pos[@]}"; do contesto_docker "$a"; done ;;   # il contesto di costruzione, in qualunque posizione
+    import) [ "${#pos[@]}" -ge 1 ] && case "${pos[0]}" in -|*://*) ;; *) sorgente_locale "${pos[0]}" ;; esac ;;
+  esac
   return 0
 }
 
 # --- comandi che scrivono file ----------------------------------------------------------------------
 analizza_scritture() { # $1 indice, $2 programma
-  local i="$1" prog="$2" j a k inplace=0 script_dato=0 dest="" dsg="" tdir="" tx=0 start
+  local i="$1" prog="$2" j a k inplace=0 script_dato=0 dest="" dsg="" tdir="" start TX TDIR
   local -a pos=() psg=()
   for ((j=i+1; j<n; j++)); do
     a="${argv[$j]}"
@@ -1184,7 +1831,6 @@ analizza_scritture() { # $1 indice, $2 programma
           curl) case "$a" in -o|--output) scrive "${argv[$((j+1))]:-}" "${segni[$((j+1))]}"; j=$((j+1)) ;; -O|--remote-name|-J|--remote-header-name) scrive "." "" ;;
                   -H|-d|-X|-u|-A|-e|-b|-c|-F|-T|--header|--user|--url|--data|--data-raw|--data-binary|--form|--upload-file|--request|--cookie|--cookie-jar|--user-agent|--referer) j=$((j+1)) ;; esac ;;
           wget) case "$a" in -O|--output-document|-P|--directory-prefix) scrive "${argv[$((j+1))]:-}" "${segni[$((j+1))]}"; j=$((j+1)) ;; esac ;;
-          tar) case "$a" in -C|--directory) tdir="${argv[$((j+1))]:-}"; j=$((j+1)) ;; --directory=*) tdir="${a#*=}" ;; --extract|--get) tx=1 ;; --*) ;; *x*) tx=1 ;; esac ;;
           unzip) case "$a" in -d) tdir="${argv[$((j+1))]:-}"; j=$((j+1)) ;; esac ;;
           python|python3|python3.[0-9]*|node|nodejs|deno|bun|php) case "$a" in -c|-e|--eval|-r|-p|--print) codice_in_linea "${argv[$((j+1))]:-}"; j=$((j+1)) ;; esac ;;
         esac ;;
@@ -1200,7 +1846,7 @@ analizza_scritture() { # $1 indice, $2 programma
     sed|perl|ruby) if [ "$inplace" = 1 ]; then start=1; [ "$script_dato" = 1 ] && start=0
                      for k in "${!pos[@]}"; do [ "$k" -ge "$start" ] && scrive "${pos[$k]}" "${psg[$k]}"; done; fi ;;
     dd) for k in "${!pos[@]}"; do [[ "${pos[$k]}" == of=* ]] && scrive "${pos[$k]#of=}" "${psg[$k]}"; done ;;
-    tar) [[ "${pos[0]:-}" == *x* && "${pos[0]:-}" != */* ]] && tx=1; [ "$tx" = 1 ] && scrive "${tdir:-.}" "" ;;
+    tar) tar_estrae "$i"; [ "$TX" = 1 ] && scrive "${TDIR:-.}" "" ;;
     unzip|patch) scrive "${tdir:-.}" "" ;;
   esac
   return 0
@@ -1273,25 +1919,69 @@ cambia_cartella() { # $1 indice di cd o pushd
   if [ "$j" -ge "$n" ]; then CWD="$(canon_path "$HOME")"; return 0; fi
   nuova_cwd "${argv[$j]}" "${segni[$j]}"
 }
-legge_stdin() { # $1 indice, $2 programma (shell o interprete): vero se non ha né uno script né il codice in un argomento;
-                # SCRIPT_I è l'indice dello script (o del codice), -1 se manca
-  local j a opz=""
+legge_stdin() { # $1 indice, $2 programma (shell o interprete): 0 se non ha né uno script né il codice in un argomento, e quindi
+                # legge da stdin; 1 se ce l'ha (SCRIPT_I è il suo indice, altrimenti -1); 2 se stampa soltanto la versione o
+                # l'aiuto ed esce (node -v, python3 --version, bash --version): le opzioni sono quelle di ciascun programma,
+                # perché «bash -v» e «python3 -v» invece leggono da stdin
+  local j a opz="" info=""
   SCRIPT_I=-1
-  case "$2" in   # le opzioni che prendono un valore: il valore non è lo script
-    bash|sh|zsh|dash|ksh|mksh|ash|yash|posh|fish|tcsh|csh) opz=' -o +o -O +O --rcfile --init-file ' ;;
-    python|python3|python3.[0-9]*) opz=' -W -X ' ;;
-    node|nodejs|deno|bun) opz=' -r --require --import --loader --experimental-loader ' ;;
-    perl) opz=' -I -M -x ' ;;
-    ruby) opz=' -I -r ' ;;
-    php) opz=' -d -c -z ' ;;
+  case "$2" in   # opz: le opzioni che prendono un valore (il valore non è lo script); info: quelle che stampano ed escono
+    bash|sh|zsh|dash|ksh|mksh|ash|yash|posh|fish|tcsh|csh) opz=' -o +o -O +O --rcfile --init-file '; info=' --version --help ' ;;
+    python|python3|python3.[0-9]*) opz=' -W -X '; info=' -V -VV --version -h -? --help ' ;;
+    node|nodejs) opz=' -r --require --import --loader --experimental-loader '; info=' -v --version -h --help --v8-options ' ;;
+    deno) opz=' -r --require --import --loader --experimental-loader '; info=' -V --version -h --help ' ;;
+    bun) opz=' -r --require --import --loader --experimental-loader '; info=' -v --version -h --help --revision ' ;;
+    perl) opz=' -I -M -x '; info=' -v --version -V -h --help ' ;;
+    ruby) opz=' -I -r '; info=' --version -h --help ' ;;
+    php) opz=' -d -c -z '; info=' -v --version -h --help -m --ini ' ;;
   esac
   for ((j=$1+1; j<n; j++)); do
     a="${argv[$j]}"
     case "$a" in
       -s|-) return 0 ;;
-      -*|+*) [[ "$opz" == *" $a "* ]] && j=$((j+1)); continue ;;
+      -*|+*) [[ "$info" == *" $a "* ]] && return 2
+             [[ "$opz" == *" $a "* ]] && j=$((j+1)); continue ;;
       *) SCRIPT_I="$j"; return 1 ;;
     esac
+  done
+  return 0
+}
+tar_estrae() { # $1 indice di tar -> TX (1 se estrae) e TDIR (la cartella di -C). Le opzioni come le legge tar: la prima parola
+               # senza trattino è un gruppo alla vecchia maniera (tar xzf a.tgz), le altre stanno in gruppo, con il valore
+               # attaccato o nella parola dopo; il nome dell'archivio non è un'opzione (tar -czf fixtures.tar.gz …)
+  local j=$(( $1 + 1 )) a g k c primo=1 presi
+  TX=0; TDIR=""
+  while [ "$j" -lt "$n" ]; do
+    a="${argv[$j]}"
+    if [ "$primo" = 1 ] && [[ "$a" != -* ]]; then   # tar xfC a.tgz dir: i valori sono le parole dopo, nell'ordine delle lettere
+      primo=0; presi=0
+      for ((k=0; k<${#a}; k++)); do
+        c="${a:$k:1}"
+        [ "$c" = x ] && TX=1
+        case "$c" in f|b|C|T|X|L|N|V|H|I|K|F|g) presi=$((presi+1)); [ "$c" = C ] && TDIR="${argv[$((j+presi))]:-}" ;; esac
+      done
+      j=$((j+1+presi)); continue
+    fi
+    primo=0
+    case "$a" in
+      --) break ;;
+      --extract|--get) TX=1 ;;
+      --directory) TDIR="${argv[$((j+1))]:-}"; j=$((j+1)) ;;
+      --directory=*) TDIR="${a#*=}" ;;
+      --*) ;;
+      -?*) g="${a#-}"
+           for ((k=0; k<${#g}; k++)); do
+             c="${g:$k:1}"
+             [ "$c" = x ] && TX=1
+             case "$c" in
+               f|b|C|T|X|L|N|V|H|I|K|F|g)
+                 if [ $((k+1)) -lt "${#g}" ]; then [ "$c" = C ] && TDIR="${g:$((k+1))}"
+                 else [ "$c" = C ] && TDIR="${argv[$((j+1))]:-}"; j=$((j+1)); fi
+                 break ;;
+             esac
+           done ;;
+    esac
+    j=$((j+1))
   done
   return 0
 }
@@ -1388,8 +2078,10 @@ comandi_pnpm() { # $1 indice di pnpm, pn, pnpx o pnx. pnpm lancia un comando qua
 
 # --- un comando semplice ----------------------------------------------------------------------------
 # Programmi che non leggono il contenuto delle cartelle che ricevono (o che lanciano un altro comando, controllato da sé):
-# a tutti gli altri non si passa una cartella che contiene le credenziali, come a grep -r (parola_locale, «antenati»)
-SICURI=' ls dir vdir du df stat file tree namei realpath readlink dirname basename echo printf test [ [[ true false pwd type which hash cat head tail wc less more mkdir rmdir touch chmod chown chgrp cd pushd popd export declare typeset readonly local unset alias command builtin exec nohup time setsid chronic unbuffer nice ionice stdbuf timeout flock env xargs trap '
+# a tutti gli altri non si passa una cartella che contiene le credenziali, come a grep -r (parola_locale, «antenati»).
+# Ci sono anche i programmi di testo che aprono solo file e non eseguono niente (cut, tr, sort, sed…): awk no, perché il
+# suo programma può eseguire comandi
+SICURI=' ls dir vdir du df stat file tree namei realpath readlink dirname basename echo printf test [ [[ true false pwd type which hash cat head tail wc less more mkdir rmdir touch chmod chown chgrp cd pushd popd export declare typeset readonly local unset alias command builtin exec nohup time setsid chronic unbuffer nice ionice stdbuf timeout flock env xargs trap cut tr sort uniq paste sed column join comm nl tac rev fold fmt expand unexpand '
 LETTORI_XARGS=' grep egrep fgrep cat head tail wc ls stat file sha256sum sha1sum md5sum du echo printf test basename dirname realpath readlink sort uniq cut tr diff cmp '
 LANCIATORI_VIETATI=' script watch parallel strace ltrace gdb valgrind xvfb-run ssh-agent dbus-run-session taskset chrt prlimit numactl sg newgrp unshare nsenter chroot systemd-run faketime fakeroot fakechroot firejail bwrap proot busybox catchsegv at batch crontab '
 EDITORI=' vim vi nvim view vimdiff ex ed emacs nano '
@@ -1422,7 +2114,7 @@ lanciatore() { # $1 indice del programma, $2 le sue opzioni corte senza valore, 
   J="$j"
 }
 analizza_da() { # $1 indice del nome del comando in argv
-  local i="$1" prog j a k g c t s0 salva ric="" SALTA=" " edir="" esg="" etesto="" ets=0 J SCRIPT_I=-1
+  local i="$1" prog j a k g c t s0 salva ric="" SALTA=" " SALTAP=" " edir="" esg="" etesto="" ets=0 J SCRIPT_I=-1 DFINE="" DINERTI=" "
   [[ "${segni[$i]}" == *d* ]] && block "il nome del comando viene da una variabile o da un comando annidato: scrivilo per intero."
   [[ "${segni[$i]}" == *g* || "${segni[$i]}" == *b* ]] && [ "${argv[$i]}" != "[" ] && [ "${argv[$i]}" != "[[" ] &&     block "il nome del comando ha caratteri jolly o graffe ('${argv[$i]}'): la shell lo sceglierebbe fra i file. Scrivilo per intero."
   prog="${argv[$i]##*/}"
@@ -1441,17 +2133,29 @@ analizza_da() { # $1 indice del nome del comando in argv
   elif [[ "$SICURI" != *" $prog "* ]]; then
     ric=antenati   # un programma qualunque può leggere per intero una cartella che riceve (gzip -r, python -m tarfile, …)
   fi
-  case "$prog" in   # grep e simili, anche git grep: il testo da cercare non è un file
+  case "$prog" in   # grep e simili, anche git grep: il testo da cercare non è un file; nemmeno il messaggio di un commit
     grep|egrep|fgrep|zgrep|rgrep|rg|ripgrep|ag|ack|ack-grep|ugrep|ug) testi_cercati $((i+1)) "$prog" ;;
     git) j=$((i+1)); while [ "$j" -lt "$n" ] && [[ "${argv[$j]}" == -* ]]; do [ "${argv[$j]}" = -C ] && j=$((j+1)); j=$((j+1)); done
-         [ "${argv[$j]:-}" = grep ] && testi_cercati $((j+1)) grep ;;
+         [ "${argv[$j]:-}" = grep ] && testi_cercati $((j+1)) grep
+         testi_messaggio "$i" git ;;
+    gh) testi_messaggio "$i" gh ;;
   esac
+  testi_non_percorsi "$i" "$prog"
+  case "$prog" in docker|podman) analizza_docker "$i" ;; esac   # le sue opzioni, dalla tabella; lascia DFINE e DINERTI
   for ((j=i; j<n; j++)); do
     a="${argv[$j]}"
     [[ "$SALTA" == *" $j "* ]] && continue
     case "$a" in *imposta-postazione*|*hooks/imposta*) block "il nome della postazione lo imposta l'utente, nel suo terminale, una volta sola." ;; esac
     [ "$prog" = ssh ] && continue    # per ssh gli argomenti sono il comando remoto: lo controlla segreti_remoti
-    parola_locale "$a" "$ric" "${segni[$j]}"
+    case "$prog" in scp|rsync) [[ "${a%%/*}" == *:* ]] && continue ;; esac   # un percorso del server: lo controlla analizza_ssh
+    if [ -n "$DFINE" ] && { [ "$j" -ge "$DFINE" ] || [[ "$DINERTI" == *" $j "* ]]; }; then
+      # docker: le opzioni e i loro valori hanno già il loro controllo (docker_opzione), e le parole dopo l'immagine o il
+      # container sono il comando del container: non sono percorsi di questo computer. Resta il nome intero di una
+      # credenziale e, nel comando del container, il nome di un file di ambiente
+      nomi_interi "$a"; [ "$j" -ge "$DFINE" ] && file_ambiente "$a"
+      continue
+    fi
+    if [[ "$SALTAP" == *" $j "* ]]; then nomi_interi "$a"; else parola_locale "$a" "$ric" "${segni[$j]}"; fi
     file_ambiente "$a"
   done
   case "$prog" in
@@ -1577,26 +2281,29 @@ analizza_da() { # $1 indice del nome del comando in argv
           salva="$CWD"; analizza_testo "${argv[$((j+1))]}"; CWD="$salva"; return 0
         fi
       done
-      if legge_stdin "$i" "$prog"; then   # i comandi arrivano da stdin: da un heredoc (il record H) o da una stringa, altrimenti no
-        [ "$hd_qui" = 1 ] && return 0
-        [ -n "$qui_testo" ] && { salva="$CWD"; analizza_testo "$qui_testo"; CWD="$salva"; return 0; }
-        block "una shell che legge i comandi da stdin (da una pipe o da un file con <) non si controlla: scrivi i comandi per intero, o esegui lo script per nome (bash <file>)."
-      fi
-      [[ "${segni[$SCRIPT_I]}" == *d* ]] && block "lo script di $prog viene da una variabile o da una sostituzione (<(…), \$(…)): il suo testo non si controlla. Esegui uno script scritto in un file, per nome."
+      legge_stdin "$i" "$prog"
+      case $? in
+        0)   # i comandi arrivano da stdin: da un heredoc (il record H) o da una stringa, altrimenti no
+          [ "$hd_qui" = 1 ] && return 0
+          [ -n "$qui_testo" ] && { salva="$CWD"; analizza_testo "$qui_testo"; CWD="$salva"; return 0; }
+          block "una shell che legge i comandi da stdin (da una pipe o da un file con <) non si controlla: scrivi i comandi per intero, o esegui lo script per nome (bash <file>)." ;;
+        1) [[ "${segni[$SCRIPT_I]}" == *d* ]] && block "lo script di $prog viene da una variabile o da una sostituzione (<(…), \$(…)): il suo testo non si controlla. Esegui uno script scritto in un file, per nome." ;;
+      esac
       return 0 ;;
     source|.)   # uno script per nome sì; uno che viene da una sostituzione (source <(…)) no
       for ((j=i+1; j<n; j++)); do [[ "${argv[$j]}" == -* ]] || break; done
       [ "$j" -lt "$n" ] && [[ "${segni[$j]}" == *d* ]] && block "$prog con un file deciso da variabili o da una sostituzione (<(…), \$(…)) non si controlla: esegui uno script scritto in un file, per nome."
       return 0 ;;
     python|python3|python3.[0-9]*|node|nodejs|deno|bun|perl|ruby|php)
-      if legge_stdin "$i" "$prog"; then   # il codice arriva da stdin: da un heredoc (lo controlla codice_in_linea, record H) o da una stringa
-        if [ "$hd_qui" != 1 ]; then
-          [ -n "$qui_testo" ] || block "un interprete che legge il codice da stdin (da una pipe o da un file con <) non si controlla: esegui lo script per nome."
-          codice_in_linea "$qui_testo"
-        fi
-      elif [[ "${segni[$SCRIPT_I]}" == *d* ]]; then
-        block "lo script o il codice di $prog viene da una variabile o da una sostituzione (<(…), \$(…)): non si controlla. Esegui uno script scritto in un file, per nome."
-      fi ;;
+      legge_stdin "$i" "$prog"
+      case $? in
+        0)   # il codice arriva da stdin: da un heredoc (lo controlla codice_in_linea, record H) o da una stringa
+          if [ "$hd_qui" != 1 ]; then
+            [ -n "$qui_testo" ] || block "un interprete che legge il codice da stdin (da una pipe o da un file con <) non si controlla: esegui lo script per nome."
+            codice_in_linea "$qui_testo"
+          fi ;;
+        1) [[ "${segni[$SCRIPT_I]}" == *d* ]] && block "lo script o il codice di $prog viene da una variabile o da una sostituzione (<(…), \$(…)): non si controlla. Esegui uno script scritto in un file, per nome." ;;
+      esac ;;
     awk|gawk|mawk|nawk)   # il programma in linea si controlla come quello di python -c; gawk -i inplace scrive nei file
       j=$((i+1)); t=0; s0=0
       while [ "$j" -lt "$n" ]; do
@@ -1628,7 +2335,7 @@ analizza_da() { # $1 indice del nome del comando in argv
     git) analizza_git "$i"; return 0 ;;
     gh) analizza_gh "$i"; return 0 ;;
     ssh|scp|sftp|rsync) analizza_ssh "$i" "$prog"; return 0 ;;
-    docker|podman) analizza_docker "$i"; return 0 ;;
+    docker|podman) return 0 ;;   # già letto, prima delle parole
   esac
   [[ "$LANCIATORI_VIETATI" == *" $prog "* ]] && \
     block "$prog lancia altri comandi, o li esegue da un testo, in un modo che l'hook non controlla: nel metodo non si usa. Scrivi il comando per intero, da solo."
@@ -1636,11 +2343,17 @@ analizza_da() { # $1 indice del nome del comando in argv
   analizza_scritture "$i" "$prog"
   return 0
 }
-analizza_comando() { # usa argv, segni, redir, rsegni, iredir, isegni, ncmd del chiamante
-  local n=${#argv[@]} i=0 k cwd0="$CWD" cwd1
+testo_in_ingresso() { # $1 il testo di «<<<», $2 i suoi segni: chi lo riceve può prenderlo per un elenco di nomi (xargs cat <<< ~/…)
+  parola_locale "$1" antenati "$2"
+  file_ambiente "$1"
+}
+analizza_comando() { # usa argv, segni, redir, rsegni, iredir, isegni, ncmd, hd_qui, qui_testo, qui_segni e hd_coda del chiamante
+  local n=${#argv[@]} i=0 k cwd0="$CWD" cwd1 qui_prog="" inerte=0
   if [ "$n" -eq 0 ]; then   # solo redirezioni, come in $(< file): il file letto e quello scritto si controllano lo stesso
     for k in "${!iredir[@]}"; do legge_file "${iredir[$k]}" "${isegni[$k]}"; done
     for k in "${!redir[@]}"; do scrive "${redir[$k]}" "${rsegni[$k]}"; done
+    [ -n "$qui_testo" ] && testo_in_ingresso "$qui_testo" "$qui_segni"
+    [ "$hd_qui" = 1 ] && hd_coda+=("|0")
     return 0
   fi
   ncmd=$((ncmd+1))
@@ -1652,7 +2365,13 @@ analizza_comando() { # usa argv, segni, redir, rsegni, iredir, isegni, ncmd del 
       '!'|'{'|'}'|if|then|else|elif|fi|do|done|while|until|esac) i=$((i+1)) ;;
       function) i=$((i+2)); [ "${argv[$i]:-}" = '{' ] && i=$((i+1)) ;;
       coproc) i=$((i+1)); [ "${argv[$((i+1))]:-}" = '{' ] && i=$((i+2)) ;;
-      for|select|case) i="$n" ;;   # for x in …, case x in: qui nessun comando (le $(…) si controllano da sé)
+      for|select)   # for x in a b c: qui nessun comando, ma le parole dell'elenco sono i nomi che il ciclo passa ai suoi comandi
+                    # (for f in ~/.config/gh/*; do cat "$f"; done): si controllano come gli argomenti di un programma qualunque
+        if [ "${argv[$((i+2))]:-}" = in ]; then
+          for ((k=i+3; k<n; k++)); do parola_locale "${argv[$k]}" antenati "${segni[$k]}"; file_ambiente "${argv[$k]}"; done
+        fi
+        i="$n" ;;
+      case) i="$n" ;;   # case x in: qui nessun comando, e nessun file letto (le $(…) si controllano da sé)
       *) break ;;
     esac
   done
@@ -1662,7 +2381,20 @@ analizza_comando() { # usa argv, segni, redir, rsegni, iredir, isegni, ncmd del 
     file_ambiente "${argv[$i]}"
     i=$((i+1))
   done
-  [ "$i" -lt "$n" ] && analizza_da "$i"
+  if [ "$i" -lt "$n" ]; then analizza_da "$i"; qui_prog="$ultimo"; fi
+  # il testo di «<<<» è l'ingresso del comando: per ssh gira sul server (lo controlla analizza_ssh); per gli altri è un testo
+  # che il comando può prendere per un elenco di nomi (xargs cat <<< ~/…; while read f; do cat "$f"; done <<< ~/…)
+  [ -n "$qui_testo" ] && [ "$qui_prog" != ssh ] && testo_in_ingresso "$qui_testo" "$qui_segni"
+  if [ "$hd_qui" = 1 ]; then   # il testo dell'heredoc arriva dopo (record H): qui si annota chi lo riceve, e se lo scrive soltanto
+    if [ "$i" -lt "$n" ]; then
+      case "${argv[$i]##*/}" in
+        git|gh) inerte=1 ;;                                    # il messaggio di un commit, il testo di una pull request
+        cat) [ "${#redir[@]}" -gt 0 ] && inerte=1 ;;           # cat > file <<'EOF': il testo va nel file
+        tee) for ((k=i+1; k<n; k++)); do [[ "${argv[$k]}" == -* ]] || inerte=1; done ;;   # tee file <<'EOF'
+      esac
+    fi
+    hd_coda+=("$qui_prog|$inerte")
+  fi
   # le redirezioni dopo il comando, dalla cartella in cui è partito: se gira fuori dalla sandbox (ESCLUSO), anche loro
   cwd1="$CWD"; CWD="$cwd0"
   for k in "${!redir[@]}"; do scrive "${redir[$k]}" "${rsegni[$k]}"; done
@@ -1672,23 +2404,29 @@ analizza_comando() { # usa argv, segni, redir, rsegni, iredir, isegni, ncmd del 
 }
 analizza_testo() { # $1 testo con uno o più comandi
   local -a argv=() segni=() redir=() rsegni=() iredir=() isegni=()
-  local riga tipo s v attesa="" ncmd=0 ops="" dyn=0 hd_libero=0 ultimo="" hd_qui=0 qui_testo="" salva_h
+  local riga tipo s v attesa="" ncmd=0 ops="" dyn=0 hd_libero=0 ultimo="" hd_qui=0 qui_testo="" qui_segni="" salva_h hp hi
+  local -a hd_coda=()   # chi riceve ogni heredoc della riga, nell'ordine: "programma|1" se il testo viene soltanto scritto
   LIVELLO=$((LIVELLO+1))
   while IFS= read -r riga; do
     tipo="${riga%%$'\t'*}"; v="${riga#*$'\t'}"
     case "$tipo" in
       S) dyn=1; analizza_testo "${v//$'\001'/$'\n'}"; continue ;;                  # una sostituzione è un comando anche lei
-      H) v="${v//$'\001'/$'\n'}"                                                   # il testo di un heredoc, secondo chi lo legge
-         case "$ultimo" in
+      H) v="${v//$'\001'/$'\n'}"                                                   # il testo di un heredoc, secondo chi lo riceve
+         if [ "${#hd_coda[@]}" -gt 0 ]; then hp="${hd_coda[0]%|*}"; hi="${hd_coda[0]##*|}"; hd_coda=("${hd_coda[@]:1}"); else hp="$ultimo"; hi=0; fi
+         case "$hp" in
            ssh) segreti_remoti "$v" ;;
            bash|sh|zsh|dash|ksh|mksh|ash|yash|posh|fish|tcsh|csh) salva_h="$CWD"; analizza_testo "$v"; CWD="$salva_h" ;;
            python|python3|python3.[0-9]*|node|nodejs|deno|bun|perl|ruby|php|awk|gawk|mawk|nawk) codice_in_linea "$v" ;;
          esac
+         # chi riceve un heredoc può prenderne le righe per nomi di file (xargs cat <<EOF): niente nomi interi delle credenziali
+         # di questo computer, tranne dove il testo viene soltanto scritto (cat > file, tee file, i messaggi di git e gh) o
+         # gira sul server (ssh)
+         [ "$hp" != ssh ] && [ "$hi" != 1 ] && nomi_interi "$v" testo
          continue ;;
       O)
         case "$v" in
           '>'|'>>'|'>|'|'<'|'<<'|'<<<'|'>&'|'<&'|'>>&') attesa="$v" ;;
-          *) ops="$ops$v"; analizza_comando; argv=(); segni=(); redir=(); rsegni=(); iredir=(); isegni=(); hd_qui=0; qui_testo="" ;;
+          *) ops="$ops$v"; analizza_comando; argv=(); segni=(); redir=(); rsegni=(); iredir=(); isegni=(); hd_qui=0; qui_testo=""; qui_segni="" ;;
         esac
         continue ;;
     esac
@@ -1700,7 +2438,7 @@ analizza_testo() { # $1 testo con uno o più comandi
         '>&'|'>>&') [[ "$v" =~ ^([0-9]+|-)$ ]] || { redir+=("$v"); rsegni+=("$s"); } ;;
         '<') iredir+=("$v"); isegni+=("$s") ;;
         '<<') [[ "$s" == *q* ]] || hd_libero=1; hd_qui=1 ;;   # senza apici la shell espande il testo dell'heredoc
-        '<<<') qui_testo="$v" ;;
+        '<<<') qui_testo="$v"; qui_segni="$s" ;;
       esac
       attesa=""; continue
     fi

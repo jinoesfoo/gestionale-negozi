@@ -227,7 +227,7 @@ is_secret_file() {
     /srv/app/.env|versions.env|*/versions.env) return 1 ;;   # contengono solo i tag delle immagini (01 §CI/CD)
     /srv/app/env|/srv/app/env/) return 0 ;;     # la cartella dei file di ambiente del server, intera
   esac
-  local base; base="$(basename "$1")"
+  local base; base="$(basename -- "$1")"
   case "$base" in
     *.example|*.example.*) return 1 ;;
     .env|.env.*|*.env) return 0 ;;
@@ -340,6 +340,19 @@ registro_alterato() { [ -f "$LOG_COPY" ] && [ -f "$LOG_FILE" ] && ! cmp -s "$LOG
 # senza le credenziali di questo computer (CRED_LOCALI, qui sopra) né gli agenti SSH e GPG, e con i suoi processi soltanto
 # (--unshare-pid: da /proc/<pid>/root di un processo del computer si vedrebbe la sua radice, credenziali comprese).
 # Uscita 125: la gabbia non parte.
+# Ciò che la gabbia nasconde si lega al suo percorso vero, una volta sola: bubblewrap non attraversa un collegamento
+# simbolico assoluto (su Ubuntu /var/run porta a /run: il socket di Docker ha due nomi e un posto solo), e un bind su quel
+# nome farebbe fallire la gabbia.
+percorsi_veri() { # $1 la prova che il percorso deve superare (-e, -d, -S), poi i percorsi -> quelli che la superano, risolti, senza doppioni
+  local prova="$1" p r; local -A visti=()
+  shift
+  for p in "$@"; do
+    test "$prova" "$p" || continue
+    r="$(realpath -- "$p" 2>/dev/null)" || continue
+    [ -n "${visti[$r]:-}" ] && continue
+    visti[$r]=1; printf '%s\n' "$r"
+  done
+}
 gabbia() {
   command -v bwrap >/dev/null 2>&1 || { echo "manca bubblewrap (bwrap): sudo apt install bubblewrap (AVVIO.md, passo 1)" >&2; return 125; }
   local p c; local -a a=(--ro-bind / / --dev-bind /dev /dev --proc /proc --tmpfs /tmp --bind "$PROJECT_DIR" "$PROJECT_DIR")
@@ -348,12 +361,11 @@ gabbia() {
     [ -e "$PROJECT_DIR/$p" ] && a+=(--ro-bind "$PROJECT_DIR/$p" "$PROJECT_DIR/$p")
   done
   for p in "$HOME/.cache/pnpm" "$HOME/.local/state/pnpm"; do [ -d "$p" ] && a+=(--bind "$p" "$p"); done
-  for c in "${CRED_LOCALI[@]}"; do   # le credenziali di questo computer: cartelle vuote e file vuoti
-    p="$HOME/$c"
-    if [ -d "$p" ]; then a+=(--tmpfs "$p"); elif [ -e "$p" ]; then a+=(--ro-bind /dev/null "$p"); fi
-  done
-  [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ] && a+=(--tmpfs "$XDG_RUNTIME_DIR")   # agenti SSH e GPG, portachiavi, D-Bus
-  for p in /run/docker.sock /var/run/docker.sock; do [ -S "$p" ] && a+=(--ro-bind /dev/null "$p"); done
+  while IFS= read -r p; do   # le credenziali di questo computer: cartelle vuote e file che non si leggono
+    if [ -d "$p" ]; then a+=(--tmpfs "$p"); else a+=(--ro-bind /dev/null "$p"); fi
+  done < <(percorsi_veri -e "${CRED_LOCALI[@]/#/$HOME/}")
+  while IFS= read -r p; do a+=(--tmpfs "$p"); done < <(percorsi_veri -d ${XDG_RUNTIME_DIR:+"$XDG_RUNTIME_DIR"})   # agenti SSH e GPG, portachiavi, D-Bus
+  while IFS= read -r p; do a+=(--ro-bind /dev/null "$p"); done < <(percorsi_veri -S /run/docker.sock /var/run/docker.sock)
   bwrap "${a[@]}" --new-session --die-with-parent --unshare-pid --unsetenv SSH_AUTH_SOCK --unsetenv DOCKER_HOST \
     --unsetenv GH_TOKEN --unsetenv GITHUB_TOKEN --setenv NEXT_TELEMETRY_DISABLED 1 --chdir "$PROJECT_DIR" -- "$@"
   local rc=$?
