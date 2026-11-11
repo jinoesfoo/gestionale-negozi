@@ -17,7 +17,7 @@ Il metodo è già nel repository: `CLAUDE.md`, la cartella `.claude/` (hook, imp
 | — | Con `/stato` ti dice qual è il prossimo compito | — | `INIZIA FON-T01` |
 | piano | Legge le specifiche e scrive il piano (file, test, dubbi) | Il piano copre tutti i requisiti? I dubbi sono risolti? | `APPROVO` |
 | test | Scrive i test (e la configurazione dei controlli) e ti mostra che falliscono | Falliscono per il motivo giusto, non per un errore di battitura | `APPROVO` |
-| codice | Scrive il codice finché lint, typecheck e test sono verdi | Leggi le differenze (`git diff`), soprattutto su dati, login, pagamenti | `APPROVO` (o `TORNA AI TEST`) |
+| codice | Scrive il codice finché lint, typecheck e test sono verdi | Leggi le differenze del compito (`git diff "$(git merge-base HEAD origin/main)"`, più i file nuovi, che `git status --short` segna con `??`: con l'allineamento il lavoro può essere già in un commit), soprattutto su dati, login, pagamenti | `APPROVO` (o `TORNA AI TEST`) |
 | revisione | Con `/revisione` un revisore indipendente controlla tutto | Nessun problema critico o alto aperto | `APPROVO` |
 | chiusura | Con `/chiudi-compito`: controlli completi, specifica aggiornata, commit, pull request | La pull request su GitHub: quando la CI è verde la unisci tu | `CHIUSO` (dopo l'unione) |
 

@@ -36,7 +36,7 @@ done
 if [ -n "$fail" ]; then
   {
     if [ "$fase" = chiusura ]; then
-      echo "Controllo '$fail' fallito in fase chiusura di $(current_task). In chiusura il codice e i test non si toccano: fermati, spiega all'utente che cosa non va (anche segni di conflitto rimasti da git merge o da git stash pop) e indica TORNA AL CODICE (e poi TORNA AI TEST, se va corretto un test)."
+      echo "Controllo '$fail' fallito in fase chiusura di $(current_task). In chiusura il codice e i test non si toccano: fermati, spiega all'utente che cosa non va (anche segni di conflitto rimasti da un'unione con main) e indica TORNA AL CODICE (e poi TORNA AI TEST, se va corretto un test)."
     else
       echo "Controllo '$fail' fallito in fase $fase di $(current_task). Non concludere la risposta: correggi il codice e rilancia i controlli. Se il problema è in un test o nella configurazione dei controlli (un test che sembra sbagliato, segni di conflitto rimasti), non toccarli: fermati e chiedi all'utente TORNA AI TEST."
     fi

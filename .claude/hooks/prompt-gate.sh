@@ -101,7 +101,7 @@ case "$upper" in
     case "$fase" in codice|revisione)
       cambiati="$(test_cambiati | tr '\n' ' ')"
       if [ -n "${cambiati// /}" ]; then
-        say "I test sono cambiati dopo la fase test: $cambiati. In fase $fase i test e la configurazione dei controlli non si toccano: la fase NON è cambiata. Se un test va davvero corretto, l'utente scrive TORNA AI TEST; altrimenti va rimesso com'era."
+        say "I test sono cambiati dopo la fase test: $cambiati. In fase $fase i test e la configurazione dei controlli non si toccano: la fase NON è cambiata. Se un test va davvero corretto, o se è cambiato con l'allineamento a main perché l'avevano cambiato tutte e due le parti, l'utente scrive TORNA AI TEST e poi APPROVO; altrimenti va rimesso com'era."
         exit 0
       fi ;;
     esac

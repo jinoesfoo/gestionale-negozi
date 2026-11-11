@@ -113,8 +113,14 @@ scrive() { # $1 percorso, $2 segni (d, g, b), $3 cartella base facoltativa
 }
 
 # --- commit -----------------------------------------------------------------------------------------
+ferma_se_test_cambiati() { # $1 che cosa si ferma: «Il commit non li porta», «La spinta non parte»
+  local cambiati
+  cambiati="$(test_cambiati | tr '\n' ' ')"
+  [ -n "${cambiati// /}" ] && block "i test o la configurazione dei controlli sono cambiati dopo la fase test: $cambiati. $1: se un test va davvero corretto, o se è cambiato con l'allineamento a main perché l'avevano cambiato tutte e due le parti, l'utente scrive TORNA AI TEST e poi APPROVO (in fase chiusura prima TORNA AL CODICE); altrimenti il file va rimesso com'era."
+  return 0
+}
 controlla_commit() { # il commit porta solo il lavoro del compito corrente
-  local f vietati="" altre="" id cambiati mh
+  local f vietati="" altre="" id mh
   mh="$(merge_head)" || mh=""
   while IFS= read -r f; do
     [ -z "$f" ] && continue
@@ -130,9 +136,7 @@ controlla_commit() { # il commit porta solo il lavoro del compito corrente
   done
   [ -n "$altre" ] && block "il commit spunterebbe compiti diversi da $task:$altre. Si spunta solo la casella del compito corrente."
   registro_alterato && block "il registro di questa postazione è diverso dalla copia degli hook ($LOG_COPY): così non va nel commit. Chiedi all'utente."
-  cambiati="$(test_cambiati | tr '\n' ' ')"
-  [ -n "${cambiati// /}" ] && block "i test o la configurazione dei controlli sono cambiati dopo la fase test: $cambiati. Il commit non li porta: se un test va davvero corretto, l'utente scrive TORNA AI TEST (in fase chiusura prima TORNA AL CODICE); altrimenti il file va rimesso com'era."
-  return 0
+  ferma_se_test_cambiati "Il commit non li porta"
 }
 
 # --- git --------------------------------------------------------------------------------------------
@@ -176,7 +180,7 @@ analizza_git() { # $1 indice di "git" in argv
       case "$fase" in codice|revisione|chiusura) ;; *) block "i commit si fanno dalla fase codice in poi (fase attuale: $fase)." ;; esac
       controlla_commit ;;
     merge) git_merge ;;
-    pull) block "git pull non si usa nel metodo: git fetch origin, poi git merge --ff-only origin/main (oppure --no-edit, se il ramo ha già commit)." ;;
+    pull) block "git pull non si usa nel metodo: git fetch origin, poi git merge --no-edit origin/main, dopo un commit di tutto il lavoro (git add -A, git commit) se ci sono modifiche non salvate." ;;
     rebase|cherry-pick|revert|am)
       { ha --abort || ha --quit; } && return 0
       block "git $sub non serve nel metodo: se serve davvero, lo esegue l'utente." ;;
@@ -185,7 +189,7 @@ analizza_git() { # $1 indice di "git" in argv
     checkout) if git_checkout_percorsi; then git_percorsi; else git_ramo; fi ;;
     restore) git_percorsi ;;
     reset) git_reset ;;
-    stash) case "${r[0]:-push}" in store|create|branch|clear) block "git stash ${r[0]} non serve nel metodo." ;; esac ;;
+    stash) case "${r[0]:-push}" in list|show) ;; *) block "git stash non si usa nel metodo: prima dell'allineamento a main si fa un commit di tutto il lavoro (git add -A, git commit). Uno stash rimasto da prima lo recupera l'utente." ;; esac ;;
     commit-tree|update-ref|replace|update-index|read-tree|write-tree|symbolic-ref|fast-import|filter-branch|filter-repo|mktree|mktag|unpack-objects|index-pack|notes)
       block "git $sub è un comando di basso livello: nel metodo non serve." ;;
     hash-object) ha -w && block "git hash-object -w scrive nel repository: nel metodo non serve." ;;
@@ -306,7 +310,7 @@ git_merge() { # ci si allinea solo con origin/main; un'unione che crea un commit
     case "$a" in
       --ff-only) ff=1 ;;
       --no-edit|--continue|-q|--quiet|--stat|--no-stat|--log|--no-log) ;;
-      -*) block "git merge $a non serve nel metodo: ci si allinea con git merge --ff-only origin/main, oppure --no-edit se il ramo ha già commit." ;;
+      -*) block "git merge $a non serve nel metodo: ci si allinea con git merge --no-edit origin/main, dopo un commit di tutto il lavoro (git add -A, git commit) se ci sono modifiche non salvate." ;;
       *) pos+=("$a") ;;
     esac
   done
@@ -315,7 +319,7 @@ git_merge() { # ci si allinea solo con origin/main; un'unione che crea un commit
     block "un'unione si conclude nelle fasi codice, revisione o chiusura."
   fi
   { [ "${#pos[@]}" -eq 1 ] && [ "${pos[0]}" = origin/main ]; } || \
-    block "ci si allinea solo con origin/main: git merge --ff-only origin/main (oppure --no-edit, se il ramo ha già commit)."
+    block "ci si allinea solo con origin/main: git merge --no-edit origin/main, dopo un commit di tutto il lavoro (git add -A, git commit) se ci sono modifiche non salvate."
   metodo_in_arrivo origin/main
   [ "$ff" = 1 ] && return 0
   case "$fase" in codice|revisione|chiusura) ;; *) block "un git merge che crea un commit si fa solo nelle fasi codice, revisione e chiusura (fase attuale: $fase)." ;; esac
@@ -338,7 +342,7 @@ git_reset() { # reset senza commit (togliere file dall'indice) sì; spostare il 
   return 0
 }
 git_push() {
-  local cur d s a k nopz=0; local -a pos=()
+  local cur d s a k f nopz=0 nonsalvati=""; local -a pos=()
   cur="$(git -C "$gdir" rev-parse --abbrev-ref HEAD 2>/dev/null)"
   [ "$cur" = main ] && block "sei su main: da qui non si spinge nulla. Spingi il ramo del compito."
   for k in "${!r[@]}"; do
@@ -371,6 +375,16 @@ git_push() {
     [ "$d" = main ] && block "non si spinge su main: si apre una pull request dal ramo del compito."
     case "$d" in refs/tags/*|tags/*|v[0-9]*) block "i tag di rilascio li crea l'utente." ;; esac
   done
+  # La spinta porta i commit. Dopo la fase test i test e la configurazione dei controlli non cambiano: un'unione con main
+  # può portarne uno cambiato da tutte e due le parti senza conflitto, e in chiusura può non seguirla nessun commit.
+  # E nella cartella devono essere quelli dell'ultimo commit, così l'impronta della cartella vale per ciò che si spinge.
+  ferma_se_test_cambiati "La spinta non parte"
+  if [ -f "$STATE_DIR/manifesto-test" ]; then
+    while IFS= read -r f; do { is_test_file "$f" || is_check_config "$f"; } && nonsalvati="$nonsalvati $f"; done \
+      < <(git -C "$PROJECT_DIR" diff --no-ext-diff --no-textconv --name-only HEAD 2>/dev/null)
+    [ "$(impronta_qui package.json#scripts)" = "$(impronta_in HEAD package.json#scripts)" ] || nonsalvati="$nonsalvati package.json#scripts"
+    [ -n "$nonsalvati" ] && block "i test o la configurazione dei controlli hanno modifiche che non sono ancora in un commit:$nonsalvati. La spinta porta solo i commit: prima il commit, che controlla l'impronta dei test, poi la spinta."
+  fi
   return 0
 }
 git_config() {

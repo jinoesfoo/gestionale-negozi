@@ -7,3 +7,5 @@ dist/
 playwright/.auth/
 test-results/
 playwright-report/
+.vscode/
+.idea/

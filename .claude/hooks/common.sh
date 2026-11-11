@@ -423,6 +423,6 @@ impronta_gabbia() {
 }
 controllo_dopo_gabbia() { # $1 impronta presa prima della gabbia; stampa il messaggio e torna 2 se il codice ha toccato il metodo
   [ "$(impronta_gabbia)" = "$1" ] && return 0
-  echo "il codice eseguito nella gabbia ha creato o cambiato file del metodo o dell'editor ($(metodo_modificato | tr '\n' ' ').vscode/.idea compresi): non è un comportamento del progetto. Fermati e dillo all'utente, che controlla (git status) e rimette a posto; i file nuovi si cancellano."
+  echo "il codice eseguito nella gabbia ha creato o cambiato file del metodo o dell'editor ($(metodo_modificato | tr '\n' ' ').vscode/.idea compresi): non è un comportamento del progetto. Fermati e dillo all'utente, che controlla (git status, e per le cartelle dell'editor ls -laR .vscode .idea, che git ignora) e rimette a posto; i file nuovi si cancellano."
   return 2
 }
