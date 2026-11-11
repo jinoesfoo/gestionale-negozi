@@ -91,7 +91,10 @@ case "$upper" in
     fi
     cancella_manifesto_test
     write_state "$id" "piano"
-    say "${avviso}Compito $id iniziato sulla postazione $me. Fase: piano. Prima di tutto, senza altre modifiche nella cartella di lavoro (possono restare il registro di questa postazione e i file di docs/ dei suoi compiti, nuovi o modificati): git switch --no-track -c $(echo "$id" | tr '[:upper:]' '[:lower:]') origin/main, poi pnpm install se esiste package.json. Se l'hook dice che origin/main cambia i file del metodo, quel comando lo esegue l'utente nel suo terminale. Poi leggi costituzione, docs/due-postazioni.md e area del compito, scrivi il piano e fermati per l'approvazione."
+    esiste=""
+    git -C "$PROJECT_DIR" rev-parse -q --verify "refs/heads/$(echo "$id" | tr '[:upper:]' '[:lower:]')" >/dev/null 2>&1 && \
+      esiste=" Il ramo $(echo "$id" | tr '[:upper:]' '[:lower:]') esiste già, da un compito abbandonato: quel primo passo lo esegue l'utente nel suo terminale, come dice docs/due-postazioni.md («Se qualcosa va storto», «Un compito abbandonato»)."
+    say "${avviso}Compito $id iniziato sulla postazione $me. Fase: piano. Prima di tutto, senza altre modifiche nella cartella di lavoro (possono restare il registro di questa postazione e i file di docs/ dei suoi compiti, nuovi o modificati): git switch --no-track -c $(echo "$id" | tr '[:upper:]' '[:lower:]') origin/main, poi pnpm install se esiste package.json.$esiste Se l'hook dice che origin/main cambia i file del metodo, quel comando lo esegue l'utente nel suo terminale. Poi leggi costituzione, docs/due-postazioni.md e area del compito, scrivi il piano e fermati per l'approvazione."
     ;;
   APPROVO)
     case "$fase" in piano|test|codice|revisione) fermo_se_alterato ;; esac
@@ -160,7 +163,7 @@ case "$upper" in
     if [ -n "$task" ]; then
       cancella_manifesto_test
       LOG_TASK="$task" write_state "" "nessuno" "nessuno (abbandonato)"
-      say "Compito $task abbandonato. Le modifiche restano nella cartella di lavoro: decidi tu se tenerle. Finché il compito non è su main, i compiti che lo seguono restano bloccati."
+      say "Compito $task abbandonato. Le modifiche restano nella cartella di lavoro: decidi tu se tenerle. Finché il compito non è su main, i compiti che lo seguono restano bloccati. Per rifarlo, il ramo del compito lo rimette a posto l'utente nel suo terminale, come dice docs/due-postazioni.md («Un compito abbandonato»)."
       avviso_fermo
     fi
     ;;

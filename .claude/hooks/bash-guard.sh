@@ -2178,11 +2178,25 @@ tar_estrae() { # $1 indice di tar -> TX (1 se estrae) e TDIR (la cartella di -C)
 }
 GABBIA_OK='^(test|test:int|test:e2e|dev|worker|db:migrate|cli|--prova)$'
 gabbia_comando() { # bash .claude/hooks/gabbia.sh <comando>: esce dalla sandbox, quindi la forma è una sola
-  local i="$1"
+  local i="$1" k a coll=0 val=0
   { [ "$i" = 0 ] && [ "$LIVELLO" = 1 ]; } || block "la gabbia va lanciata da sola: bash .claude/hooks/gabbia.sh <comando>, senza niente davanti e non dentro altri comandi."
   { [ "${argv[$i]}" = bash ] && [ "${argv[$((i+1))]}" = .claude/hooks/gabbia.sh ]; } || block "la gabbia si lancia esattamente così: bash .claude/hooks/gabbia.sh <comando>."
   [[ "$CWD" == "$PROJECT_DIR_SLASH" ]] || block "la gabbia si lancia dalla cartella del progetto."
   [[ "${argv[$((i+2))]:-}" =~ $GABBIA_OK ]] || block "nella gabbia girano solo test, test:int, test:e2e, dev, worker, db:migrate e cli (e --prova)."
+  # il collaudo usa la sessione dell'amministratore di produzione: solo nella forma scritta (specs/09-collaudo.md), perché
+  # una traccia, un rapporto o una finestra di prova salverebbero o mostrerebbero le richieste con i suoi cookie
+  for ((k=i+3; k<n; k++)); do [[ "${argv[$k]}" == *playwright.config.collaudo* ]] && coll=1; done
+  if [ "$coll" = 1 ]; then
+    for ((k=i+3; k<n; k++)); do
+      a="${argv[$k]}"
+      if [ "$val" = 1 ]; then val=0; continue; fi
+      case "$a" in
+        -c|--config|-g|--grep|--grep-invert) val=1 ;;
+        --config=*|--grep=*|--grep-invert=*|-c?*|-g?*) ;;
+        -*) block "il collaudo si lancia solo così: bash .claude/hooks/gabbia.sh test:e2e -c playwright.config.collaudo.ts, al più con -g <prova> o con i file delle prove. Un'opzione come $a (--trace, --ui, --debug, --reporter, --output e simili) salverebbe o mostrerebbe le richieste con la sessione di produzione (specs/09-collaudo.md, introduzione)." ;;
+      esac
+    done
+  fi
   ESCLUSO="la gabbia"
 }
 PNPM_INTERNI=' add approve-builds audit bin c cache cat-file cat-index config create dedupe deploy dlx docs doctor env exec fetch find-hash get help i ignored-builds import info init install install-test it la licenses link list ll ln login logout ls m multi outdated pack patch patch-commit patch-remove pm prune publish rb rebuild recursive remove repo rm root run run-script sbom search self-update server set setup show start store t test tst un uni uninstall unlink up update upgrade view whoami why '

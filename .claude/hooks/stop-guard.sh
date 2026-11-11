@@ -35,7 +35,11 @@ done
 
 if [ -n "$fail" ]; then
   {
-    echo "Controllo '$fail' fallito in fase $fase di $(current_task). Non concludere la risposta: correggi il codice (non i test) e rilancia i controlli."
+    if [ "$fase" = chiusura ]; then
+      echo "Controllo '$fail' fallito in fase chiusura di $(current_task). In chiusura il codice e i test non si toccano: fermati, spiega all'utente che cosa non va (anche segni di conflitto rimasti da git merge o da git stash pop) e indica TORNA AL CODICE (e poi TORNA AI TEST, se va corretto un test)."
+    else
+      echo "Controllo '$fail' fallito in fase $fase di $(current_task). Non concludere la risposta: correggi il codice (non i test) e rilancia i controlli."
+    fi
     echo "--- ultime righe ---"
     tail -n 40 "$out"
   } >&2
