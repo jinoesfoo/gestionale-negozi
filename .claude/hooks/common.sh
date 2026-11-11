@@ -357,7 +357,7 @@ gabbia() {
   bwrap "${a[@]}" --new-session --die-with-parent --unshare-pid --unsetenv SSH_AUTH_SOCK --unsetenv DOCKER_HOST \
     --unsetenv GH_TOKEN --unsetenv GITHUB_TOKEN --setenv NEXT_TELEMETRY_DISABLED 1 --chdir "$PROJECT_DIR" -- "$@"
   local rc=$?
-  [ "$rc" = 1 ] && ! bwrap --ro-bind / / --dev /dev true >/dev/null 2>&1 && { echo "la gabbia (bubblewrap) non parte: su Ubuntu 24.04 serve il profilo AppArmor di AVVIO.md, passo 1" >&2; return 125; }
+  [ "$rc" = 1 ] && ! bwrap --ro-bind / / --dev /dev true >/dev/null 2>&1 && { echo "la gabbia (bubblewrap) non parte: da Ubuntu 24.04 serve il profilo AppArmor di AVVIO.md, passo 1" >&2; return 125; }
   return "$rc"
 }
 # La gabbia lega in sola lettura solo i file del metodo che esistono: un file che non esiste ancora (CLAUDE.local.md,

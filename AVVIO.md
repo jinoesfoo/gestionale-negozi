@@ -23,13 +23,22 @@ gh auth login --git-protocol https --insecure-storage && gh auth setup-git
 
 Dopo `usermod` esci dalla sessione e rientra, così Docker funziona senza `sudo`. Dopo FON-T01, su ogni computer: `pnpm exec playwright install --with-deps`, da ripetere a ogni aggiornamento di Playwright (le pull request automatiche delle dipendenze, da OPS-T09): i browser nuovi non li può installare Claude, perché nella sandbox non si può e nella gabbia non è ammesso, e l'hook glielo ricorda.
 
-**Ubuntu e la sandbox.** La sandbox di Claude Code e la gabbia degli hook usano bubblewrap, che ha bisogno dei «namespace utente»; da Ubuntu 24.04 il sistema li limita con AppArmor. Dopo aver installato gli strumenti, controlla nel tuo terminale se bubblewrap parte:
+**Ubuntu e la sandbox.** La sandbox di Claude Code e la gabbia degli hook usano bubblewrap, che ha bisogno dei «namespace utente»; da Ubuntu 24.04 il sistema li limita con AppArmor. Dopo aver installato gli strumenti, fai questo controllo nel tuo terminale: prova bubblewrap e, dentro, un secondo namespace, come fa la sandbox di Claude Code.
 
 ```bash
-bwrap --ro-bind / / --dev /dev true && echo ok
+bwrap --unshare-user --unshare-net --dev-bind / / unshare -U -r true && echo ok
 ```
 
-Se risponde `ok`, non serve altro. È così su Ubuntu 22.04, che non ha il limite, e su Ubuntu 26.04, che porta già un suo profilo AppArmor per bubblewrap (`/etc/apparmor.d/bwrap-userns-restrict`; verificato l'11/11/2026 su un computer con Ubuntu 26.04): lì non crearne un altro, perché avrebbe lo stesso nome di quello del sistema. Se invece risponde con un errore di permesso, come su Ubuntu 24.04, crea il profilo AppArmor di bubblewrap, una volta sola, e ripeti il controllo:
+Se risponde `ok`, non serve altro: è così su Ubuntu 22.04, che non ha il limite. Se risponde con un errore di permesso («Permission denied» o «Operation not permitted»), serve il profilo AppArmor di bubblewrap indicato dalla documentazione di Claude Code, che toglie quel limite a bubblewrap e ai programmi che lancia. Si fa una volta sola, in due passi.
+
+Primo passo, solo se esiste il file `/etc/apparmor.d/bwrap-userns-restrict` (Ubuntu 26.04 lo porta con sé): è un profilo del sistema con lo stesso nome, `bwrap`. Lascia partire bubblewrap, ma toglie i permessi ai programmi lanciati da lui, e fra questi c'è l'aiutante della sandbox di Claude Code: con quel profilo Claude Code si avvia, ma ogni suo comando fallisce con «apply-seccomp: … Permission denied» (verificato l'11/11/2026 su Ubuntu 26.04 con Claude Code 2.1.322). Spegnilo:
+
+```bash
+sudo ln -s /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/
+sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
+```
+
+Secondo passo, in ogni caso: crea il profilo e caricalo.
 
 ```bash
 sudo tee /etc/apparmor.d/bwrap >/dev/null <<'EOF'
@@ -43,7 +52,7 @@ EOF
 sudo apparmor_parser -r /etc/apparmor.d/bwrap
 ```
 
-Finché bubblewrap non parte, non parte nemmeno Claude Code (la sandbox è obbligatoria, `failIfUnavailable`).
+Poi ripeti il controllo: deve rispondere `ok`. Finché non lo fa, non andare avanti: Claude Code non parte, oppure parte ma non riesce a eseguire nessun comando (la sandbox è obbligatoria, `failIfUnavailable`).
 
 **Claude Code.** In VS Code installa l'estensione Claude Code, in una versione recente: almeno la v2.1.310, che all'avvio controlla davvero la sandbox; gli hook che si fermano se si rompono (`onFailure`) esistono dalla v2.1.295.
 
@@ -118,6 +127,7 @@ Gli hook e la gabbia sono stati collaudati su Ubuntu, ma fuori da Claude Code; l
   - `python3 -c "open('CLAU'+'DE.md','a')"`
   - `python3 -c "open('.gi'+'t/config','a')"`
   - `python3 -c "import os; open(os.path.expanduser('~/.local/sta'+'te/gestionale-'+'negozi/prova'),'w')"`
+- I socket del computer, che nella sandbox non si aprono: anche `python3 -c "import socket; socket.socket(socket.AF_UNIX)"` deve **fallire per la sandbox**, con un errore di permesso (di solito «Operation not permitted»). Se non dà nessun errore, manca il filtro che chiude i socket, compreso quello di Docker: fermati e guarda che cosa segnala `/sandbox`.
 - I segreti. Crea tu, nel tuo terminale, un file di prova: `echo SEGRETO_DI_PROVA=1 > .env.test`. Poi chiedi a Claude `grep -r SEGRETO_DI_PROVA .` e `python3 -c "print(open('.en'+'v.test').read())"`: nessuno dei due deve mostrare la riga (secondo come la sandbox nasconde il file, vedrai un errore, per esempio «Permission denied» o «No such file or directory», oppure un contenuto vuoto: conta che la riga non compaia). Poi cancella tu il file: `rm .env.test`.
 - Le credenziali del computer. Crea tu, nel tuo terminale, due file di prova: `mkdir -p ~/.ssh ~/.docker && echo CREDENZIALE_DI_PROVA > ~/.ssh/prova-sandbox && echo CREDENZIALE_DI_PROVA > ~/.docker/prova-sandbox`. Poi chiedi a Claude `python3 -c "import os; print(open(os.path.expanduser('~/.ss'+'h/prova-sandbox')).read())"`, lo stesso con `'~/.doc'+'ker/prova-sandbox'`, e di aprire `~/.ssh/prova-sandbox` con lo strumento Read: nessuno dei tre deve mostrare la riga (un errore o un contenuto vuoto, come sopra). Poi cancella tu i due file: `rm ~/.ssh/prova-sandbox ~/.docker/prova-sandbox`. Lo stesso per un file singolo, che la sandbox maschera: se `~/.pgpass` non c'è, crealo tu con una riga finta (`echo '# CREDENZIALE_DI_PROVA' > ~/.pgpass`) e chiedi a Claude `python3 -c "import os; print(open(os.path.expanduser('~/.pg'+'pass')).read())"`: non deve mostrare la riga (un errore o un contenuto vuoto, come sopra); poi cancellalo tu (`rm ~/.pgpass`). Se hai già un `~/.pgpass` vero, salta questa prova.
 - L'accesso a GitHub, che la sandbox lascia leggere a `gh` e git: chiedi a Claude di aprire `~/.config/gh/hosts.yml` con lo strumento Read e di cercare `oauth_token` con lo strumento Grep nella cartella `~/.config/gh`: tutti e due devono essere **bloccati dall'hook** («contiene credenziali di questo computer»).
