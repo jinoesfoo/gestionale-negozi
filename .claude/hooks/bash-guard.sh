@@ -26,11 +26,15 @@ ESCLUSO=""     # il comando del primo livello che gira fuori dalla sandbox (sett
 
 echo "$cmd" | grep -Eq -- '--no-verify' && block "--no-verify salta i controlli e non è permesso."
 
-variabile_vietata() { # $1 nome di una variabile assegnata davanti a un comando, con env o con export
-  case "$1" in
+RE_ASSEGNA='^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?='   # NOME=valore, anche con un indice (m[k]=v) e con «+=»
+variabile_vietata() { # $1 nome di una variabile che il comando imposta: davanti a un comando, da sola, con env, export, declare e
+                      # simili, come variabile di for e select, di read, mapfile e readarray, di printf -v; il nome vale anche
+                      # scritto con «+» in fondo (NOME+=…) o con un indice (NOME[0]=…)
+  local nome="${1%%[*}"; nome="${nome%+}"
+  case "$nome" in
     GIT_*|GH_*|DOCKER_*|SSH_*|LD_*|CLAUDE_PROJECT_DIR|GESTIONALE_STATO_DIR|HOME|PATH|BASH_ENV|ENV|PS4|PROMPT_COMMAND|SHELLOPTS|BASHOPTS|\
     PAGER|MANPAGER|EDITOR|VISUAL|BROWSER)
-      block "la variabile $1 cambia il repository, la cartella degli hook o il programma che un comando lancia (pager, editor, browser, file letti all'avvio della shell): non si imposta." ;;
+      block "la variabile $nome cambia il repository, la cartella degli hook o il programma che un comando lancia (pager, editor, browser, file letti all'avvio della shell): non si imposta." ;;
   esac
   return 0
 }
@@ -693,7 +697,7 @@ testi_non_percorsi() { # $1 indice del programma, $2 il programma: mette in SALT
                        # e sui file di ambiente
   local j a dato=0
   case "$2" in
-    '[['|tr) for ((j=$1+1; j<n; j++)); do SALTAP="$SALTAP$j "; done ;;
+    '[['|'(('|tr) for ((j=$1+1; j<n; j++)); do SALTAP="$SALTAP$j "; done ;;
     cut|paste) separatori "$1" d ' --delimiter --delimiters --output-delimiter ' ;;
     sort) separatori "$1" t ' --field-separator ' ;;
     join) separatori "$1" t '' ;;
@@ -836,6 +840,9 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
   # variabili (export, declare, typeset, readonly senza nomi, set da solo) e niente docker inspect di un container;
   # docker compose config (anche /srv/app/dc config), che scrive i valori dei file di ambiente, ha bisogno di
   # un'opzione che non li legge (--no-env-resolution) o che non stampa la configurazione (-q, --services, …)
+  # La cartella dei file di ambiente, in qualunque punto del testo: prima degli altri controlli, così il messaggio è il suo
+  [[ "$1" =~ $re_cartella_env ]] && \
+    block "il comando sul server tocca la cartella dei file di ambiente (/srv/app/env): quei file li legge e li scrive solo l'utente."
   # Un grep semplice e da solo non esegue nulla: le parole che cerca (env, inspect, printenv, process.env) non sono
   # comandi. Di quel grep i controlli sul testo guardano tutte le parole tranne quelle cercate (testi_cercati, SALTA):
   # il file letto resta controllato (grep -a . /proc/1/environ)
@@ -853,7 +860,7 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
     printf '%s' "$testo" | grep -Eq 'printenv|/environ|process\.env|(Deno|Bun)\.env|import\.meta\.env|os\.environ|getenv|ENV\[|%ENV|\$ENV\{|\$_ENV' && \
       block "il comando sul server contiene una parola che, come comando o in un programma, stampa le variabili d'ambiente, che contengono i segreti (printenv, /proc/…/environ, process.env, os.environ e simili): non si usa. $MSG_CERCA"
     while IFS= read -r pezzo; do
-      [[ "$pezzo" =~ $re_env ]] && block "nel comando sul server la parola 'env' da sola non si usa, nemmeno dentro sh -c: come comando stamperebbe le variabili d'ambiente, che contengono i segreti. $MSG_CERCA"
+      [[ "$pezzo" =~ $re_env ]] && block "nel comando sul server la parola 'env' da sola non si usa, nemmeno dentro sh -c: come comando stamperebbe le variabili d'ambiente, che contengono i segreti, e come nome di cartella è quella dei file di ambiente, che legge e scrive solo l'utente. $MSG_CERCA"
       resto="$pezzo"
       while [[ "$resto" =~ $re_envp ]]; do   # ogni env scritto con il percorso, anche dentro sh -c
         dopo="${BASH_REMATCH[2]}${BASH_REMATCH[3]}"; resto="${BASH_REMATCH[3]}"
@@ -891,7 +898,7 @@ segreti_remoti() { # $1 comando che gira sul server: non deve arrivare ai segret
     primo=0
     if [[ "$SALTA" != *" $wi "* ]]; then   # non è il testo cercato da un grep semplice
       case "$w" in
-        env) block "nel comando sul server la parola 'env' da sola non si usa: come comando stamperebbe le variabili d'ambiente, che contengono i segreti. $MSG_CERCA" ;;
+        env) block "nel comando sul server la parola 'env' da sola non si usa: come comando stamperebbe le variabili d'ambiente, che contengono i segreti, e come nome di cartella è quella dei file di ambiente, che legge e scrive solo l'utente. $MSG_CERCA" ;;
         */env) env_perc="$w" ;;
         inspect) case "$prec" in image|imagetools|manifest|volume|network|buildx|builder|context|plugin) ;; *) block "nel comando sul server la parola 'inspect' da sola non si usa: docker inspect di un container mostrerebbe le sue variabili d'ambiente, che contengono i segreti (per lo stato: dc ps, dc logs). $MSG_CERCA" ;; esac ;;
       esac
@@ -1831,7 +1838,7 @@ analizza_scritture() { # $1 indice, $2 programma
           curl) case "$a" in -o|--output) scrive "${argv[$((j+1))]:-}" "${segni[$((j+1))]}"; j=$((j+1)) ;; -O|--remote-name|-J|--remote-header-name) scrive "." "" ;;
                   -H|-d|-X|-u|-A|-e|-b|-c|-F|-T|--header|--user|--url|--data|--data-raw|--data-binary|--form|--upload-file|--request|--cookie|--cookie-jar|--user-agent|--referer) j=$((j+1)) ;; esac ;;
           wget) case "$a" in -O|--output-document|-P|--directory-prefix) scrive "${argv[$((j+1))]:-}" "${segni[$((j+1))]}"; j=$((j+1)) ;; esac ;;
-          unzip) case "$a" in -d) tdir="${argv[$((j+1))]:-}"; j=$((j+1)) ;; esac ;;
+          unzip) case "$a" in -d) tdir="${argv[$((j+1))]:-}"; j=$((j+1)) ;; -*[ltvZzpc]*) inplace=2 ;; esac ;;   # -l, -t, -v, -Z, -z, -p, -c: elenca, prova o stampa, non estrae
           python|python3|python3.[0-9]*|node|nodejs|deno|bun|php) case "$a" in -c|-e|--eval|-r|-p|--print) codice_in_linea "${argv[$((j+1))]:-}"; j=$((j+1)) ;; esac ;;
         esac ;;
       *) pos+=("$a"); psg+=("${segni[$j]}") ;;
@@ -1847,7 +1854,8 @@ analizza_scritture() { # $1 indice, $2 programma
                      for k in "${!pos[@]}"; do [ "$k" -ge "$start" ] && scrive "${pos[$k]}" "${psg[$k]}"; done; fi ;;
     dd) for k in "${!pos[@]}"; do [[ "${pos[$k]}" == of=* ]] && scrive "${pos[$k]#of=}" "${psg[$k]}"; done ;;
     tar) tar_estrae "$i"; [ "$TX" = 1 ] && scrive "${TDIR:-.}" "" ;;
-    unzip|patch) scrive "${tdir:-.}" "" ;;
+    unzip) [ "$inplace" = 2 ] || scrive "${tdir:-.}" "" ;;
+    patch) scrive "${tdir:-.}" "" ;;
   esac
   return 0
 }
@@ -2064,7 +2072,7 @@ comandi_pnpm() { # $1 indice di pnpm, pn, pnpx o pnx. pnpm lancia un comando qua
     else
       analizza_da "$cmd"
       if [ "$ripiego" = 1 ]; then   # pnpm.io: senza uno script con quel nome pnpm esegue il comando «as a shell script»: anche come testo
-        for ((t=cmd; t<n; t++)); do [[ "${segni[$t]}" == *d* ]] && block "pnpm <nome> con argomenti decisi da variabili o comandi annidati non si controlla: pnpm potrebbe passarli a una shell. Scrivili per intero."; done
+        for ((t=cmd; t<n; t++)); do [[ "${segni[$t]}" == *d* ]] && block "pnpm <nome> con argomenti decisi da variabili o comandi annidati non si controlla: senza uno script con quel nome pnpm li passerebbe a una shell. Scrivili per intero, oppure lancia il comando con pnpm exec <nome>, che non passa da una shell."; done
         analizza_testo "${argv[*]:$cmd}"
       fi
     fi
@@ -2081,7 +2089,7 @@ comandi_pnpm() { # $1 indice di pnpm, pn, pnpx o pnx. pnpm lancia un comando qua
 # a tutti gli altri non si passa una cartella che contiene le credenziali, come a grep -r (parola_locale, «antenati»).
 # Ci sono anche i programmi di testo che aprono solo file e non eseguono niente (cut, tr, sort, sed…): awk no, perché il
 # suo programma può eseguire comandi
-SICURI=' ls dir vdir du df stat file tree namei realpath readlink dirname basename echo printf test [ [[ true false pwd type which hash cat head tail wc less more mkdir rmdir touch chmod chown chgrp cd pushd popd export declare typeset readonly local unset alias command builtin exec nohup time setsid chronic unbuffer nice ionice stdbuf timeout flock env xargs trap cut tr sort uniq paste sed column join comm nl tac rev fold fmt expand unexpand '
+SICURI=' ls dir vdir du df stat file tree namei realpath readlink dirname basename echo printf test [ [[ (( true false pwd type which hash cat head tail wc less more mkdir rmdir touch chmod chown chgrp cd pushd popd export declare typeset readonly local unset alias command builtin exec nohup time setsid chronic unbuffer nice ionice stdbuf timeout flock env xargs trap cut tr sort uniq paste sed column join comm nl tac rev fold fmt expand unexpand '
 LETTORI_XARGS=' grep egrep fgrep cat head tail wc ls stat file sha256sum sha1sum md5sum du echo printf test basename dirname realpath readlink sort uniq cut tr diff cmp '
 LANCIATORI_VIETATI=' script watch parallel strace ltrace gdb valgrind xvfb-run ssh-agent dbus-run-session taskset chrt prlimit numactl sg newgrp unshare nsenter chroot systemd-run faketime fakeroot fakechroot firejail bwrap proot busybox catchsegv at batch crontab '
 EDITORI=' vim vi nvim view vimdiff ex ed emacs nano '
@@ -2171,8 +2179,17 @@ analizza_da() { # $1 indice del nome del comando in argv
       done
       return 0 ;;
     mapfile|readarray)
-      for ((j=i+1; j<n; j++)); do [[ "${argv[$j]}" == -C* ]] && block "$prog -C esegue un comando a ogni gruppo di righe: scrivi il comando per intero."; done
+      for ((j=i+1; j<n; j++)); do
+        [[ "${argv[$j]}" == -C* ]] && block "$prog -C esegue un comando a ogni gruppo di righe: scrivi il comando per intero."
+        [[ "${argv[$j]}" == -* ]] || variabile_vietata "${argv[$j]}"   # il nome dell'elenco che riempie
+      done
       return 0 ;;
+    read) for ((j=i+1; j<n; j++)); do [[ "${argv[$j]}" == -* ]] || variabile_vietata "${argv[$j]}"; done; return 0 ;;   # le variabili che riempie
+    printf)   # printf -v NOME: scrive in una variabile
+      for ((j=i+1; j<n; j++)); do
+        case "${argv[$j]}" in -v) variabile_vietata "${argv[$((j+1))]:-}" ;; -v?*) variabile_vietata "${argv[$j]#-v}" ;; -*) continue ;; esac
+        break
+      done ;;
     trap)    # trap '<comando>' SEGNALE: il testo è un comando, che la shell esegue quando arriva il segnale
       j=$((i+1))
       while [ "$j" -lt "$n" ] && [[ "${argv[$j]}" == -?* ]]; do [ "${argv[$j]}" = -- ] && { j=$((j+1)); break; }; j=$((j+1)); done
@@ -2347,7 +2364,8 @@ testo_in_ingresso() { # $1 il testo di «<<<», $2 i suoi segni: chi lo riceve p
   parola_locale "$1" antenati "$2"
   file_ambiente "$1"
 }
-analizza_comando() { # usa argv, segni, redir, rsegni, iredir, isegni, ncmd, hd_qui, qui_testo, qui_segni e hd_coda del chiamante
+analizza_comando() { # usa argv, segni, redir, rsegni, iredir, isegni, ncmd, hd_qui, qui_testo, qui_segni, hd_coda, caso, modello e
+                     # inizio_caso del chiamante
   local n=${#argv[@]} i=0 k cwd0="$CWD" cwd1 qui_prog="" inerte=0
   if [ "$n" -eq 0 ]; then   # solo redirezioni, come in $(< file): il file letto e quello scritto si controllano lo stesso
     for k in "${!iredir[@]}"; do legge_file "${iredir[$k]}" "${isegni[$k]}"; done
@@ -2362,20 +2380,27 @@ analizza_comando() { # usa argv, segni, redir, rsegni, iredir, isegni, ncmd, hd_
   done
   while [ "$i" -lt "$n" ]; do   # le parole riservate della shell: il comando viene dopo (if gh …, ! gh …, { gh …; }, do gh …)
     case "${argv[$i]}" in
-      '!'|'{'|'}'|if|then|else|elif|fi|do|done|while|until|esac) i=$((i+1)) ;;
+      '!'|'{'|'}'|if|then|else|elif|fi|do|done|while|until) i=$((i+1)) ;;
+      'esac') [ "$caso" -gt 0 ] && caso=$((caso-1)); modello=0; i=$((i+1)) ;;   # finito un case: quello che segue è di nuovo un comando
       function) i=$((i+2)); [ "${argv[$i]:-}" = '{' ] && i=$((i+1)) ;;
       coproc) i=$((i+1)); [ "${argv[$((i+1))]:-}" = '{' ] && i=$((i+2)) ;;
       for|select)   # for x in a b c: qui nessun comando, ma le parole dell'elenco sono i nomi che il ciclo passa ai suoi comandi
                     # (for f in ~/.config/gh/*; do cat "$f"; done): si controllano come gli argomenti di un programma qualunque
+        variabile_vietata "${argv[$((i+1))]:-}"   # la variabile del ciclo
         if [ "${argv[$((i+2))]:-}" = in ]; then
           for ((k=i+3; k<n; k++)); do parola_locale "${argv[$k]}" antenati "${segni[$k]}"; file_ambiente "${argv[$k]}"; done
         fi
         i="$n" ;;
-      case) i="$n" ;;   # case x in: qui nessun comando, e nessun file letto (le $(…) si controllano da sé)
+      case)   # case x in <modello>: qui nessun comando, e nessun file letto (le $(…) si controllano da sé). Si annota che è
+              # cominciato un case: da qui i modelli dei rami non sono comandi (analizza_testo). Tra apici 'case' non è la
+              # parola riservata, ma un comando qualunque
+        [[ "${segni[$i]}" == *q* ]] && break
+        [ "${argv[$((n-1))]}" = esac ] || inizio_caso=1   # «case x in esac» è già finito
+        i="$n" ;;
       *) break ;;
     esac
   done
-  while [ "$i" -lt "$n" ] && [[ "${argv[$i]}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
+  while [ "$i" -lt "$n" ] && [[ "${argv[$i]}" =~ $RE_ASSEGNA ]]; do
     variabile_vietata "${argv[$i]%%=*}"
     parola_locale "${argv[$i]}" "" "${segni[$i]}"   # il valore: F=~/.config/gh/hosts.yml; cat $F
     file_ambiente "${argv[$i]}"
@@ -2405,6 +2430,8 @@ analizza_comando() { # usa argv, segni, redir, rsegni, iredir, isegni, ncmd, hd_
 analizza_testo() { # $1 testo con uno o più comandi
   local -a argv=() segni=() redir=() rsegni=() iredir=() isegni=()
   local riga tipo s v attesa="" ncmd=0 ops="" dyn=0 hd_libero=0 ultimo="" hd_qui=0 qui_testo="" qui_segni="" salva_h hp hi
+  local caso=0 modello=0 inizio_caso=0   # quanti case sono aperti; 1 se la prossima parola è il modello di un ramo
+  local elenco=0 k                       # 1 dentro NOME=( … ): le parole sono un elenco, non un comando
   local -a hd_coda=()   # chi riceve ogni heredoc della riga, nell'ordine: "programma|1" se il testo viene soltanto scritto
   LIVELLO=$((LIVELLO+1))
   while IFS= read -r riga; do
@@ -2426,7 +2453,29 @@ analizza_testo() { # $1 testo con uno o più comandi
       O)
         case "$v" in
           '>'|'>>'|'>|'|'<'|'<<'|'<<<'|'>&'|'<&'|'>>&') attesa="$v" ;;
-          *) ops="$ops$v"; analizza_comando; argv=(); segni=(); redir=(); rsegni=(); iredir=(); isegni=(); hd_qui=0; qui_testo=""; qui_segni="" ;;
+          '=(')   # NOME=( … ): comincia un elenco. Ciò che lo precede (l'assegnazione, o declare -a NOME=) si controlla qui
+            ops="$ops$v"; analizza_comando
+            argv=(); segni=(); redir=(); rsegni=(); iredir=(); isegni=(); hd_qui=0; qui_testo=""; qui_segni=""; elenco=1 ;;
+          '=)')   # le parole dell'elenco non sono un comando: si controllano come gli argomenti di un programma qualunque
+            ops="$ops$v"
+            if [ "$elenco" = 1 ]; then
+              for k in "${!argv[@]}"; do parola_locale "${argv[$k]}" antenati "${segni[$k]}"; file_ambiente "${argv[$k]}"; done
+              for k in "${!redir[@]}"; do scrive "${redir[$k]}" "${rsegni[$k]}"; done
+              for k in "${!iredir[@]}"; do legge_file "${iredir[$k]}" "${isegni[$k]}"; done
+            else analizza_comando; fi
+            argv=(); segni=(); redir=(); rsegni=(); iredir=(); isegni=(); hd_qui=0; qui_testo=""; qui_segni=""; elenco=0 ;;
+          *) ops="$ops$v"; elenco=0
+             if [ "$modello" = 1 ] && [[ "$v" == ')' || "$v" == '|' || "$v" == '(' ]] && [ "${#argv[@]}" -le 1 ] && \
+                [ "${#redir[@]}" = 0 ] && [ "${#iredir[@]}" = 0 ] && [ -z "$qui_testo" ] && [ "$hd_qui" = 0 ]; then
+               # il modello di un ramo di case: una parola sola, chiusa da «)» (o da «|», se ne segue un altro). Non è un
+               # comando; due parole, o una redirezione, non sono un modello, e si controllano come un comando
+               [ "$v" = ')' ] && modello=0
+             else
+               inizio_caso=0; analizza_comando
+               if [ "$inizio_caso" = 1 ]; then caso=$((caso+1)); modello=1; [ "$v" = ')' ] && modello=0; fi
+             fi
+             [ "$v" = ';;' ] && [ "$caso" -gt 0 ] && modello=1   # dopo «;;» viene il modello del ramo successivo, o esac
+             argv=(); segni=(); redir=(); rsegni=(); iredir=(); isegni=(); hd_qui=0; qui_testo=""; qui_segni="" ;;
         esac
         continue ;;
     esac

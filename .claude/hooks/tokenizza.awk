@@ -1,20 +1,30 @@
 # Divide un comando di shell in parole e operatori, come li vede bash nei casi che servono al metodo.
 # Uscita, una riga per elemento:
-#   W<TAB><segni><TAB><parola>   segni: d = contiene $ o ` (valore deciso quando gira, o un carattere di $'…' che non si
+#   W<TAB><segni><TAB><parola>   (( … )) esce come la parola «((» seguita dall'espressione, in una parola sola
+#                                segni: d = contiene $ o ` (valore deciso quando gira, o un carattere di $'…' che non si
 #                                scrive), g = * ? [ fuori dalle virgolette,
 #                                q = c'erano virgolette o barre rovesciate, b = graffe che bash espande ({a,b} o {1..3})
-#   O<TAB><operatore>            ; && || | & ( ) e le redirezioni > >> >| < << <<< >& <&
+#   O<TAB><operatore>            ; ;; && || | & ( ) e le redirezioni > >> >| < << <<< >& <& («;;» chiude un ramo di case,
+#                                come «;&» e «;;&», che escono anche loro come «;;»); «=(» e «=)» aprono e chiudono
+#                                l'elenco di NOME=( … ). Dentro [[ … ]] «&&», «||», «(», «)», «<», «>» e «|» sono parole
 #   S<TAB><testo>                il testo di una sostituzione $(…), `…`, <(…) o >(…), da controllare come un comando
 #                                (anche quelle nel testo di un heredoc senza apici, che la shell esegue)
 #   H<TAB><testo>                il testo di un heredoc (arriva dopo il comando che lo riceve)
 # Nei testi di S e H gli "a capo" diventano il carattere \001. Le virgolette si tolgono, come fa bash; $'…' si
 # decodifica ($'\x6d' è m), $"…" vale come "…"; un "a capo" vale come ";"; un "#" a inizio parola apre un commento.
+# Le forme che non sono comandi: $(( … )) e (( … )) sono aritmetica, e di loro la shell esegue solo le sostituzioni che
+# contengono; [[ … ]] è un'espressione, e si riconosce solo dove comincia un comando (cmdpos), come fa bash.
 function emit_word() {
   if (has) {
     gsub(/[\t\n]/, " ", w)                       # una parola per riga: tabulazioni e a capo diventano spazi
     if (raw ~ /\{[^}]*(,|\.\.)[^}]*\}/) brace = 1
     printf "W\t%s%s%s%s\t%s\n", (dyn ? "d" : ""), (glob ? "g" : ""), (quoted ? "q" : ""), (brace ? "b" : ""), w
     if (want_delim) { delim = w; want_delim = 0; heredoc = 1; delim_q = quoted }
+    if (in_db) { if (w == "]]" && !quoted) in_db = 0 }
+    else if (cmdpos && !in_arr && !quoted && !dyn && w == "[[") in_db = 1
+    # dopo queste parole riservate comincia un altro comando; dopo ogni altra parola no
+    cmdpos = (cmdpos && !quoted && !dyn && (w == "if" || w == "then" || w == "else" || w == "elif" || w == "do" || w == "while" || w == "until" || w == "!" || w == "{" || w == "time")) ? 1 : 0
+    last_w = (quoted || dyn) ? "" : w
   }
   w = ""; raw = ""; has = 0; dyn = 0; glob = 0; quoted = 0; brace = 0
 }
@@ -31,11 +41,18 @@ function skip_heredoc(    j, k, line, body, j0) {    # salta il testo di un here
   }
   i = n + 1; heredoc = 0; if (!delim_q) subst_heredoc(j0, n); emit_text("H", body)
 }
-function subst_heredoc(a, b,    j, c, k) {   # senza apici nel delimitatore la shell esegue le $(…) e i `…` del testo: escono come S
+function dollaro_tonda(p,    j, k) {   # p = posizione del "$" di "$(": manda ciò che la shell esegue e torna la posizione della ")" che chiude
+  if (substr(s, p + 2, 1) == "(") {       # $(( … )): se la seconda tonda si chiude subito prima della prima è aritmetica, e la
+    k = scan_close(p + 2); j = scan_close(p + 1)   # shell esegue solo le sostituzioni che contiene; altrimenti è un comando
+    if (k == j - 1) { subst_heredoc(p + 3, k - 1); return j }
+  }
+  return substitution(p + 1)
+}
+function subst_heredoc(a, b,    j, c, k) {   # il testo di un heredoc senza apici, o un'espressione aritmetica: la shell ne esegue le $(…) e i `…`, che escono come S
   for (j = a; j <= b; j++) {
     c = substr(s, j, 1)
     if (c == "\\") { j++; continue }
-    if (c == "$" && substr(s, j + 1, 1) == "(") { k = scan_close(j + 1); emit_text("S", substr(s, j + 2, k - j - 2)); j = k; continue }
+    if (c == "$" && substr(s, j + 1, 1) == "(") { j = dollaro_tonda(j); continue }
     if (c == "`") { k = index(substr(s, j + 1), "`"); if (!k) k = b - j + 1; emit_text("S", substr(s, j + 1, k - 1)); j += k; continue }
   }
 }
@@ -61,7 +78,7 @@ function ansi_c(j,    d, m, t, v, k) {   # j = posizione della barra rovesciata 
   if (d == "\\" || d == "'" || d == "\"" || d == "?") { w = w d; return j + 2 }
   w = w "\\" d; return j + 2
 }
-function op(o) { emit_word(); printf "O\t%s\n", o }
+function op(o) { emit_word(); printf "O\t%s\n", o; cmdpos = 1; last_w = "" }
 # Posizione della ")" che chiude la "(" in start, come la cerca bash: salta virgolette, barre rovesciate,
 # sostituzioni annidate e il testo degli heredoc (dove un apostrofo, "l'utente", non apre niente).
 function scan_close(start,    depth, j, cc, k, dl, pend) {
@@ -125,6 +142,7 @@ function backtick(start,    j) {      # start = posizione del primo `
 { s = (NR > 1 ? s "\n" : "") $0 }
 END {
   n = length(s); i = 1; w = ""; raw = ""; has = 0; dyn = 0; glob = 0; quoted = 0; brace = 0
+  cmdpos = 1; in_db = 0; in_arr = 0; last_w = ""
   while (i <= n) {
     c = substr(s, i, 1)
     if (c == "\\") {
@@ -146,7 +164,7 @@ END {
           if (d == "\n") { i += 2; continue }
         }
         if (c == "\"") { i++; break }
-        if (c == "$" && substr(s, i + 1, 1) == "(") { j = substitution(i + 1); w = w substr(s, i, j - i + 1); dyn = 1; i = j + 1; continue }
+        if (c == "$" && substr(s, i + 1, 1) == "(") { j = dollaro_tonda(i); w = w substr(s, i, j - i + 1); dyn = 1; i = j + 1; continue }
         if (c == "`") { j = backtick(i); w = w substr(s, i, j - i + 1); dyn = 1; i = j + 1; continue }
         if (c == "$") dyn = 1
         w = w c; i++
@@ -165,14 +183,28 @@ END {
     }
     if (c == "$" && substr(s, i + 1, 1) == "\"") { i++; continue }   # $"…" si legge come "…"
     if (c == "$" && substr(s, i + 1, 1) == "(") {
-      j = substitution(i + 1); w = w substr(s, i, j - i + 1); has = 1; dyn = 1; i = j + 1; continue
+      j = dollaro_tonda(i); w = w substr(s, i, j - i + 1); has = 1; dyn = 1; i = j + 1; continue
     }
     if (c == "`") { j = backtick(i); w = w substr(s, i, j - i + 1); has = 1; dyn = 1; i = j + 1; continue }
     if (c == "$") { dyn = 1; w = w c; has = 1; i++; continue }
     if (c == "#" && !has) { while (i <= n && substr(s, i, 1) != "\n") i++; continue }
     if (c == " " || c == "\t") { emit_word(); i++; continue }
+    if (in_db) {   # dentro [[ … ]] questi segni fanno parte dell'espressione: escono come parole, non come operatori
+      if ((c == "&" && substr(s, i + 1, 1) == "&") || (c == "|" && substr(s, i + 1, 1) == "|")) { emit_word(); w = substr(s, i, 2); has = 1; emit_word(); i += 2; continue }
+      if (c == "(" || c == ")" || c == "|" || ((c == "<" || c == ">") && substr(s, i + 1, 1) != "(")) { emit_word(); w = c; has = 1; emit_word(); i++; continue }
+      if (c == ";" || c == "&") in_db = 0   # non è un'espressione valida: si torna alla lettura normale
+    }
+    if (in_arr) {  # dentro NOME=( … ): un elenco di parole, dove l'a capo vale uno spazio
+      if (c == ")") { emit_word(); printf "O\t=)\n"; in_arr = 0; cmdpos = 0; last_w = ""; i++; continue }
+      if (c == "\n") { emit_word(); i++; continue }
+      if (c == ";" || c == "&" || c == "|" || c == "(" || c == "<" || c == ">") in_arr = 0   # non è un elenco valido: lettura normale
+    }
     if (c == "\n") { op(";"); if (heredoc) skip_heredoc(); i++; continue }
-    if (c == ";") { op(";"); i++; continue }
+    if (c == ";") {
+      if (substr(s, i + 1, 1) == ";") { op(";;"); i += 2; if (substr(s, i, 1) == "&") i++; continue }
+      if (substr(s, i + 1, 1) == "&") { op(";;"); i += 2; continue }
+      op(";"); i++; continue
+    }
     if (c == "&") {
       if (substr(s, i + 1, 1) == "&") { op("&&"); i += 2; continue }
       if (substr(s, i + 1, 1) == ">") { emit_word(); i += 2; if (substr(s, i, 1) == ">") i++; printf "O\t>\n"; continue }
@@ -192,7 +224,19 @@ END {
         else { want_delim = 1; strip_tabs = 0; if (substr(s, i, 1) == "-") { strip_tabs = 1; i++ } }
       }
       if (substr(s, i, 1) == "&") { o = o "&"; i++ }
-      printf "O\t%s\n", o; continue
+      printf "O\t%s\n", o; cmdpos = 0; last_w = ""; continue
+    }
+    if (c == "(" && substr(s, i + 1, 1) == "(" && !has && (cmdpos || last_w == "for")) {
+      # (( … )), anche dopo for: aritmetica, se la seconda tonda si chiude subito prima della prima (come la legge bash)
+      ka = scan_close(i + 1); ja = scan_close(i)
+      if (ka == ja - 1) {
+        printf "W\t\t((\n"; subst_heredoc(i + 2, ka - 1)
+        ta = substr(s, i + 2, ka - i - 2); gsub(/[\t\n]/, " ", ta); printf "W\tq\t%s\n", ta
+        i = ja + 1; cmdpos = 0; last_w = ""; continue
+      }
+    }
+    if (c == "(" && has && !quoted && !dyn && w ~ /^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=$/) {   # NOME=( … ): un elenco di parole
+      emit_word(); printf "O\t=(\n"; in_arr = 1; i++; continue
     }
     if (c == "(" || c == ")") { op(c); i++; continue }
     if (c == "*" || c == "?" || c == "[") glob = 1
