@@ -1,4 +1,4 @@
-# Due postazioni: yoo e joo
+# Due postazioni: yoo e joo -
 
 Il progetto si sviluppa su due computer Ubuntu, ciascuno con il suo ruolo. Questa pagina dice chi fa cosa, in che ordine, e perché le due postazioni non si pestano i piedi. Claude la legge prima di ogni piano (`CLAUDE.md`, sezione 6). È un file del metodo: la cambia solo l'utente.
 
