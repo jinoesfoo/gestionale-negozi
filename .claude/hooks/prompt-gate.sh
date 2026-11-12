@@ -101,12 +101,12 @@ case "$upper" in
     case "$fase" in codice|revisione)
       cambiati="$(test_cambiati | tr '\n' ' ')"
       if [ -n "${cambiati// /}" ]; then
-        say "I test sono cambiati dopo la fase test: $cambiati. In fase $fase i test e la configurazione dei controlli non si toccano: la fase NON è cambiata. Se un test va davvero corretto, o se è cambiato con l'allineamento a main perché l'avevano cambiato tutte e due le parti, l'utente scrive TORNA AI TEST e poi APPROVO; altrimenti va rimesso com'era."
+        say "I test sono cambiati dopo la fase test: $cambiati. In fase $fase i test e la configurazione dei controlli non si toccano: la fase NON è cambiata. Se un test va davvero corretto, o se è cambiato con l'allineamento a main perché l'avevano cambiato tutte e due le parti, l'utente scrive TORNA AI TEST e poi APPROVO; altrimenti l'utente lo rimette com'era nel suo terminale."
         exit 0
       fi ;;
     esac
     case "$fase" in
-      piano)     write_state "$task" "test";      say "Piano approvato. Fase: test. Scrivi i test dai criteri di accettazione e mostra che falliscono." ;;
+      piano)     write_state "$task" "test";      say "Piano approvato. Fase: test. Scrivi i test dai criteri di accettazione e mostra che falliscono (per COL-T01 no: le sue prove girano in produzione e in fase test si controllano solo con pnpm lint e pnpm typecheck, CLAUDE.md sezione 1)." ;;
       test)      aggiorna_main; write_state "$task" "codice"; salva_manifesto_test
                  say "Test approvati. Fase: codice. Scrivi il codice finché lint, typecheck e test sono verdi. I test non si modificano: da adesso gli hook ne tengono l'impronta." ;;
       codice)    write_state "$task" "revisione"; say "Codice approvato. Fase: revisione. Esegui /revisione." ;;

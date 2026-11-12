@@ -116,7 +116,7 @@ scrive() { # $1 percorso, $2 segni (d, g, b), $3 cartella base facoltativa
 ferma_se_test_cambiati() { # $1 che cosa si ferma: «Il commit non li porta», «La spinta non parte»
   local cambiati
   cambiati="$(test_cambiati | tr '\n' ' ')"
-  [ -n "${cambiati// /}" ] && block "i test o la configurazione dei controlli sono cambiati dopo la fase test: $cambiati. $1: se un test va davvero corretto, o se è cambiato con l'allineamento a main perché l'avevano cambiato tutte e due le parti, l'utente scrive TORNA AI TEST e poi APPROVO (in fase chiusura prima TORNA AL CODICE); altrimenti il file va rimesso com'era."
+  [ -n "${cambiati// /}" ] && block "i test o la configurazione dei controlli sono cambiati dopo la fase test: $cambiati. $1: se un test va davvero corretto, o se è cambiato con l'allineamento a main perché l'avevano cambiato tutte e due le parti, l'utente scrive TORNA AI TEST e poi APPROVO (in fase chiusura prima TORNA AL CODICE); altrimenti l'utente rimette il file com'era nel suo terminale."
   return 0
 }
 controlla_commit() { # il commit porta solo il lavoro del compito corrente
@@ -180,7 +180,7 @@ analizza_git() { # $1 indice di "git" in argv
       case "$fase" in codice|revisione|chiusura) ;; *) block "i commit si fanno dalla fase codice in poi (fase attuale: $fase)." ;; esac
       controlla_commit ;;
     merge) git_merge ;;
-    pull) block "git pull non si usa nel metodo: git fetch origin, poi git merge --no-edit origin/main, dopo un commit di tutto il lavoro (git add -A, git commit) se ci sono modifiche non salvate." ;;
+    pull) block "git pull non si usa nel metodo: git fetch origin, poi git merge --no-edit origin/main, dopo un commit di tutto il lavoro (git add -A, git commit) se ci sono modifiche non salvate; dalla fase codice in poi, perché in fase piano e test non ci si allinea." ;;
     rebase|cherry-pick|revert|am)
       { ha --abort || ha --quit; } && return 0
       block "git $sub non serve nel metodo: se serve davvero, lo esegue l'utente." ;;
@@ -310,7 +310,7 @@ git_merge() { # ci si allinea solo con origin/main; un'unione che crea un commit
     case "$a" in
       --ff-only) ff=1 ;;
       --no-edit|--continue|-q|--quiet|--stat|--no-stat|--log|--no-log) ;;
-      -*) block "git merge $a non serve nel metodo: ci si allinea con git merge --no-edit origin/main, dopo un commit di tutto il lavoro (git add -A, git commit) se ci sono modifiche non salvate." ;;
+      -*) block "git merge $a non serve nel metodo: ci si allinea con git merge --no-edit origin/main, dopo un commit di tutto il lavoro (git add -A, git commit) se ci sono modifiche non salvate; dalla fase codice in poi, perché in fase piano e test non ci si allinea." ;;
       *) pos+=("$a") ;;
     esac
   done
@@ -319,7 +319,7 @@ git_merge() { # ci si allinea solo con origin/main; un'unione che crea un commit
     block "un'unione si conclude nelle fasi codice, revisione o chiusura."
   fi
   { [ "${#pos[@]}" -eq 1 ] && [ "${pos[0]}" = origin/main ]; } || \
-    block "ci si allinea solo con origin/main: git merge --no-edit origin/main, dopo un commit di tutto il lavoro (git add -A, git commit) se ci sono modifiche non salvate."
+    block "ci si allinea solo con origin/main: git merge --no-edit origin/main, dopo un commit di tutto il lavoro (git add -A, git commit) se ci sono modifiche non salvate; dalla fase codice in poi, perché in fase piano e test non ci si allinea."
   metodo_in_arrivo origin/main
   [ "$ff" = 1 ] && return 0
   case "$fase" in codice|revisione|chiusura) ;; *) block "un git merge che crea un commit si fa solo nelle fasi codice, revisione e chiusura (fase attuale: $fase)." ;; esac
