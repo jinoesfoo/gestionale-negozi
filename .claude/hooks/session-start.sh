@@ -17,4 +17,6 @@ elif [ -n "$task" ] && [ "$fase" != "nessuno" ]; then
 else
   echo "[Metodo] Postazione $me. Nessun compito aperto. Proponi il prossimo con /stato; l'utente lo apre con INIZIA <ID>."
 fi
+# pnpm 12 prende il blocco dello store in /run/user/<uid>: la cartella deve esistere prima dei comandi nella sandbox
+mkdir -p "/run/user/$(id -u)/pnpm-store-operation-locks-$(id -u)" 2>/dev/null && chmod 700 "/run/user/$(id -u)/pnpm-store-operation-locks-$(id -u)" 2>/dev/null || true
 exit 0
