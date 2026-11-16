@@ -1,0 +1,8 @@
+# Testi del progetto e del metodo: non sono codice, Prettier non li riformatta.
+specs/
+docs/
+registro/
+.claude/
+CLAUDE.md
+AVVIO.md
+pnpm-lock.yaml
