@@ -1,6 +1,7 @@
 # Testi del progetto e del metodo: non sono codice, Prettier non li riformatta.
 specs/
 docs/
+infra/*.md
 registro/
 .claude/
 CLAUDE.md
