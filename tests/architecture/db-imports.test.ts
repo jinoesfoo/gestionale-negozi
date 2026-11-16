@@ -34,6 +34,17 @@ const cases: Array<[file: string, specifier: string, allowed: boolean]> = [
   ['src/server/audit/audit.ts', 'drizzle-orm/node-postgres', false],
   ['src/server/db/client.ts', 'pg', true],
   ['src/server/db/client.ts', 'drizzle-orm/node-postgres', true],
+  ['src/server/jobs/boss.ts', 'pg-pool', false],
+  ['src/app/page.tsx', 'pg/lib/client', false],
+  // pg-boss è la coda dei lavori (ruolo app_jobs), non il client dei dati: ammesso fuori da src/server/db/.
+  ['src/server/jobs/boss.ts', 'pg-boss', true],
+  ['src/worker.ts', 'pg-boss', true],
+  // Il migratore di Drizzle: solo in src/migrate.ts (01 §Contenuto dell'immagine).
+  ['src/migrate.ts', 'drizzle-orm/node-postgres/migrator', true],
+  ['src/migrate.ts', 'drizzle-orm/node-postgres', false],
+  ['src/migrate.ts', 'pg', false],
+  ['src/cli.ts', 'drizzle-orm/node-postgres/migrator', false],
+  ['src/server/billing/sync.ts', 'drizzle-orm/node-postgres/migrator', false],
   // Client del proprietario: solo nei punti di ingresso e nei comandi del CLI.
   ['src/migrate.ts', '@/server/db/owner-client', true],
   ['src/cli.ts', './server/db/owner-client', true],

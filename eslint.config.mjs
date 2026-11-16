@@ -5,7 +5,20 @@
 import nextCoreWebVitals from 'eslint-config-next/core-web-vitals';
 import nextTypescript from 'eslint-config-next/typescript';
 
-const DB_DRIVERS = ['pg', 'pg-*', 'postgres', 'drizzle-orm/node-postgres', 'drizzle-orm/node-postgres/*'];
+// Pacchetti del driver elencati uno per uno: un modello 'pg-*' vieterebbe anche pg-boss, che è la coda
+// dei lavori (ruolo app_jobs, src/server/jobs/boss.ts), non il client dei dati.
+const DB_DRIVERS = [
+  'pg',
+  'pg-pool',
+  'pg-native',
+  'pg-cursor',
+  'pg-query-stream',
+  'postgres',
+  'drizzle-orm/node-postgres',
+  'drizzle-orm/node-postgres/*',
+];
+// Il migratore di Drizzle si usa in src/migrate.ts (01 §Contenuto dell'immagine); il resto del driver no.
+const MIGRATOR = 'drizzle-orm/node-postgres/migrator';
 
 const dbPatterns = {
   client: {
@@ -29,11 +42,23 @@ const dbPatterns = {
     group: DB_DRIVERS,
     message: 'R-DATI-3: i driver del database si usano solo dentro src/server/db/.',
   },
+  // Come drivers, ma con il migratore ammesso (solo per src/migrate.ts).
+  // Una negazione in group non basta: drizzle-orm/node-postgres esclude anche ciò che sta sotto.
+  driversExceptMigrator: [
+    {
+      group: DB_DRIVERS.filter((d) => !d.startsWith('drizzle-orm/')),
+      message: 'R-DATI-3: i driver del database si usano solo dentro src/server/db/.',
+    },
+    {
+      regex: `^drizzle-orm/node-postgres(?!/migrator$)(/.*)?$`,
+      message: `R-DATI-3: i driver del database si usano solo dentro src/server/db/ (qui è ammesso solo ${MIGRATOR}).`,
+    },
+  ],
 };
 
 /** Regola con i soli modelli indicati (le altre restrizioni restano quelle elencate). */
 const restrict = (...keys) => ({
-  'no-restricted-imports': ['error', { patterns: keys.map((k) => dbPatterns[k]) }],
+  'no-restricted-imports': ['error', { patterns: keys.flatMap((k) => dbPatterns[k]) }],
 });
 
 const ALL = ['client', 'owner', 'adapter', 'counters', 'drivers'];
@@ -66,6 +91,8 @@ const config = [
     files: ['src/migrate.ts', 'src/cli.ts', 'src/isolation-check.ts', 'src/cli/commands/**'],
     rules: restrict(...without('owner')),
   },
+  // src/migrate.ts esegue le migrazioni con il migratore di Drizzle.
+  { files: ['src/migrate.ts'], rules: restrict('client', 'adapter', 'counters', 'driversExceptMigrator') },
   // Plugin e callback di Better Auth: auth-counters ovunque sotto src/server/auth/.
   { files: ['src/server/auth/**'], rules: restrict(...without('counters')) },
   // L'adattatore di Better Auth solo nella configurazione.

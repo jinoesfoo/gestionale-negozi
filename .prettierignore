@@ -5,5 +5,21 @@ infra/*.md
 registro/
 .claude/
 CLAUDE.md
+CLAUDE.local.md
 AVVIO.md
+.mcp.json
+.gitmodules
+.github/CODEOWNERS
 pnpm-lock.yaml
+# File personali che la sandbox di Claude Code monta nella radice come illeggibili.
+.bashrc
+.bash_profile
+.profile
+.zshrc
+.zprofile
+.gitconfig
+.ripgreprc
+.idea/
+.vscode/
+.idea
+.vscode
