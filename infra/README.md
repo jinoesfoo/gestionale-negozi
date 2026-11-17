@@ -314,11 +314,13 @@ Servono a Caddy per il certificato jolly con la sfida DNS (06 §Caddy; vanno in 
 
 Nella versione precedente del pannello lo stesso si fa con «Custom token» → «Get started»: «Permissions» `Zone` · `Zone` · `Read` e `Zone` · `DNS` · `Edit`; «Zone Resources» `Include` · `Specific zone` · la zona.
 
+**Controllo di un token.** «API Tokens» → clic sul nome del token: si apre «Token Summary». Nella scheda «Summary», «Permission policies» mostra una sola voce, la zona del token, con «Zone: Read» e «DNS: Edit»; «IP Address Filtering» dice «All IP addresses allowed» e «Expiration» «No expiration». Si esce con «Back», senza toccare altro (pannello del 17/11/2026).
+
 **Valore perso.** Se il valore di un token non è nel gestore di password, non si recupera: lo si rigenera. «API Tokens» → menu «⋯» della riga del token → «Roll» → «Confirm». Il token resta lo stesso (nome, permessi, zona), il valore vecchio non vale più e quello nuovo si vede una volta sola: si salva come al punto 6. Se il token è già in `caddy.env`, invece del «Roll» si fa una rotazione (sotto), così Caddy non resta con un valore che non vale più.
 
 **Altri token.** Sull'account restano solo i token che servono. L'assistente AI del pannello («Ask AI», nella documentazione Agent Lee, prima «Cloudflare Agent») crea un token utente «Cloudflare Agent Token - <data>», con permessi ampi, quando gli si concede l'accesso (documentazione di Cloudflare, «Agent Lee» → «Manage access», letta il 17/11/2026). Se l'assistente non serve, quel token si cancella dall'elenco («⋯» → «Delete»). Se ricompare, si spegne l'assistente: «Configurations» → «Preferences» → «Cloudflare Agent». Alla richiesta di accesso di «Ask AI» non si risponde di sì, se l'assistente non serve.
 
-Token in uso: `caddy-foondaco-com` e `caddy-foondaco-it`, creati il 17/11/2026 (DOM-T01). Copia fuori linea (OPS-009): nel gestore di password dal 17/11/2026; copia sigillata _da confermare_.
+Token in uso: `caddy-foondaco-com` e `caddy-foondaco-it`, creati il 17/11/2026 (DOM-T01) e rigenerati con «Roll» lo stesso giorno, perché il primo valore non era stato salvato. Copia fuori linea (OPS-009): nel gestore di password e nella copia sigillata, ultimo aggiornamento 17/11/2026.
 
 **Rotazione di un token** (utente). Caddy usa il token solo quando emette o rinnova un certificato: intanto serve quello già salvato nel volume `app_caddy_data`. Per questo «il certificato si vede ancora» non prova che il token nuovo funzioni.
 

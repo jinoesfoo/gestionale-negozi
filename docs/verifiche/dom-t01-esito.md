@@ -17,9 +17,11 @@ I controlli DNS li ha fatti Claude dai server (`ssh test dig …`, uno da `ssh p
 
 | # | Esito |
 |---|---|
-| B1 | Riuscito (17/11/2026), confermato dall'utente: token `caddy-foondaco-com` creato con «Create Token» → «Start from scratch» → «Start with a Zone policy», con permessi Zone Read e DNS Edit, sola zona `foondaco.com`, «No expiration», nessun filtro IP. L'utente aveva confermato permessi e zona con un «ok», senza dettare il riepilogo. La schermata dell'elenco «API Tokens» (17/11/2026) mostra il token attivo, con i soli gruppi di permessi «Zone.Zone, Zone.DNS», mai usato («Last used» vuoto); l'elenco non mostra il livello dei permessi (Read, Edit) né la zona. |
-| B2 | Riuscito (17/11/2026), confermato dall'utente: token `caddy-foondaco-it`, come B1, con la sola zona `foondaco.it`; è un token diverso. Nella stessa schermata: attivo, «Zone.Zone, Zone.DNS», mai usato. |
-| B3 | **Non riuscito** al controllo del 17/11/2026; correzione in corso. L'utente aveva risposto «ok» anche alla domanda sul gestore di password, ma intendeva la password dell'account Cloudflare. Il valore dei due token, che Cloudflare mostra una volta sola, non è stato salvato da nessuna parte (chiarito dall'utente il 17/11/2026). Correzione: si rigenerano i due token, con gli stessi permessi e la stessa zona, e il valore nuovo va nel gestore di password e nella copia sigillata (`infra/README.md`, punto 2). Nessun programma li usava ancora, quindi la rigenerazione non interrompe niente. I token non sono passati in chat, in git né in file del progetto; Claude non li ha visti. |
+| B1 | Riuscito (17/11/2026): token `caddy-foondaco-com`, creato con «Create Token» → «Start from scratch» → «Start with a Zone policy». La sua pagina nel pannello («API Tokens» → nome del token → «Token Summary», schermata dell'utente del 17/11/2026) mostra in «Permission policies» una sola voce: la zona `foondaco.com` dell'account dell'utente, con «Zone: Read» e «DNS: Edit», nient'altro. «IP Address Filtering»: «All IP addresses allowed», quindi nessun filtro che escluda il server di produzione. «Expiration»: «No expiration». In un primo momento l'utente aveva confermato permessi e zona solo con un «ok»; la schermata lo sostituisce. |
+| B2 | Riuscito (17/11/2026): token `caddy-foondaco-it`, creato come B1. La sua pagina («Token Summary», schermata dell'utente del 17/11/2026) mostra una sola voce, la zona `foondaco.it`, con «Zone: Read» e «DNS: Edit»; «All IP addresses allowed»; «No expiration». È un token diverso da quello di B1: altro nome, altra zona, un'altra riga nell'elenco «API Tokens». |
+| B3 | Riuscito dopo una correzione (17/11/2026). Al primo controllo non era riuscito: l'utente aveva risposto «ok» anche alla domanda sul gestore di password, ma intendeva la password dell'account Cloudflare, e il valore dei due token, che Cloudflare mostra una volta sola, non era stato salvato da nessuna parte. Correzione, lo stesso giorno, con i passi dati in chat: l'utente ha rigenerato i due token con «Roll» (nome, permessi e zona restano; il valore vecchio non vale più), ha salvato ciascun valore nuovo in una voce del gestore di password e l'ha riaperta per controllare, poi ha fatto la copia sigillata (OPS-009; procedura in `infra/README.md`, punto 2, «Valore perso»). Esito riferito dall'utente («fatto»): il valore di un token, per regola, Claude non lo vede. Nessun programma usava ancora i token («Last used» vuoto nell'elenco, schermata del 17/11/2026), quindi la rigenerazione non ha interrotto niente. I token non sono passati in chat, in git né in file del progetto. |
+
+Osservazione: l'elenco «API Tokens» del 17/11/2026 mostrava anche un terzo token, «Cloudflare Agent Token - 2026-11-15», non creato dal compito. Lo crea l'assistente AI del pannello («Ask AI») quando gli si concede l'accesso all'account, e ha permessi ampi. Al progetto non serve: l'utente l'ha cancellato il 17/11/2026 (riferito dall'utente). Se ricompare, si spegne l'assistente (`infra/README.md`, punto 2, «Altri token»).
 
 ## C. Record dei server, «solo DNS» (DOM-008)
 
@@ -57,16 +59,17 @@ I controlli DNS li ha fatti Claude dai server (`ssh test dig …`, uno da `ssh p
 
 - **DOM-008**, parte DNS: riuscito (A3, C1, C2, C3, C4). La parte HTTP/2 e HTTP/3 è di DOM-T02.
 - **DOM-012**: riuscito (D1–D11), con il `rua` su `dmarc@foondaco.com` e l'inoltro attivo. La prova di invio con `spf=pass`, `dkim=pass` e `dmarc=pass` è di FON-T10.
-- **Token per zona:** riuscito (B1–B3), confermato dall'utente.
+- **Token per zona:** riuscito (B1–B3); B3 dopo una correzione, con i token rigenerati e salvati il 17/11/2026.
 
-Tutti i controlli della lista sono stati eseguiti e nessuno è fallito. Gli esiti che Claude non ha letto da sé con `dig` vengono da:
-- schermate dell'utente: A4, D5 e, in D10, i record mostrati prima di «Activate»;
-- conferme dell'utente su ciò che vedeva nei pannelli: B1 e B2 (con un «ok», senza dettare il riepilogo), C4 (confermata anche dal DNS) e D10;
-- dichiarazioni dell'utente: B3 (dove sono conservati i token) e D11 (l'email di prova è arrivata);
+Tutti i controlli della lista sono stati eseguiti. Uno solo non era riuscito al primo controllo, B3, ed è riuscito dopo la correzione. Gli esiti che Claude non ha letto da sé con `dig` vengono da:
+- schermate dell'utente: A4, B1, B2, D5 e, in D10, i record mostrati prima di «Activate»;
+- conferme dell'utente su ciò che vedeva nei pannelli: C4 (confermata anche dal DNS) e D10;
+- dichiarazioni dell'utente: B3 (token rigenerati e conservati) e D11 (l'email di prova è arrivata);
 - una verifica indiretta: D3 e D4 per `foondaco.com`. I valori del pannello di Brevo non sono stati dettati; Brevo mostra il dominio «Authenticated» (D5), quindi ha trovato nel DNS i valori che si aspetta.
 
 Correzioni durante l'esecuzione:
 - il cambio dei nameserver su Hostinger, all'inizio non salvato;
 - la zona `foondaco.it`, creata su Cloudflare durante il compito;
 - i record importati, cancellati o messi «DNS only»;
-- la zona `foondaco.com`, fatta ricontrollare a Cloudflare perché risultasse «Active».
+- la zona `foondaco.com`, fatta ricontrollare a Cloudflare perché risultasse «Active»;
+- i due token di Cloudflare, rigenerati e salvati perché il primo valore non era stato conservato (B3).
