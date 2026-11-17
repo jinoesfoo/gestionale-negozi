@@ -16,6 +16,7 @@ Rinviati (`10-rinviato.md` §2): domini propri dei clienti (ex DOM-002…DOM-007
 - Accettazione: le tre interrogazioni DNS di FON-T10 rispondono con i valori attesi e un'email di prova risulta `spf=pass`, `dkim=pass`, `dmarc=pass`.
 - Nota di DOM-T01 (piano approvato il 14/11/2026): inoltro del `rua` con Cloudflare Email Routing sulla sola zona `{{DOMINIO}}`. Un nome ha un solo record SPF: sulla radice di `{{DOMINIO}}` l'`include` di Brevo e quello di Email Routing stanno nello stesso record. Il DMARC di `{{DOMINIO_TEST}}` manda i rapporti allo stesso `dmarc@{{DOMINIO}}`: è un indirizzo di un altro dominio, quindi la zona `{{DOMINIO}}` pubblica anche `{{DOMINIO_TEST}}._report._dmarc.{{DOMINIO}}` TXT `v=DMARC1` (RFC 7489 §7.1). Lista di controllo in `docs/verifiche/dom-t01.md`.
 - Esito del [VERIFICA] (DOM-T01, 17/11/2026): servizio di inoltro scelto Cloudflare Email Routing, sulla zona `{{DOMINIO}}`. Record richiesti, mostrati dal pannello all'attivazione e letti con `dig`: tre `MX` sulla radice verso `route1`, `route2`, `route3.mx.cloudflare.net` (priorità scelte da Cloudflare: 31, 88, 34); un TXT SPF `v=spf1 include:_spf.mx.cloudflare.net ~all` sulla radice, unito a quello di Brevo in `v=spf1 include:spf.brevo.com include:_spf.mx.cloudflare.net ~all`; un TXT DKIM `cf2024-1._domainkey` per la posta inoltrata. Indirizzo `dmarc@{{DOMINIO}}` inoltrato alla casella di `ADMIN_ALERT_EMAIL`, destinazione verificata; un'email di prova è arrivata. Brevo chiede per ciascun dominio un codice di verifica (`brevo-code`, TXT sulla radice: sulle due radici c'è lo stesso valore, e Brevo mostra i due domini «Authenticated») e due `CNAME` DKIM (`brevo1._domainkey`, `brevo2._domainkey`), da tenere «DNS only». Valori in `infra/README.md`, «DNS ed email (DOM-T01)».
+- Nota di DOM-T01 (revisione, 17/11/2026): il passaggio a `p=quarantine` vale anche per `_dmarc.{{DOMINIO_TEST}}`, con la stessa regola, perché §DNS vuole sulla zona di test «i record di DOM-012». L'utente cambia tutti e due i record, e la lista di COL-T01 (09) li controlla tutti e due e ne annota le date. I rapporti delle due zone arrivano tutti a `dmarc@{{DOMINIO}}`.
 
 ## Progetto
 
@@ -31,7 +32,14 @@ LABEL org.opencontainers.image.source="https://github.com/<utente>/<repo>"
 ```
 Fissare la versione di `caddy` nelle due righe `FROM` con lo stesso numero.
 
-Nota di DOM-T01 (17/11/2026), per il piano di DOM-T02: i token di Cloudflare creati in DOM-T01 hanno il formato nuovo, che inizia con `cfut_`. `caddy-dns/cloudflare` lo accetta dalla v0.2.4; fino alla v0.2.3 accetta solo token da 35 a 50 caratteri. Se il token non ha la forma attesa, il modulo ferma Caddy con un errore che contiene il token per intero, e il token finisce nel log. Dettagli in `infra/README.md`, «DNS ed email (DOM-T01)», «Punti lasciati ai compiti successivi».
+Nota di DOM-T01 (17/11/2026), per il piano di DOM-T02: i token di Cloudflare creati in DOM-T01 hanno il formato nuovo, che inizia con `cfut_`. `caddy-dns/cloudflare` lo accetta dalla v0.2.4, l'ultima al 17/11/2026; fino alla v0.2.3 accetta solo token da 35 a 50 caratteri. Almeno due tipi di errore stampano il token per intero. Il primo è quello del modulo («API token '…' appears invalid»), nel log di Caddy. Il secondo sono quelli di Compose per una riga malformata in `caddy.env` (per esempio «unterminated quoted value …»), nell'output di `/srv/app/dc` e quindi anche nel log del rilascio. Se succede, il token si rigenera subito. Nel piano di DOM-T02:
+- fissare la versione del modulo nel `Dockerfile`, non più vecchia della v0.2.4;
+- prima di avviare Caddy, controllare la versione del modulo a ogni immagine nuova e la forma del valore in `caddy.env` a ogni token nuovo, senza stamparlo;
+- finché Caddy non è partito senza errori, Claude legge i log di Caddy, l'output dei comandi `/srv/app/dc` che leggono `caddy.env` e i log dei rilasci falliti solo con un filtro che sostituisce con un segnaposto le righe con `cfut_` o «appears invalid» (sul server, dopo `2>&1`): il segno dell'errore resta visibile e il token non entra nella chat.
+
+Le stesse regole valgono a ogni avvio di Caddy con un token nuovo o con un'immagine nuova.
+
+Dettagli in `infra/README.md`, «DNS ed email (DOM-T01)», «Token esposto» e «Punti lasciati ai compiti successivi».
 
 `Caddyfile` (schema; i valori arrivano da variabili d'ambiente):
 ```caddyfile

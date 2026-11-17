@@ -316,11 +316,20 @@ Nella versione precedente del pannello lo stesso si fa con «Custom token» → 
 
 **Controllo di un token.** «API Tokens» → clic sul nome del token: si apre «Token Summary». Nella scheda «Summary», «Permission policies» mostra una sola voce, la zona del token, con «Zone: Read» e «DNS: Edit»; «IP Address Filtering» dice «All IP addresses allowed» e «Expiration» «No expiration». Si esce con «Back», senza toccare altro (pannello del 17/11/2026).
 
-**Valore perso.** Se il valore di un token non è nel gestore di password, non si recupera: lo si rigenera. «API Tokens» → menu «⋯» della riga del token → «Roll» → «Confirm». Il token resta lo stesso (nome, permessi, zona), il valore vecchio non vale più e quello nuovo si vede una volta sola: si salva come al punto 6. Se il token è già in `caddy.env`, invece del «Roll» si fa una rotazione (sotto), così Caddy non resta con un valore che non vale più.
+**Valore perso.** Se il valore di un token non è nel gestore di password, non si recupera: lo si rigenera. «API Tokens» → menu «⋯» della riga del token → «Roll» → «Confirm». Il token resta lo stesso (nome, permessi, zona), il valore vecchio non vale più e quello nuovo si vede una volta sola: si salva come al punto 6, poi si aggiornano «Token in uso» e «Rotazioni» (sotto). Se il token è già in `caddy.env`, invece del «Roll» si fa una rotazione (sotto), così Caddy non resta con un valore che non vale più. Un token esposto, invece, si rigenera subito (sotto).
+
+**Token esposto.** Se il valore di un token è finito dove non deve (in un log, in chat, in un file del progetto, nell'output di un comando), si fa subito «Roll», anche se il token è già in `caddy.env`: il valore vecchio non vale più (documentazione di Cloudflare, `developers.cloudflare.com/fundamentals/api/how-to/roll-token/`, letta il 17/11/2026). Poi, in quest'ordine:
+- il valore nuovo si salva come al punto 6, ma al posto di quello vecchio: nella stessa voce del gestore di password e nella copia sigillata (OPS-009);
+- si prova il valore nuovo, come al punto 2 della rotazione;
+- se il valore era finito nell'output di un errore di Caddy o di Compose, si toglie la causa («Punti lasciati ai compiti successivi», «Formato dei token e modulo di Caddy»), altrimenti anche il valore nuovo finisce nello stesso posto;
+- se il token è in `caddy.env`, si fanno i punti 3 e 4 della rotazione, con i loro controlli;
+- si aggiornano «Token in uso» e «Rotazioni».
+
+Nel frattempo Caddy, se è in funzione, non può emettere né rinnovare i certificati di quella zona, ma continua a usare quelli che ha.
 
 **Altri token.** Sull'account restano solo i token che servono. L'assistente AI del pannello («Ask AI», nella documentazione Agent Lee, prima «Cloudflare Agent») crea un token utente «Cloudflare Agent Token - <data>», con permessi ampi, quando gli si concede l'accesso (documentazione di Cloudflare, «Agent Lee» → «Manage access», letta il 17/11/2026). Se l'assistente non serve, quel token si cancella dall'elenco («⋯» → «Delete»). Se ricompare, si spegne l'assistente: «Configurations» → «Preferences» → «Cloudflare Agent». Alla richiesta di accesso di «Ask AI» non si risponde di sì, se l'assistente non serve.
 
-Token in uso: `caddy-foondaco-com` e `caddy-foondaco-it`, creati il 17/11/2026 (DOM-T01) e rigenerati con «Roll» lo stesso giorno, perché il primo valore non era stato salvato. Copia fuori linea (OPS-009): nel gestore di password e nella copia sigillata, ultimo aggiornamento 17/11/2026.
+Token in uso: `caddy-foondaco-com` e `caddy-foondaco-it`, creati il 17/11/2026 (DOM-T01). Copia fuori linea (OPS-009): nel gestore di password e nella copia sigillata, ultimo aggiornamento 17/11/2026.
 
 **Rotazione di un token** (utente). Caddy usa il token solo quando emette o rinnova un certificato: intanto serve quello già salvato nel volume `app_caddy_data`. Per questo «il certificato si vede ancora» non prova che il token nuovo funzioni.
 
@@ -334,12 +343,19 @@ Token in uso: `caddy-foondaco-com` e `caddy-foondaco-it`, creati il 17/11/2026 (
    unset T
    ```
    Dopo il `read` si incolla il token (non si vede) e si preme Invio. La prima risposta deve dire `"status":"active"`. Delle altre due, solo quella della zona del token deve trovare la zona (`"count":1`). Quella dell'altra zona non deve trovarla: risponde senza zone (`"count":0`) oppure con un errore di permesso (`"success":false`). Le risposte non contengono il token.
-3. Si scrive il token nuovo in `CF_API_TOKEN` di `/srv/app/env/caddy.env` del server di quella zona, con la procedura dei file di ambiente (copia del file e `mv`, «File di ambiente dei server»).
-4. Si ricrea il container di Caddy, perché rilegga il file: come `deploy`, `/srv/app/dc up -d --force-recreate caddy`. Un `restart` non basta: Compose rilegge `env_file` solo quando ricrea il container.
-5. Solo dopo, si cancella il token vecchio («API Tokens» → il token → «Delete»).
-6. Ultimo passo: si aggiorna la copia fuori linea (gestore di password e copia sigillata, OPS-009), togliendo il token vecchio, e se ne annota qui sotto la data.
+3. Si scrive il token nuovo in `CF_API_TOKEN` di `/srv/app/env/caddy.env` del server di quella zona, con la procedura dei file di ambiente (copia del file e `mv`, «File di ambiente dei server»): una sola riga `CF_API_TOKEN=cfut_…`, senza apici né spazi. Controlli, che non stampano il valore:
+   - `grep -c '^[^#]*CF_API_TOKEN' /srv/app/env/caddy.env` risponde `1`: c'è una sola riga del token, senza contare i commenti;
+   - `grep -cE '^CF_API_TOKEN=cfut_[A-Za-z0-9_-]{32,256}$' /srv/app/env/caddy.env` risponde `1`: la riga ha la forma che il modulo di Caddy accetta.
+4. Si ricrea il container di Caddy, perché rilegga il file: come `deploy`, `/srv/app/dc up -d --force-recreate caddy`. Un `restart` non basta: Compose rilegge `env_file` solo quando ricrea il container. Controllo: il comando finisce senza errori. Dopo una ventina di secondi, `/srv/app/dc ps caddy` mostra:
+   - nella colonna «CREATED», un container di pochi secondi o di un minuto fa, non di ore o di giorni;
+   - nella colonna «STATUS», «Up» da almeno 20 secondi, non «Restarting».
 
-Rotazioni: _nessuna finora_.
+   Se il container non è stato ricreato, Caddy usa ancora il valore vecchio: non si passa al punto 5. Se un errore mostra il valore del token, non lo si copia in chat: vale «Token esposto».
+5. Solo dopo, si cancella il token vecchio («API Tokens» → il token → «Delete»).
+6. Ultimo passo: si aggiorna la copia fuori linea (gestore di password e copia sigillata, OPS-009), togliendo il token vecchio. Poi si aggiornano qui «Token in uso» (sopra: nome del token e data dell'ultimo aggiornamento della copia) e «Rotazioni» (sotto: una riga con la data).
+
+Rotazioni, compresi i «Roll» di «Valore perso» e «Token esposto»:
+- 17/11/2026: «Roll» di `caddy-foondaco-com` e `caddy-foondaco-it` (DOM-T01, «Valore perso»: il primo valore non era stato salvato).
 
 ### 3. Record dei server (utente), su ciascuna zona
 
@@ -413,7 +429,7 @@ Il record SPF creato da Email Routing si trova in «DNS» → «Records» filtra
 
 L'ultimo record autorizza `foondaco.com` a ricevere i rapporti di `foondaco.it` (RFC 7489 §7.1): senza, i ricevitori non mandano i rapporti della zona di test. Un solo record `_dmarc` per zona: se Cloudflare o Brevo ne hanno già creato uno, si modifica quello.
 
-Per `_dmarc.foondaco.com`, `p=none` diventa `p=quarantine` dopo almeno due settimane di rapporti puliti, al più tardi durante COL-T01 (06 DOM-012). Lo fa l'utente modificando il record, e COL-T01 ne annota la data. Il DMARC di `foondaco.it` la specifica non lo nomina: resta `p=none`.
+Per `_dmarc.foondaco.com`, `p=none` diventa `p=quarantine` dopo almeno due settimane di rapporti puliti, al più tardi durante COL-T01 (06 DOM-012). Lo fa l'utente modificando il record, e COL-T01 ne annota la data. La stessa regola vale per `_dmarc.foondaco.it`: 06 §DNS vuole sulla zona di test i record di DOM-012, e i suoi rapporti arrivano anch'essi a `dmarc@foondaco.com`. La lista di COL-T01 controlla tutti e due i record (nota di DOM-T01 in 06, sotto DOM-012).
 
 ### 8. Autenticazione su Brevo e prova dell'inoltro (utente)
 
@@ -469,11 +485,21 @@ Nota: i record DKIM `CNAME` vanno «DNS only». Con il proxy (nuvola arancione) 
   - se il firewall di Hostinger (FON-T07a) applica le stesse regole anche a IPv6.
   
   Se l'IP vero dei client IPv6 non arriva, DOM-T02 sceglie fra una rete Compose con IPv6 e la rimozione dei record `AAAA`. Il punto è annotato anche in 06 §DNS.
-- **Formato dei token e modulo di Caddy.** I token di DOM-T01 hanno il formato nuovo di Cloudflare, che inizia con `cfut_` ed è più lungo di 50 caratteri. Il codice delle due versioni di `caddy-dns/cloudflare`, letto su GitHub il 17/11/2026, dice:
-  - il modulo accetta questo formato dalla v0.2.4 (commit «Handle new CF tokens format (#123)», 23/03/2026);
+- **Formato dei token e modulo di Caddy.** I token di DOM-T01 hanno il formato nuovo di Cloudflare, che inizia con `cfut_` ed è più lungo di 50 caratteri. Il codice di `caddy-dns/cloudflare`, letto su GitHub il 17/11/2026, dice:
+  - il modulo accetta questo formato dalla v0.2.4 (commit «Handle new CF tokens format (#123)», 23/03/2026), che è anche l'ultima versione;
   - fino alla v0.2.3 accetta solo token da 35 a 50 caratteri.
 
-  Il `Dockerfile` di 06 §Caddy non fissa la versione del modulo, quindi `xcaddy` prende l'ultima; se DOM-T02 la fissa, non più vecchia della v0.2.4. Se il token non ha la forma attesa (versione vecchia del modulo, apici o spazi nel file di ambiente), il modulo ferma Caddy con l'errore «API token '…' appears invalid». L'errore contiene il token per intero, che così finisce nel log del container. In quel caso si corregge il file e il token si considera esposto: si rigenera («Valore perso», punto 2). Il punto è annotato anche in 06 §Caddy.
+  Il `Dockerfile` di 06 §Caddy non fissa la versione del modulo, quindi `xcaddy` prende l'ultima. Conviene che DOM-T02 la fissi, non più vecchia della v0.2.4 (`--with github.com/caddy-dns/cloudflare@v0.2.4`): così un'immagine nuova non cambia il modulo da sola.
+
+  Almeno due tipi di errore stampano il token per intero:
+  - quello del modulo, «API token '…' appears invalid», che ferma Caddy e finisce nel log del container. Viene da un modulo più vecchio della v0.2.4 o da un valore con caratteri in più o in meno (per esempio troncato, o con un apice solo alla fine). La proposta di nasconderlo (PR #132 di `caddy-dns/cloudflare`) al 17/11/2026 non è unita;
+  - quelli di Compose per una riga malformata in `caddy.env`, per esempio «unterminated quoted value …» (un apice aperto e non chiuso) o «unexpected character … in variable name …» (un apice prima del nome). Fermano `/srv/app/dc` prima di Caddy, e la riga del token compare nell'output del comando, anche in quello di `deploy.sh`, quindi nel log del rilascio. Gli apici chiusi e gli spazi attorno al valore, invece, Compose li toglie da sé.
+
+  In quei casi il token è esposto: vale «Token esposto», nella sezione 2. Ne vengono due regole, per DOM-T02 e per ogni avvio di Caddy con un token nuovo o con un'immagine nuova, rotazione compresa:
+  - prima dell'avvio si controllano la versione del modulo, a ogni immagine nuova, e la forma del valore in `caddy.env`, a ogni token nuovo. La versione si vede per esempio con `caddy list-modules --versions --skip-standard`, che elenca i moduli aggiunti con la loro versione. La forma la controlla l'utente con i comandi del punto 3 della rotazione, che non stampano il valore;
+  - finché Caddy non è partito senza errori, Claude non mostra in chat senza filtro i log di Caddy, l'output dei comandi `/srv/app/dc` che leggono `caddy.env` (`up`, `create`, `run`) e i log dei rilasci falliti. Il filtro sostituisce con un segnaposto le righe che contengono `cfut_` o «appears invalid», e per i comandi sul server gira sul server, dopo `2>&1` (Caddy scrive su stderr). Così il segno dell'errore resta visibile, il token no.
+
+  Il punto è annotato anche in 06 §Caddy.
 
 ## Caddy e certificati
 
