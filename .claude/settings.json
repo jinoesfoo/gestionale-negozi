@@ -82,7 +82,7 @@
       ]
     },
     "filesystem": {
-      "allowWrite": ["~/.local/share/pnpm/store", "~/.cache/pnpm", "~/.local/state/pnpm"],
+      "allowWrite": ["~/.local/share/pnpm/store", "~/.cache/pnpm", "~/.local/state/pnpm", "/run/user/1000/pnpm-store-operation-locks-1000"],
       "denyWrite": [
         "./.claude",
         "./CLAUDE.md",

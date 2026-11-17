@@ -12,6 +12,7 @@ sudo apt update && sudo apt install -y git jq curl bubblewrap socat    # bubblew
 # Node.js 24 con nvm, poi pnpm
 curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 source ~/.bashrc && nvm install 24 && npm install -g pnpm
+mkdir -p ~/.local/share/pnpm/store ~/.cache/pnpm ~/.local/state/pnpm    # la sandbox scrive solo in cartelle che esistono già
 # Docker (database in locale, immagini, test di integrazione)
 curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker "$USER"
 # Chi firma i commit: il nome e l'email dell'account GitHub di Claude (§8, passo 2), uguali sui due computer
