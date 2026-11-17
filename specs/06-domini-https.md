@@ -31,6 +31,8 @@ LABEL org.opencontainers.image.source="https://github.com/<utente>/<repo>"
 ```
 Fissare la versione di `caddy` nelle due righe `FROM` con lo stesso numero.
 
+Nota di DOM-T01 (17/11/2026), per il piano di DOM-T02: i token di Cloudflare creati in DOM-T01 hanno il formato nuovo, che inizia con `cfut_`. `caddy-dns/cloudflare` lo accetta dalla v0.2.4; fino alla v0.2.3 accetta solo token da 35 a 50 caratteri. Se il token non ha la forma attesa, il modulo ferma Caddy con un errore che contiene il token per intero, e il token finisce nel log. Dettagli in `infra/README.md`, «DNS ed email (DOM-T01)», «Punti lasciati ai compiti successivi».
+
 `Caddyfile` (schema; i valori arrivano da variabili d'ambiente):
 ```caddyfile
 {

@@ -17,9 +17,9 @@ I controlli DNS li ha fatti Claude dai server (`ssh test dig …`, uno da `ssh p
 
 | # | Esito |
 |---|---|
-| B1 | Riuscito (17/11/2026), confermato dall'utente: token `caddy-foondaco-com` creato con «Create Token» → «Start from scratch» → «Start with a Zone policy», con permessi Zone Read e DNS Edit, sola zona `foondaco.com`, «No expiration», nessun filtro IP. L'utente ha confermato permessi e zona come da procedura («ok»), senza dettare il riepilogo parola per parola. |
-| B2 | Riuscito (17/11/2026), confermato dall'utente: token `caddy-foondaco-it`, come B1, con la sola zona `foondaco.it`; è un token diverso. |
-| B3 | Riuscito, confermato dall'utente: i due token stanno nel gestore di password. Non sono passati in chat, in git né in file del progetto; Claude non li ha visti. Il funzionamento lo prova DOM-T02 (certificato jolly con la sfida DNS). |
+| B1 | Riuscito (17/11/2026), confermato dall'utente: token `caddy-foondaco-com` creato con «Create Token» → «Start from scratch» → «Start with a Zone policy», con permessi Zone Read e DNS Edit, sola zona `foondaco.com`, «No expiration», nessun filtro IP. L'utente aveva confermato permessi e zona con un «ok», senza dettare il riepilogo. La schermata dell'elenco «API Tokens» (17/11/2026) mostra il token attivo, con i soli gruppi di permessi «Zone.Zone, Zone.DNS», mai usato («Last used» vuoto); l'elenco non mostra il livello dei permessi (Read, Edit) né la zona. |
+| B2 | Riuscito (17/11/2026), confermato dall'utente: token `caddy-foondaco-it`, come B1, con la sola zona `foondaco.it`; è un token diverso. Nella stessa schermata: attivo, «Zone.Zone, Zone.DNS», mai usato. |
+| B3 | **Non riuscito** al controllo del 17/11/2026; correzione in corso. L'utente aveva risposto «ok» anche alla domanda sul gestore di password, ma intendeva la password dell'account Cloudflare. Il valore dei due token, che Cloudflare mostra una volta sola, non è stato salvato da nessuna parte (chiarito dall'utente il 17/11/2026). Correzione: si rigenerano i due token, con gli stessi permessi e la stessa zona, e il valore nuovo va nel gestore di password e nella copia sigillata (`infra/README.md`, punto 2). Nessun programma li usava ancora, quindi la rigenerazione non interrompe niente. I token non sono passati in chat, in git né in file del progetto; Claude non li ha visti. |
 
 ## C. Record dei server, «solo DNS» (DOM-008)
 

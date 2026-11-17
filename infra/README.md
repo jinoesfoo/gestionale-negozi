@@ -310,9 +310,13 @@ Servono a Caddy per il certificato jolly con la sfida DNS (06 §Caddy; vanno in 
 3. «Policies» → «Start from scratch» → **«Start with a Zone policy»**. Zona: solo `foondaco.com` (o `foondaco.it`), mai «All zones». Permessi: **Zone Read** e **DNS Edit**, nient'altro. Il modello «Edit zone DNS» non basta: ha solo il permesso DNS, e al modulo DNS di Caddy serve anche Zone Read per trovare la zona.
 4. «Token expiration»: «No expiration». «Client IP address filtering»: vuoto.
 5. «Continue to summary»: il riepilogo mostra solo la zona del token, con Zone Read e DNS Edit. Poi «Create Token».
-6. Il token si vede **una volta sola**: va subito nel gestore di password e nella copia sigillata (OPS-009). Non si scrive in chat, in git né in file del progetto. Il comando `curl` di prova che Cloudflare mostra contiene il token scritto per intero: non si lancia (la prova senza token nella riga è al punto 2 della rotazione).
+6. Il valore del token, una stringa lunga che inizia con `cfut_`, si vede **una volta sola**. Prima di chiudere la pagina lo si copia con il pulsante di copia e lo si incolla in una voce nuova del gestore di password, con il nome del token. Si salva la voce e la si riapre per controllare che il valore ci sia. Poi il valore va nella copia sigillata (OPS-009). La password dell'account Cloudflare non basta: il valore non si può più rivedere, né nel pannello né con l'API. Non si scrive in chat, in git né in file del progetto. Il comando `curl` di prova che Cloudflare mostra contiene il token scritto per intero: non si lancia (la prova senza token nella riga è al punto 2 della rotazione).
 
 Nella versione precedente del pannello lo stesso si fa con «Custom token» → «Get started»: «Permissions» `Zone` · `Zone` · `Read` e `Zone` · `DNS` · `Edit`; «Zone Resources» `Include` · `Specific zone` · la zona.
+
+**Valore perso.** Se il valore di un token non è nel gestore di password, non si recupera: lo si rigenera. «API Tokens» → menu «⋯» della riga del token → «Roll» → «Confirm». Il token resta lo stesso (nome, permessi, zona), il valore vecchio non vale più e quello nuovo si vede una volta sola: si salva come al punto 6. Se il token è già in `caddy.env`, invece del «Roll» si fa una rotazione (sotto), così Caddy non resta con un valore che non vale più.
+
+**Altri token.** Sull'account restano solo i token che servono. L'assistente AI del pannello («Ask AI», nella documentazione Agent Lee, prima «Cloudflare Agent») crea un token utente «Cloudflare Agent Token - <data>», con permessi ampi, quando gli si concede l'accesso (documentazione di Cloudflare, «Agent Lee» → «Manage access», letta il 17/11/2026). Se l'assistente non serve, quel token si cancella dall'elenco («⋯» → «Delete»). Se ricompare, si spegne l'assistente: «Configurations» → «Preferences» → «Cloudflare Agent». Alla richiesta di accesso di «Ask AI» non si risponde di sì, se l'assistente non serve.
 
 Token in uso: `caddy-foondaco-com` e `caddy-foondaco-it`, creati il 17/11/2026 (DOM-T01). Copia fuori linea (OPS-009): nel gestore di password dal 17/11/2026; copia sigillata _da confermare_.
 
@@ -327,7 +331,7 @@ Token in uso: `caddy-foondaco-com` e `caddy-foondaco-it`, creati il 17/11/2026 (
    curl -s -H "Authorization: Bearer $T" "https://api.cloudflare.com/client/v4/zones?name=foondaco.it"
    unset T
    ```
-   Dopo il `read` si incolla il token (non si vede) e si preme Invio. La prima risposta deve dire `"status":"active"`. Delle altre due, solo quella della zona del token deve trovare la zona (`"count":1`); quella dell'altra zona deve rispondere senza zone (`"count":0`). Le risposte non contengono il token.
+   Dopo il `read` si incolla il token (non si vede) e si preme Invio. La prima risposta deve dire `"status":"active"`. Delle altre due, solo quella della zona del token deve trovare la zona (`"count":1`). Quella dell'altra zona non deve trovarla: risponde senza zone (`"count":0`) oppure con un errore di permesso (`"success":false`). Le risposte non contengono il token.
 3. Si scrive il token nuovo in `CF_API_TOKEN` di `/srv/app/env/caddy.env` del server di quella zona, con la procedura dei file di ambiente (copia del file e `mv`, «File di ambiente dei server»).
 4. Si ricrea il container di Caddy, perché rilegga il file: come `deploy`, `/srv/app/dc up -d --force-recreate caddy`. Un `restart` non basta: Compose rilegge `env_file` solo quando ricrea il container.
 5. Solo dopo, si cancella il token vecchio («API Tokens» → il token → «Delete»).
@@ -463,6 +467,11 @@ Nota: i record DKIM `CNAME` vanno «DNS only». Con il proxy (nuvola arancione) 
   - se il firewall di Hostinger (FON-T07a) applica le stesse regole anche a IPv6.
   
   Se l'IP vero dei client IPv6 non arriva, DOM-T02 sceglie fra una rete Compose con IPv6 e la rimozione dei record `AAAA`. Il punto è annotato anche in 06 §DNS.
+- **Formato dei token e modulo di Caddy.** I token di DOM-T01 hanno il formato nuovo di Cloudflare, che inizia con `cfut_` ed è più lungo di 50 caratteri. Il codice delle due versioni di `caddy-dns/cloudflare`, letto su GitHub il 17/11/2026, dice:
+  - il modulo accetta questo formato dalla v0.2.4 (commit «Handle new CF tokens format (#123)», 23/03/2026);
+  - fino alla v0.2.3 accetta solo token da 35 a 50 caratteri.
+
+  Il `Dockerfile` di 06 §Caddy non fissa la versione del modulo, quindi `xcaddy` prende l'ultima; se DOM-T02 la fissa, non più vecchia della v0.2.4. Se il token non ha la forma attesa (versione vecchia del modulo, apici o spazi nel file di ambiente), il modulo ferma Caddy con l'errore «API token '…' appears invalid». L'errore contiene il token per intero, che così finisce nel log del container. In quel caso si corregge il file e il token si considera esposto: si rigenera («Valore perso», punto 2). Il punto è annotato anche in 06 §Caddy.
 
 ## Caddy e certificati
 
