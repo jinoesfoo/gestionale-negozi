@@ -73,3 +73,9 @@ Correzioni durante l'esecuzione:
 - i record importati, cancellati o messi «DNS only»;
 - la zona `foondaco.com`, fatta ricontrollare a Cloudflare perché risultasse «Active»;
 - i due token di Cloudflare, rigenerati e salvati perché il primo valore non era stato conservato (B3).
+
+Ricontrollo alla chiusura (18/11/2026, da `ssh test`, risolutore `1.1.1.1`): nameserver (A3), record `A` e `AAAA` (C1–C3), TXT delle due radici (D1–D3), `CNAME` DKIM (D4), DMARC (D6–D8) e MX (D9) rispondono come sopra.
+
+Restano fuori dalla lista due punti, rilievi bassi della revisione che l'utente ha lasciato aperti il 17/11/2026:
+- i mittenti su Brevo («Senders»), uno per dominio, non sono stati controllati. Li crea l'utente prima di DOM-T01 (`AVVIO.md`, «Fuori da GitHub»), e servono a FON-T07b, che scrive `EMAIL_FROM`, e a FON-T10, che prova l'invio da ciascuno;
+- lo stato «Active» della zona `foondaco.it` non è stato visto nel pannello di Cloudflare. La delega nel registro e le risposte dei nameserver di Cloudflare (A3, C2) dicono che la zona funziona.
