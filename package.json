@@ -8,7 +8,7 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "dev": "node -e \"process.loadEnvFile('.env.app'); const r = require('node:child_process').spawnSync('next', ['dev', '-H', '127.0.0.1', ...process.argv.slice(1)], { stdio: 'inherit' }); process.exit(r.status ?? 1)\" --",
+    "dev": "node -e \"process.loadEnvFile('.env.app'); const c = require('node:child_process').spawn('next', ['dev', '-H', '127.0.0.1', ...process.argv.slice(1)], { stdio: 'inherit' }); for (const s of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(s, () => c.kill(s)); c.on('error', (e) => { console.error(e.message); process.exit(1); }); c.on('exit', (code, signal) => process.exit(code ?? 128 + require('node:os').constants.signals[signal]));\" --",
     "build": "next build",
     "start": "next start",
     "lint": "eslint . && prettier --check .",
