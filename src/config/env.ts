@@ -15,7 +15,11 @@ export class EnvError extends Error {
   }
 }
 
-/** Valore segnaposto, ammesso solo in sviluppo e CI (es. `placeholder-stripe`). */
+/**
+ * Valore segnaposto (`placeholder…`, es. `placeholder-stripe`): ammesso in ogni ambiente, server compresi,
+ * nelle sole variabili di Stripe, Sentry, email e fornitore SDI, finché i compiti che le usano non lo
+ * sostituiscono (specs/README.md). Deve iniziare con `placeholder`: non basta contenerlo.
+ */
 export function isPlaceholder(value: string | undefined): boolean {
   return typeof value === 'string' && value.startsWith('placeholder');
 }
@@ -58,11 +62,13 @@ const stripeSecretKey = z
   .string()
   .refine((value) => value.startsWith('sk_test_') || value.startsWith('sk_live_') || isPlaceholder(value));
 
-const stripeLiveSecretKey = z.string().startsWith('sk_live_');
-
 const stripeWebhookSecret = z.string().refine((value) => value.startsWith('whsec_') || isPlaceholder(value));
 
-const sentryDsn = z.string().refine((value) => isPlaceholder(value) || url.safeParse(value).success);
+/** Un segnaposto, oppure un valore valido per `schema`: per le variabili che specs/README.md elenca. */
+const orPlaceholder = (schema: z.ZodType<string>) =>
+  z.string().refine((value) => isPlaceholder(value) || schema.safeParse(value).success);
+
+const sentryDsn = orPlaceholder(url);
 
 const flag = z.enum(['true', 'false']).transform((value) => value === 'true');
 
@@ -110,9 +116,9 @@ const workerShape = {
   STRIPE_SECRET_KEY: stripeSecretKey,
   SDI_PROVIDER: text,
   SDI_API_KEY: text.optional(),
-  SDI_API_URL: url.optional(),
+  SDI_API_URL: orPlaceholder(url).optional(),
   EMAIL_API_KEY: text,
-  EMAIL_FROM: email,
+  EMAIL_FROM: orPlaceholder(email),
   SENTRY_DSN: sentryDsn,
   ADMIN_ALERT_EMAIL: email,
 };
@@ -124,8 +130,10 @@ const cliShape = {
   ADMIN_ALERT_EMAIL: email,
   DATABASE_JOBS_URL: postgresUrl.optional(),
   ISOLATION_APP_DATABASE_URL: postgresUrl.optional(),
-  STRIPE_SECRET_KEY: stripeSecretKey.optional(),
-  STRIPE_LIVE_SECRET_KEY: stripeLiveSecretKey.optional(),
+  // Le chiavi Stripe le controllano solo i comandi Stripe (sk_test_, oppure sk_live_ con --live), che le
+  // ricevono intatte: un valore sbagliato non ferma migrate né gli altri comandi (01 §Variabili d'ambiente).
+  STRIPE_SECRET_KEY: text.optional(),
+  STRIPE_LIVE_SECRET_KEY: text.optional(),
   STRIPE_TEST_CLOCK_SETUP: flag.optional(),
 };
 
@@ -181,8 +189,9 @@ function resolveVersion(env: Env, problems: Problems): string {
   return 'dev';
 }
 
+/** App e worker rifiutano DATABASE_OWNER_URL anche vuota: la ricevono comunque (FON-002). */
 function forbidOwner(env: Env, problems: Problems) {
-  if (read(env, 'DATABASE_OWNER_URL') !== undefined) problems.add('DATABASE_OWNER_URL', 'vietata');
+  if (env.DATABASE_OWNER_URL !== undefined) problems.add('DATABASE_OWNER_URL', 'vietata');
 }
 
 function distinctKeys(env: Env, problems: Problems) {
