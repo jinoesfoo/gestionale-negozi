@@ -191,7 +191,7 @@ describe('esempi delle variabili di sviluppo', () => {
   // `.env.migrate.example`, poi esegue `test:int` con quelle di `.env.test.example` (01 §CI/CD); in locale
   // vale lo stesso, con il PostgreSQL di `infra/compose.dev.yml`. Il server è uno solo, quindi ogni ruolo ha
   // una sola password in tutti gli esempi (la CI crea i ruoli con le password degli esempi, FON-T08).
-  it('FON-001, FON-005: gli indirizzi PostgreSQL degli esempi di sviluppo puntano tutti al server e al database app che db:migrate prepara, con una sola password per ruolo', () => {
+  it('FON-002: gli indirizzi PostgreSQL degli esempi di sviluppo puntano tutti al server e al database app che db:migrate prepara, con una sola password per ruolo', () => {
     const owner = readExample('.env.migrate.example').get('DATABASE_OWNER_URL')?.value ?? '';
     expect(() => new URL(owner), '.env.migrate.example: DATABASE_OWNER_URL non è un indirizzo').not.toThrow();
     const migrate = new URL(owner);
@@ -218,7 +218,7 @@ describe('esempi delle variabili di sviluppo', () => {
   // Il bucket di `.env.test.example` è quello di cui la CI controlla il versioning (specs/README.md), e
   // l'emulatore di `infra/compose.dev.yml` crea all'avvio il bucket versionato (FON-T03): sviluppo e test
   // usano lo stesso emulatore, con le stesse credenziali e lo stesso bucket.
-  it('FON-001, FON-005: gli esempi di sviluppo usano lo stesso emulatore S3, con le stesse credenziali e lo stesso bucket', () => {
+  it('FON-002: gli esempi di sviluppo usano lo stesso emulatore S3, con le stesse credenziali e lo stesso bucket', () => {
     const app = readExample('.env.app.example');
     for (const file of ['.env.worker.example', '.env.migrate.example', '.env.test.example']) {
       const entries = readExample(file);
