@@ -20,8 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # La versione di pnpm la legge dal campo packageManager di package.json.
-      - uses: pnpm/action-setup@v4
+      # La versione di pnpm la legge dal campo packageManager di package.json. Serve la v6, almeno 6.1.0:
+      # le versioni precedenti non installano pnpm 12, il cui comando resta il segnaposto del pacchetto
+      # finché non gira il suo script di installazione.
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v5
         with:
