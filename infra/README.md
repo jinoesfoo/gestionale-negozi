@@ -281,7 +281,225 @@ Dopo ogni prima pubblicazione a mano (Caddy in DOM-T02, PostgreSQL in OPS-T01a, 
 
 ## DNS ed email (DOM-T01)
 
-_Da scrivere in DOM-T01:_ token API Cloudflare per zona (Zone › Zone › Read, Zone › DNS › Edit), record DNS di entrambe le zone, record email (SPF, DKIM di Brevo, DMARC), Email Routing o autorizzazione esterna per l'indirizzo DMARC, intervalli IP dei webhook di Brevo con la data del controllo.
+Specifica: 06 DOM-008, DOM-012, §DNS. Lista di controllo: `docs/verifiche/dom-t01.md`; esiti: `docs/verifiche/dom-t01-esito.md`.
+
+| | Produzione | Test |
+|---|---|---|
+| Zona Cloudflare | `foondaco.com` (`{{DOMINIO}}`) | `foondaco.it` (`{{DOMINIO_TEST}}`) |
+| Registrar | Hostinger | Hostinger |
+| IPv4 del server | `91.108.122.251` | `145.14.158.72` |
+| IPv6 del server | `2a02:4780:c:f90c::1` | `2a02:4780:d:8458::1` |
+
+Tutto si fa nei pannelli di Hostinger (hPanel, https://hpanel.hostinger.com, solo per i nameserver), di Cloudflare (https://dash.cloudflare.com) e di Brevo (https://app.brevo.com), con l'account dell'utente. Claude non ha accesso ai pannelli: controlla i record con `ssh test dig @1.1.1.1 …`. Ogni record è **«DNS only»** (nuvola grigia): con il proxy di Cloudflare il TLS non lo farebbe più Caddy (DOM-008). TTL: «Auto».
+
+### 1. Zone attive (utente)
+
+1. Su Cloudflare: «Add a domain» (o «Onboard a domain») → il dominio → importazione automatica dei record («Quick scan») → piano **Free**. Cloudflare mostra i **due nameserver** della zona (pagina «Overview»).
+2. Su Hostinger: hPanel → Domini → Portafoglio domini → il dominio → Gestisci → DNS / Nameserver. La pagina «Seleziona i nameserver» parte da «Utilizza i nameserver Hostinger»: si preme **«Cambia i nameserver»**, si scelgono i nameserver personalizzati, si scrivono i due di Cloudflare (Nameserver 1 e 2; gli altri vuoti) e si salva. Se c'è DNSSEC attivo su Hostinger, prima si spegne.
+3. Controllo della delega direttamente nel registro, che non ha copie vecchie: `ssh test dig +noall +authority NS foondaco.com @a.gtld-servers.net` e `ssh test dig +noall +authority NS foondaco.it @a.dns.it` devono rispondere con i due nomi `*.ns.cloudflare.com`. Finché rispondono `*.dns-parking.com`, il cambio su Hostinger non è salvato o non è ancora arrivato al registro.
+4. Su Cloudflare la zona diventa «Active» quando Cloudflare ricontrolla i nameserver: lo fa da sé, ma per farlo subito si preme «Check nameservers now» nella pagina «Overview» della zona. Email Routing (punto 4) si attiva solo su una zona «Active».
+
+Le impostazioni proposte da Cloudflare (SSL, HTTPS automatico, «Quick Start Guide») non si toccano: con «DNS only» non hanno effetto.
+
+### 2. Token API, uno per zona (utente)
+
+Servono a Caddy per il certificato jolly con la sfida DNS (06 §Caddy; vanno in `CF_API_TOKEN` di `/srv/app/env/caddy.env` in DOM-T02, ciascuno sul suo server). Per ciascuna zona:
+
+1. «My Profile» (icona in alto a destra) → «API Tokens» → «Create Token».
+2. «Token name»: `caddy-foondaco-com` (produzione) o `caddy-foondaco-it` (test).
+3. «Policies» → «Start from scratch» → **«Start with a Zone policy»**. Zona: solo `foondaco.com` (o `foondaco.it`), mai «All zones». Permessi: **Zone Read** e **DNS Edit**, nient'altro. Il modello «Edit zone DNS» non basta: ha solo il permesso DNS, e al modulo DNS di Caddy serve anche Zone Read per trovare la zona.
+4. «Token expiration»: «No expiration». «Client IP address filtering»: vuoto.
+5. «Continue to summary»: il riepilogo mostra solo la zona del token, con Zone Read e DNS Edit. Poi «Create Token».
+6. Il valore del token, una stringa lunga che inizia con `cfut_`, si vede **una volta sola**. Prima di chiudere la pagina lo si copia con il pulsante di copia e lo si incolla in una voce nuova del gestore di password, con il nome del token. Si salva la voce e la si riapre per controllare che il valore ci sia. Poi il valore va nella copia sigillata (OPS-009). La password dell'account Cloudflare non basta: il valore non si può più rivedere, né nel pannello né con l'API. Non si scrive in chat, in git né in file del progetto. Il comando `curl` di prova che Cloudflare mostra contiene il token scritto per intero: non si lancia (la prova senza token nella riga è al punto 2 della rotazione).
+
+Nella versione precedente del pannello lo stesso si fa con «Custom token» → «Get started»: «Permissions» `Zone` · `Zone` · `Read` e `Zone` · `DNS` · `Edit`; «Zone Resources» `Include` · `Specific zone` · la zona.
+
+**Controllo di un token.** «API Tokens» → clic sul nome del token: si apre «Token Summary». Nella scheda «Summary», «Permission policies» mostra una sola voce, la zona del token, con «Zone: Read» e «DNS: Edit»; «IP Address Filtering» dice «All IP addresses allowed» e «Expiration» «No expiration». Si esce con «Back», senza toccare altro (pannello del 17/11/2026).
+
+**Valore perso.** Se il valore di un token non è nel gestore di password, non si recupera: lo si rigenera. «API Tokens» → menu «⋯» della riga del token → «Roll» → «Confirm». Il token resta lo stesso (nome, permessi, zona), il valore vecchio non vale più e quello nuovo si vede una volta sola: si salva come al punto 6, poi si aggiornano «Token in uso» e «Rotazioni» (sotto). Se il token è già in `caddy.env`, invece del «Roll» si fa una rotazione (sotto), così Caddy non resta con un valore che non vale più. Un token esposto, invece, si rigenera subito (sotto).
+
+**Token esposto.** Se il valore di un token è finito dove non deve (in un log, in chat, in un file del progetto, nell'output di un comando), si fa subito «Roll», anche se il token è già in `caddy.env`: il valore vecchio non vale più (documentazione di Cloudflare, `developers.cloudflare.com/fundamentals/api/how-to/roll-token/`, letta il 17/11/2026). Poi, in quest'ordine:
+- il valore nuovo si salva come al punto 6, ma al posto di quello vecchio: nella stessa voce del gestore di password e nella copia sigillata (OPS-009);
+- si prova il valore nuovo, come al punto 2 della rotazione;
+- se il valore era finito nell'output di un errore di Caddy o di Compose, si toglie la causa («Punti lasciati ai compiti successivi», «Formato dei token e modulo di Caddy»), altrimenti anche il valore nuovo finisce nello stesso posto;
+- se il token è in `caddy.env`, si fanno i punti 3 e 4 della rotazione, con i loro controlli;
+- si aggiornano «Token in uso» e «Rotazioni».
+
+Nel frattempo Caddy, se è in funzione, non può emettere né rinnovare i certificati di quella zona, ma continua a usare quelli che ha.
+
+**Altri token.** Sull'account restano solo i token che servono. L'assistente AI del pannello («Ask AI», nella documentazione Agent Lee, prima «Cloudflare Agent») crea un token utente «Cloudflare Agent Token - <data>», con permessi ampi, quando gli si concede l'accesso (documentazione di Cloudflare, «Agent Lee» → «Manage access», letta il 17/11/2026). Se l'assistente non serve, quel token si cancella dall'elenco («⋯» → «Delete»). Se ricompare, si spegne l'assistente: «Configurations» → «Preferences» → «Cloudflare Agent». Alla richiesta di accesso di «Ask AI» non si risponde di sì, se l'assistente non serve.
+
+Token in uso: `caddy-foondaco-com` e `caddy-foondaco-it`, creati il 17/11/2026 (DOM-T01). Copia fuori linea (OPS-009): nel gestore di password e nella copia sigillata, ultimo aggiornamento 17/11/2026.
+
+**Rotazione di un token** (utente). Caddy usa il token solo quando emette o rinnova un certificato: intanto serve quello già salvato nel volume `app_caddy_data`. Per questo «il certificato si vede ancora» non prova che il token nuovo funzioni.
+
+1. Si crea un token nuovo come ai punti 1–6, con un nome che porta la data (per esempio `caddy-foondaco-com-2027-05`).
+2. Prova del token nuovo dal proprio terminale, senza scriverlo nella riga del comando (resterebbe nella cronologia). Un comando alla volta:
+   ```bash
+   read -rs T
+   curl -s -H "Authorization: Bearer $T" https://api.cloudflare.com/client/v4/user/tokens/verify
+   curl -s -H "Authorization: Bearer $T" "https://api.cloudflare.com/client/v4/zones?name=foondaco.com"
+   curl -s -H "Authorization: Bearer $T" "https://api.cloudflare.com/client/v4/zones?name=foondaco.it"
+   unset T
+   ```
+   Dopo il `read` si incolla il token (non si vede) e si preme Invio. La prima risposta deve dire `"status":"active"`. Delle altre due, solo quella della zona del token deve trovare la zona (`"count":1`). Quella dell'altra zona non deve trovarla: risponde senza zone (`"count":0`) oppure con un errore di permesso (`"success":false`). Le risposte non contengono il token.
+3. Si scrive il token nuovo in `CF_API_TOKEN` di `/srv/app/env/caddy.env` del server di quella zona, con la procedura dei file di ambiente (copia del file e `mv`, «File di ambiente dei server»): una sola riga `CF_API_TOKEN=cfut_…`, senza apici né spazi. Controlli, che non stampano il valore:
+   - `grep -c '^[^#]*CF_API_TOKEN' /srv/app/env/caddy.env` risponde `1`: c'è una sola riga del token, senza contare i commenti;
+   - `grep -cE '^CF_API_TOKEN=cfut_[A-Za-z0-9_-]{32,256}$' /srv/app/env/caddy.env` risponde `1`: la riga ha la forma che il modulo di Caddy accetta.
+4. Si ricrea il container di Caddy, perché rilegga il file: come `deploy`, `/srv/app/dc up -d --force-recreate caddy`. Un `restart` non basta: Compose rilegge `env_file` solo quando ricrea il container. Controllo: il comando finisce senza errori. Dopo una ventina di secondi, `/srv/app/dc ps caddy` mostra:
+   - nella colonna «CREATED», un container di pochi secondi o di un minuto fa, non di ore o di giorni;
+   - nella colonna «STATUS», «Up» da almeno 20 secondi, non «Restarting».
+
+   Se il container non è stato ricreato, Caddy usa ancora il valore vecchio: non si passa al punto 5. Se un errore mostra il valore del token, non lo si copia in chat: vale «Token esposto».
+5. Solo dopo, si cancella il token vecchio («API Tokens» → il token → «Delete»).
+6. Ultimo passo: si aggiorna la copia fuori linea (gestore di password e copia sigillata, OPS-009), togliendo il token vecchio. Poi si aggiornano qui «Token in uso» (sopra: nome del token e data dell'ultimo aggiornamento della copia) e «Rotazioni» (sotto: una riga con la data).
+
+Rotazioni, compresi i «Roll» di «Valore perso» e «Token esposto»:
+- 17/11/2026: «Roll» di `caddy-foondaco-com` e `caddy-foondaco-it` (DOM-T01, «Valore perso»: il primo valore non era stato salvato).
+
+### 3. Record dei server (utente), su ciascuna zona
+
+«DNS» → «Records» → «Add record», nuvola grigia («DNS only»):
+
+| Tipo | Nome | Valore in `foondaco.com` | Valore in `foondaco.it` |
+|---|---|---|---|
+| A | `@` | `91.108.122.251` | `145.14.158.72` |
+| A | `*` | `91.108.122.251` | `145.14.158.72` |
+| A | `app` | `91.108.122.251` | `145.14.158.72` |
+| A | `admin` | `91.108.122.251` | `145.14.158.72` |
+| AAAA | `@` | `2a02:4780:c:f90c::1` | `2a02:4780:d:8458::1` |
+| AAAA | `*` | `2a02:4780:c:f90c::1` | `2a02:4780:d:8458::1` |
+| AAAA | `app` | `2a02:4780:c:f90c::1` | `2a02:4780:d:8458::1` |
+| AAAA | `admin` | `2a02:4780:c:f90c::1` | `2a02:4780:d:8458::1` |
+
+Se Cloudflare, creando la zona, ha importato altri record `A`, `AAAA` o `CNAME` su `@`, `*`, `www`, `app` o `admin` (per esempio quelli del parcheggio di Hostinger), si cancellano. `www` non ha un record proprio: lo copre il jolly. Nelle due zone, il 16–17/11/2026, Cloudflare aveva importato `A @ 2.57.91.91` (parcheggio di Hostinger) e `CNAME www → @` (in `foondaco.it` «Proxied»): cancellati. Ogni record importato «Proxied» che resta (in `foondaco.it` i DKIM di Brevo) va messo «DNS only».
+
+### 4. Email Routing per `dmarc@foondaco.com` (utente, solo zona `foondaco.com`)
+
+I rapporti DMARC di entrambe le zone arrivano a `dmarc@foondaco.com`, inoltrati all'indirizzo di `ADMIN_ALERT_EMAIL` (06 DOM-012, nota di DOM-T01).
+
+1. Menu a sinistra dell'account: «Compute» → «Email Service» → «Email Routing» → **«Onboard Domain»** → zona `foondaco.com` → «Continue». Se compare «This zone is not active», prima si attiva la zona (punto 1.4).
+2. «Verify DNS records»: Cloudflare mostra i record che aggiunge, cioè tre `MX` sulla radice (`route1`, `route2`, `route3.mx.cloudflare.net`, con priorità scelte da Cloudflare), un TXT DKIM `cf2024-1._domainkey` per l'inoltro e un TXT SPF `v=spf1 include:_spf.mx.cloudflare.net ~all` sulla radice → **«Activate»**.
+3. Nella pagina di Email Routing di `foondaco.com`: «Create address» → «Custom address» `dmarc`, «Action» «Send to an email», «Destination» l'indirizzo di `ADMIN_ALERT_EMAIL` → salva.
+4. Cloudflare manda un'email di verifica a quell'indirizzo: si apre il link («Verify email address»).
+5. Controllo: Email Routing di `foondaco.com` attivo, la destinazione «Verified» (in «Destination addresses»), l'indirizzo `dmarc@foondaco.com` attivo verso quella destinazione.
+
+Nella versione precedente del pannello lo stesso si fa dalla zona: «Email» → «Email Routing» → «Get started», poi «Add records and enable».
+
+La destinazione deve restare la casella di `ADMIN_ALERT_EMAIL` (06 DOM-012). Oggi la variabile non esiste ancora sui server: l'utente la scrive in FON-T07b. In quel momento, e a ogni cambio della variabile, l'utente controlla che la destinazione di Email Routing coincida. Se non coincide, aggiunge la nuova destinazione, la verifica, ci sposta `dmarc@foondaco.com` e rifà la prova del punto 8.2.
+
+### 5. Record di Brevo (utente), su ciascuna zona
+
+Su Brevo: account → «Senders, Domains & Dedicated IPs» → scheda «Domains» → il dominio → «Authenticate» → configurazione manuale («Authenticate the domain yourself»; **non** l'autenticazione automatica con Cloudflare). I valori li dà Brevo per ciascun dominio e si copiano così come sono:
+
+| Tipo | Nome | Valore |
+|---|---|---|
+| TXT | `@` | il codice di verifica di Brevo (`brevo-code:…`) |
+| CNAME (nuvola grigia) | `brevo1._domainkey` | il valore del pannello di Brevo |
+| CNAME (nuvola grigia) | `brevo2._domainkey` | il valore del pannello di Brevo |
+
+I valori pubblicati sono in «Valori letti», più sotto. Il DMARC proposto da Brevo (`rua=mailto:rua@dmarc.brevo.com`) **non** si usa: vale quello del punto 7. Brevo non chiede né SPF né MX per autenticare un dominio (punto 6).
+
+### 6. SPF: un solo record per radice (utente)
+
+Un nome può avere un solo record SPF: due record `v=spf1` sullo stesso nome fanno fallire SPF.
+
+| Zona | Record TXT su `@` |
+|---|---|
+| `foondaco.com` | `v=spf1 include:spf.brevo.com include:_spf.mx.cloudflare.net ~all` — si **modifica** il record creato da Email Routing al punto 4, non se ne aggiunge un secondo |
+| `foondaco.it` | `v=spf1 include:spf.brevo.com ~all` |
+
+Da dove viene `include:spf.brevo.com`. Il pannello di Brevo non chiede nessun SPF. L'articolo di Brevo «Authenticate your domain with Brevo (Brevo code, DKIM, DMARC)» (help.brevo.com, articolo 12163873383186, aggiornato il 14/11/2026, letto il 17/11/2026) dice che SPF e MX servono solo con un IP dedicato. Con gli IP condivisi, infatti, il mittente della busta (return-path) è un dominio di Brevo: l'SPF che conta è quello di Brevo, e il DMARC passa grazie al DKIM allineato. L'`include` sta lo stesso nel record perché DOM-012 chiede un SPF «che include il fornitore».
+
+Il valore viene dall'articolo di Brevo «Merge multiple SPF records» (articolo 4414335084434, aggiornato il 19/10/2026), dove l'SPF di Brevo è `v=spf1 include:spf.brevo.com mx ~all`. Il meccanismo `mx` non si copia:
+- gli MX di `foondaco.com` sono i server di Cloudflare che ricevono per Email Routing, e non inviano posta come `foondaco.com`;
+- `foondaco.it` non ha MX.
+
+Se Brevo cambia il nome del suo `include`, nel pannello o nella documentazione, vale quello nuovo. Controllo: `ssh test dig @1.1.1.1 +short TXT spf.brevo.com` risponde con un record `v=spf1`.
+
+Il record SPF creato da Email Routing si trova in «DNS» → «Records» filtrando i TXT (o cercando `spf1`). Se risulta bloccato da Email Routing (lucchetto), si sblocca dalle impostazioni di Email Routing della zona prima di modificarlo. Controllo: `ssh test dig @1.1.1.1 +short TXT foondaco.com` mostra un solo record che inizia con `v=spf1`.
+
+### 7. DMARC (utente)
+
+| Zona | Tipo | Nome | Valore |
+|---|---|---|---|
+| `foondaco.com` | TXT | `_dmarc` | `v=DMARC1; p=none; rua=mailto:dmarc@foondaco.com` |
+| `foondaco.it` | TXT | `_dmarc` | `v=DMARC1; p=none; rua=mailto:dmarc@foondaco.com` |
+| `foondaco.com` | TXT | `foondaco.it._report._dmarc` | `v=DMARC1` |
+
+L'ultimo record autorizza `foondaco.com` a ricevere i rapporti di `foondaco.it` (RFC 7489 §7.1): senza, i ricevitori non mandano i rapporti della zona di test. Un solo record `_dmarc` per zona: se Cloudflare o Brevo ne hanno già creato uno, si modifica quello.
+
+Per `_dmarc.foondaco.com`, `p=none` diventa `p=quarantine` dopo almeno due settimane di rapporti puliti, al più tardi durante COL-T01 (06 DOM-012). Lo fa l'utente modificando il record, e COL-T01 ne annota la data. La stessa regola vale per `_dmarc.foondaco.it`: 06 §DNS vuole sulla zona di test i record di DOM-012, e i suoi rapporti arrivano anch'essi a `dmarc@foondaco.com`. La lista di COL-T01 controlla tutti e due i record (nota di DOM-T01 in 06, sotto DOM-012).
+
+### 8. Autenticazione su Brevo e prova dell'inoltro (utente)
+
+1. Su Brevo, per ciascun dominio, «Authenticate this email domain» (o «Verify»): entrambi devono risultare autenticati.
+2. Dalla propria casella si manda un'email a `dmarc@foondaco.com`: deve arrivare nella casella di `ADMIN_ALERT_EMAIL`.
+
+Chi fa il resto:
+- i mittenti su Brevo («Senders, Domains & Dedicated IPs» → «Senders»), uno su `foondaco.com` e uno su `foondaco.it`, li crea l'utente (`AVVIO.md`, «Fuori da GitHub»);
+- `EMAIL_FROM` nei `worker.env` dei server lo scrive l'utente in FON-T07b, con l'indirizzo del mittente di quel server;
+- la prova di invio con `spf=pass`, `dkim=pass` e `dmarc=pass` è di FON-T10 (joo).
+
+### Valori letti
+
+Record pubblicati, letti da Claude con `ssh test dig @1.1.1.1 …` il 17/11/2026 (esiti in `docs/verifiche/dom-t01-esito.md`). Sono tutti valori pubblici.
+
+Nameserver delle due zone: `jay.ns.cloudflare.com`, `princess.ns.cloudflare.com` (delega vista nel registro `.com` il 16/11/2026 e nel registro `.it` il 17/11/2026; nessun record DS rimasto da Hostinger).
+
+**`foondaco.com`**
+
+| Tipo | Nome | Valore |
+|---|---|---|
+| A / AAAA | `@`, `*`, `app`, `admin` | `91.108.122.251` / `2a02:4780:c:f90c::1` |
+| MX | `@` | `31 route1.mx.cloudflare.net`, `34 route3.mx.cloudflare.net`, `88 route2.mx.cloudflare.net` (Email Routing) |
+| TXT | `@` | `v=spf1 include:spf.brevo.com include:_spf.mx.cloudflare.net ~all` |
+| TXT | `@` | `brevo-code:deb6e878db29b6ed66e2bd2fc5d772c9` |
+| TXT | `cf2024-1._domainkey` | `v=DKIM1; h=sha256; k=rsa; p=…` (chiave di Email Routing, creata da Cloudflare) |
+| CNAME | `brevo1._domainkey` | `b1.foondaco-com.dkim.brevo.com` |
+| CNAME | `brevo2._domainkey` | `b2.foondaco-com.dkim.brevo.com` |
+| TXT | `_dmarc` | `v=DMARC1; p=none; rua=mailto:dmarc@foondaco.com` |
+| TXT | `foondaco.it._report._dmarc` | `v=DMARC1` |
+
+**`foondaco.it`**
+
+| Tipo | Nome | Valore |
+|---|---|---|
+| A / AAAA | `@`, `*`, `app`, `admin` | `145.14.158.72` / `2a02:4780:d:8458::1` |
+| TXT | `@` | `v=spf1 include:spf.brevo.com ~all` |
+| TXT | `@` | `brevo-code:deb6e878db29b6ed66e2bd2fc5d772c9` |
+| CNAME | `brevo1._domainkey` | `b1.foondaco-it.dkim.brevo.com` |
+| CNAME | `brevo2._domainkey` | `b2.foondaco-it.dkim.brevo.com` |
+| TXT | `_dmarc` | `v=DMARC1; p=none; rua=mailto:dmarc@foondaco.com` |
+
+Il codice di verifica di Brevo è lo stesso per i due domini: Brevo mostra entrambi «Authenticated» (17/11/2026), quindi lo accetta per tutti e due. I valori di `foondaco.it` l'utente li ha letti nel pannello di Brevo il 16/11/2026. Quelli di `foondaco.com` li ha copiati dal pannello nei record, e Claude li ha letti dal DNS. `foondaco.it` non ha record MX: non riceve posta, e i suoi rapporti DMARC vanno a `dmarc@foondaco.com`.
+
+Nota: i record DKIM `CNAME` vanno «DNS only». Con il proxy (nuvola arancione) Cloudflare risponde con i propri indirizzi invece del `CNAME`, e il DKIM non si verifica.
+
+### Punti lasciati ai compiti successivi
+
+- **Intervalli IP dei webhook di Brevo** (06 §Caddy, [VERIFICA] del matcher `@email_webhook_foreign`). Non sono di DOM-T01: li controlla e li annota, con la data, DOM-T02, che scrive il Caddyfile. È una decisione del piano di DOM-T01, annotata anche in 06 accanto al [VERIFICA].
+- **IPv6.** I due server hanno IPv6, quindi le zone hanno anche i record `AAAA`, come chiede 06 §DNS: i client IPv6 arriveranno ai server in IPv6. Da controllare in DOM-T02, prima che i server servano traffico vero:
+  - HTTPS funziona anche in IPv6 (`curl -6` da fuori);
+  - quale IP del client arriva a Caddy e all'app. Con una rete Compose solo IPv4, Docker inoltra le connessioni IPv6 con il suo proxy, e Caddy vedrebbe l'indirizzo del gateway invece di quello del client, da verificare sulla versione installata (Docker 29.9.3). Ne dipendono i limiti per IP (03 ACC-004) e il matcher `remote_ip` del webhook di Brevo;
+  - se il firewall di Hostinger (FON-T07a) applica le stesse regole anche a IPv6.
+  
+  Se l'IP vero dei client IPv6 non arriva, DOM-T02 sceglie fra una rete Compose con IPv6 e la rimozione dei record `AAAA`. Il punto è annotato anche in 06 §DNS.
+- **Formato dei token e modulo di Caddy.** I token di DOM-T01 hanno il formato nuovo di Cloudflare, che inizia con `cfut_` ed è più lungo di 50 caratteri. Il codice di `caddy-dns/cloudflare`, letto su GitHub il 17/11/2026, dice:
+  - il modulo accetta questo formato dalla v0.2.4 (commit «Handle new CF tokens format (#123)», 23/03/2026), che è anche l'ultima versione;
+  - fino alla v0.2.3 accetta solo token da 35 a 50 caratteri.
+
+  Il `Dockerfile` di 06 §Caddy non fissa la versione del modulo, quindi `xcaddy` prende l'ultima. Conviene che DOM-T02 la fissi, non più vecchia della v0.2.4 (`--with github.com/caddy-dns/cloudflare@v0.2.4`): così un'immagine nuova non cambia il modulo da sola.
+
+  Almeno due tipi di errore stampano il token per intero:
+  - quello del modulo, «API token '…' appears invalid», che ferma Caddy e finisce nel log del container. Viene da un modulo più vecchio della v0.2.4 o da un valore con caratteri in più o in meno (per esempio troncato, o con un apice solo alla fine). La proposta di nasconderlo (PR #132 di `caddy-dns/cloudflare`) al 17/11/2026 non è unita;
+  - quelli di Compose per una riga malformata in `caddy.env`, per esempio «unterminated quoted value …» (un apice aperto e non chiuso) o «unexpected character … in variable name …» (un apice prima del nome). Fermano `/srv/app/dc` prima di Caddy, e la riga del token compare nell'output del comando, anche in quello di `deploy.sh`, quindi nel log del rilascio. Gli apici chiusi e gli spazi attorno al valore, invece, Compose li toglie da sé.
+
+  In quei casi il token è esposto: vale «Token esposto», nella sezione 2. Ne vengono due regole, per DOM-T02 e per ogni avvio di Caddy con un token nuovo o con un'immagine nuova, rotazione compresa:
+  - prima dell'avvio si controllano la versione del modulo, a ogni immagine nuova, e la forma del valore in `caddy.env`, a ogni token nuovo. La versione si vede per esempio con `caddy list-modules --versions --skip-standard`, che elenca i moduli aggiunti con la loro versione. La forma la controlla l'utente con i comandi del punto 3 della rotazione, che non stampano il valore;
+  - finché Caddy non è partito senza errori, Claude non mostra in chat senza filtro i log di Caddy, l'output dei comandi `/srv/app/dc` che leggono `caddy.env` (`up`, `create`, `run`) e i log dei rilasci falliti. Il filtro sostituisce con un segnaposto le righe che contengono `cfut_` o «appears invalid», e per i comandi sul server gira sul server, dopo `2>&1` (Caddy scrive su stderr). Così il segno dell'errore resta visibile, il token no.
+
+  Il punto è annotato anche in 06 §Caddy.
 
 ## Caddy e certificati
 
