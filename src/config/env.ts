@@ -16,13 +16,36 @@ export class EnvError extends Error {
 }
 
 /**
- * Valore segnaposto (`placeholder…`, es. `placeholder-stripe`): ammesso in ogni ambiente, server compresi,
- * nelle sole variabili di Stripe, Sentry, email e fornitore SDI, finché i compiti che le usano non lo
- * sostituiscono (specs/README.md). Deve iniziare con `placeholder`: non basta contenerlo.
+ * Segnaposto dell'avvio iniziale (`placeholder…`, es. `placeholder-stripe`): lo schema lo accetta in ogni ambiente,
+ * ma solo nelle variabili di PLACEHOLDER_VARIABLES, dove prende il posto del formato e non della lunghezza minima.
+ * Dove e fino a quando lo si usa davvero (sui server solo in alcune di quelle variabili, fino ai compiti che danno il
+ * valore vero) sono regole di procedura, che lo schema non controlla (01 §Variabili d'ambiente, «Segnaposto
+ * dell'avvio iniziale»). Deve iniziare con `placeholder`: non basta contenerlo.
  */
 export function isPlaceholder(value: string | undefined): boolean {
   return typeof value === 'string' && value.startsWith('placeholder');
 }
+
+/** Le sole variabili in cui un segnaposto è valido: in ogni altra, comprese quelle aggiunte dopo, non lo è. */
+const PLACEHOLDER_VARIABLES: ReadonlySet<string> = new Set([
+  'STRIPE_SECRET_KEY',
+  'STRIPE_LIVE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET',
+  'STRIPE_PORTAL_CONFIGURATION_ID',
+  'SENTRY_DSN',
+  'EMAIL_API_KEY',
+  'EMAIL_FROM',
+  'EMAIL_WEBHOOK_TOKEN',
+  'SDI_PROVIDER',
+  'SDI_API_KEY',
+  'SDI_API_URL',
+]);
+
+/**
+ * Segno dei valori da sostituire negli esempi dei server (`infra/env.example/`): un valore che lo contiene ancora, in
+ * maiuscolo, non è valido (01 §Variabili d'ambiente, «Valori da sostituire»).
+ */
+const TO_REPLACE = 'CAMBIA';
 
 type Env = Record<string, string | undefined>;
 
@@ -64,7 +87,7 @@ const stripeSecretKey = z
 
 const stripeWebhookSecret = z.string().refine((value) => value.startsWith('whsec_') || isPlaceholder(value));
 
-/** Un segnaposto, oppure un valore valido per `schema`: per le variabili che specs/README.md elenca. */
+/** Un segnaposto, oppure un valore valido per `schema`: per le variabili di PLACEHOLDER_VARIABLES. */
 const orPlaceholder = (schema: z.ZodType<string>) =>
   z.string().refine((value) => isPlaceholder(value) || schema.safeParse(value).success);
 
@@ -131,11 +154,15 @@ const cliShape = {
   DATABASE_JOBS_URL: postgresUrl.optional(),
   ISOLATION_APP_DATABASE_URL: postgresUrl.optional(),
   // Le chiavi Stripe le controllano solo i comandi Stripe (sk_test_, oppure sk_live_ con --live), che le
-  // ricevono intatte: un valore sbagliato non ferma migrate né gli altri comandi (01 §Variabili d'ambiente).
+  // ricevono intatte e le rifiutano anche quando contengono ancora CAMBIA: un valore sbagliato non ferma
+  // migrate né gli altri comandi (01 §Variabili d'ambiente). Per questo stanno in cliUnchecked.
   STRIPE_SECRET_KEY: text.optional(),
   STRIPE_LIVE_SECRET_KEY: text.optional(),
   STRIPE_TEST_CLOCK_SETUP: flag.optional(),
 };
+
+/** Le variabili del CLI che passano intatte, senza le regole comuni di parseShape: le chiavi Stripe. */
+const cliUnchecked: ReadonlySet<string> = new Set(['STRIPE_SECRET_KEY', 'STRIPE_LIVE_SECRET_KEY']);
 
 type Shape = Record<string, z.ZodType>;
 type Parsed<S extends Shape> = { [K in keyof S]: z.output<S[K]> };
@@ -164,13 +191,30 @@ const read = (env: Env, name: string) => {
 };
 
 /**
- * Valida ogni variabile da sola, così l'errore elenca tutte le variabili sbagliate e non solo la
- * prima; poi esegue i controlli fra variabili. Le variabili non elencate nello schema si ignorano.
+ * Le regole comuni, che valgono per ogni variabile dello schema prima del suo formato: un valore che contiene ancora
+ * `CAMBIA` non è valido, e un segnaposto vale solo nelle variabili di PLACEHOLDER_VARIABLES (01 §Variabili d'ambiente).
  */
-function parseShape<S extends Shape>(env: Env, shape: S, problems: Problems): Parsed<S> {
+const passesCommonRules = (name: string, value: string) =>
+  !value.includes(TO_REPLACE) && (!isPlaceholder(value) || PLACEHOLDER_VARIABLES.has(name));
+
+/**
+ * Valida ogni variabile da sola, così l'errore elenca tutte le variabili sbagliate e non solo la
+ * prima; i controlli fra variabili li fanno poi parseAppEnv, parseWorkerEnv e parseCliEnv. Le variabili
+ * non elencate nello schema si ignorano, e quelle di `unchecked` passano senza le regole comuni.
+ */
+function parseShape<S extends Shape>(
+  env: Env,
+  shape: S,
+  problems: Problems,
+  unchecked: ReadonlySet<string> = new Set(),
+): Parsed<S> {
   const out: Record<string, unknown> = {};
   for (const [name, schema] of Object.entries(shape)) {
     const value = read(env, name);
+    if (value !== undefined && !unchecked.has(name) && !passesCommonRules(name, value)) {
+      problems.add(name, 'non valida');
+      continue;
+    }
     const result = schema.safeParse(value);
     if (result.success) {
       if (result.data !== undefined) out[name] = result.data;
@@ -234,7 +278,7 @@ export function parseWorkerEnv(env: Env): WorkerEnv {
 /** Ambiente del CLI (`dist/cli.js`) e degli script con le credenziali del proprietario. */
 export function parseCliEnv(env: Env): CliEnv {
   const problems = new Problems();
-  const parsed = parseShape(env, cliShape, problems);
+  const parsed = parseShape(env, cliShape, problems, cliUnchecked);
   const APP_VERSION = resolveVersion(env, problems);
   problems.throwIfAny();
   return { ...parsed, APP_VERSION };
