@@ -71,8 +71,10 @@ Nessuna nuova dipendenza di produzione senza motivarla nella specifica dell'area
 ├─ drizzle/                   migrazioni SQL generate e manuali
 ├─ docs/                      verifiche manuali (docs/verifiche/), documenti legali (docs/legale/)
 ├─ infra/                     Caddy, compose, PostgreSQL, pgBackRest, script (infra/scripts/, tra cui check-fresh-clone.sh e backup.sh), README, INCIDENTI.md, RIPRISTINO.md
-└─ tests/                     integration/, e2e/, fixtures/, architecture/ (test di architettura), load/ (script k6 del test di carico, OPS-045)
+└─ tests/                     unit/ (test unitari), integration/, e2e/, fixtures/, architecture/ (test di architettura), load/ (script k6 del test di carico, OPS-045)
 ```
+
+Cartelle vuote (nota della revisione di FON-T01, 18/11/2026). FON-T01 crea con un `.gitkeep` le cartelle di `src/` e `drizzle/` di questo schema, comprese le `x-*` di `src/app/`, che `docs/due-postazioni.md` fa creare a NEG-T04: NEG-T04 ci aggiunge i suoi file e i `.gitkeep` restano. Non crea le cartelle che lo schema assegna a un compito o nomina solo nella descrizione di un'altra (`src/cli/commands/` di FON-T06, `src/server/db/isolation/`), né quelle di `tests/` diverse dalle cartelle dei suoi test (`unit/` e `architecture/`): le crea, senza `.gitkeep`, il primo compito che ci mette un file. `playwright.config.ts` indica già `tests/e2e/`, che fino ad allora non esiste.
 
 ## 3. Regole sui dati dei negozi (non negoziabili)
 
@@ -155,3 +157,4 @@ Nessuna nuova dipendenza di produzione senza motivarla nella specifica dell'area
 - 7/11/2026 — undicesima revisione: §4.3 toglie l'eccezione del token di recupero password (ora salvato come hash con `verification.storeIdentifier` di Better Auth, 03 ACC-013); §5 aggiunge la regola sul tempo nei test (il tempo valutato in SQL si sposta retrodatando le righe, l'orologio iniettato vale solo per il tempo valutato in JavaScript); R-DATI-3 estende l'eccezione di `auth-counters.ts` a ogni file sotto `src/server/auth/`; §6 impone le virgolette doppie per ogni identificativo di Better Auth nel SQL scritto a mano.
 - 7/11/2026 — dodicesima revisione: §6 richiede l'adattatore `drizzleAdapter(db, { provider: 'pg', camelCase: true })` da un'unica funzione di `auth-adapter.ts`, sia per `auth generate` sia a runtime (senza, il generatore del CLI di Better Auth produce nomi in snake_case); §4.3 distingue i token del progetto (`crypto.randomBytes(32)`, SHA-256) dal token di recupero password, generato da Better Auth e salvato come hash con `storeIdentifier`; R-DATI-4 sposta l'elenco consentito in `src/server/db/isolation/`, condiviso da test e `isolation-check`.
 - 18/11/2026 — dalla revisione di FON-T01: R-DATI-3 ammette `owner-client.ts` anche nei file dei comandi del CLI (`src/cli/commands/**`, un file per comando da FON-T06, ora anche nella struttura di §2), come già la regola ESLint e `specs/README.md`, e nomina la regola ESLint che controlla gli `import()` dinamici, che `no-restricted-imports` non vede.
+- 18/11/2026 — dalla seconda revisione di FON-T01: §2 aggiunge `tests/unit/` (test unitari) e una nota sulle cartelle vuote (quelle di `src/` e `drizzle/` nascono in FON-T01 con un `.gitkeep`, le altre di `tests/` con il loro primo file).
