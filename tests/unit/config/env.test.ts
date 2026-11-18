@@ -81,6 +81,16 @@ function expectNoValues(message: string, env: Env) {
 const keyStartingWith = (prefix: string) => prefix + 'A'.repeat(43 - prefix.length) + '=';
 
 /**
+ * La stessa chiave scritta in un altro modo. Con 32 byte il testo base64 ha 43 caratteri più `=`, e la decodifica
+ * ignora gli ultimi 2 bit del 43° carattere: cambiando il più basso dei due, il testo cambia e i byte restano gli stessi.
+ */
+function sameKeyWrittenDifferently(value: string): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const last = alphabet.indexOf(value.charAt(42));
+  return value.slice(0, 42) + alphabet.charAt(last ^ 1) + value.slice(43);
+}
+
+/**
  * Le variabili di `values` che il parser accetta: messo il loro valore al posto di quello di `base`, uno alla volta,
  * l'ambiente passa, oppure l'errore non le segnala come non valide.
  */
@@ -172,6 +182,16 @@ describe("schema dell'app", () => {
     expectNoValues(same.message, appEnv());
   });
 
+  it('FON-002: JOB_PAYLOAD_KEY e SHOP_SECRETS_KEY si confrontano per i byte: la stessa chiave scritta in un altro modo è rifiutata', () => {
+    const twin = sameKeyWrittenDifferently(key(1));
+    expect(twin).not.toBe(key(1));
+    expect(Buffer.from(twin, 'base64').equals(Buffer.from(key(1), 'base64'))).toBe(true);
+    const env = { ...appEnv(), JOB_PAYLOAD_KEY: key(1), SHOP_SECRETS_KEY: twin };
+    const error = envError(parseAppEnv, env);
+    expect(error.details.SHOP_SECRETS_KEY).toBe('non valida');
+    expectNoValues(error.message, env);
+  });
+
   it('FON-002: BETTER_AUTH_SECRET ed EMAIL_WEBHOOK_TOKEN richiedono almeno 32 caratteri', () => {
     expect(envError(parseAppEnv, { ...appEnv(), BETTER_AUTH_SECRET: 'x'.repeat(31) }).variables).toContain(
       'BETTER_AUTH_SECRET',
@@ -246,6 +266,15 @@ describe('schema del worker', () => {
 
   it('FON-002: EMAIL_FROM deve essere un indirizzo email', () => {
     expect(envError(parseWorkerEnv, { ...workerEnv(), EMAIL_FROM: 'mittente' }).variables).toContain('EMAIL_FROM');
+  });
+
+  it('FON-002: JOB_PAYLOAD_KEY e SHOP_SECRETS_KEY devono essere diverse, confrontate per i byte', () => {
+    for (const shopKey of [key(1), sameKeyWrittenDifferently(key(1))]) {
+      const env = { ...workerEnv(), JOB_PAYLOAD_KEY: key(1), SHOP_SECRETS_KEY: shopKey };
+      const error = envError(parseWorkerEnv, env);
+      expect(error.details.SHOP_SECRETS_KEY).toBe('non valida');
+      expectNoValues(error.message, env);
+    }
   });
 });
 

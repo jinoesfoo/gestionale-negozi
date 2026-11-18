@@ -238,9 +238,18 @@ function forbidOwner(env: Env, problems: Problems) {
   if (env.DATABASE_OWNER_URL !== undefined) problems.add('DATABASE_OWNER_URL', 'vietata');
 }
 
+/**
+ * JOB_PAYLOAD_KEY e SHOP_SECRETS_KEY devono essere chiavi diverse, cioè byte diversi: il confronto del testo non
+ * basta, perché la decodifica ignora gli ultimi 2 bit del 43° carattere e due testi diversi possono dare la stessa chiave.
+ */
 function distinctKeys(env: Env, problems: Problems) {
   if (problems.has('JOB_PAYLOAD_KEY') || problems.has('SHOP_SECRETS_KEY')) return;
-  if (read(env, 'JOB_PAYLOAD_KEY') === read(env, 'SHOP_SECRETS_KEY')) problems.add('SHOP_SECRETS_KEY', 'non valida');
+  const jobKey = read(env, 'JOB_PAYLOAD_KEY');
+  const shopKey = read(env, 'SHOP_SECRETS_KEY');
+  if (jobKey === undefined || shopKey === undefined) return;
+  if (Buffer.from(jobKey, 'base64').equals(Buffer.from(shopKey, 'base64'))) {
+    problems.add('SHOP_SECRETS_KEY', 'non valida');
+  }
 }
 
 export type AppEnv = WithVersion<Parsed<typeof appShape>>;
