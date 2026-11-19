@@ -1,0 +1,423 @@
+#!/usr/bin/env python3
+"""Fake AWS CLI v2 for the dry runs of infra/scripts/check-bucket-isolation.sh (OPS-007, OPS-008).
+
+It never talks to a network. It emulates the few `aws s3api` calls the script makes, with the
+output and error formats of AWS CLI v2, on a world described by a JSON file, and it checks the
+script's hygiene on every call:
+- no key on its command line, and no unit key variable or key value in its environment;
+- among the AWS_* variables only the ones the script sets, plus the key pair of the call;
+- no configuration or credentials file, no pager;
+- the endpoint and region of the bucket's own location;
+- no key in any file under the script's TMPDIR, HOME and working folder ($FAKE_AWS_CWD), and the
+  script still works in that folder;
+- in a terminal run ($FAKE_AWS_TTY=1), echo is off on the terminal at every call, and input
+  pasted during the run is never read or discarded before the end;
+- a bucket policy that holds a key goes to a pipe (the script's memory), never to a file;
+- the policy probe reads the policy from a pipe (--policy file:///dev/stdin), sends back exactly
+  the stored policy, and an owner key never puts a policy.
+
+World ($FAKE_AWS_WORLD, JSON):
+  keys: {access_key_id: {secret, unit, project}}
+  buckets: {name: {project, endpoint, region, versioning, object_lock, public_read, public_write, policy}}
+  error_format: "new" (aws: [ERROR]: An error occurred ...) or "old" (An error occurred ...)
+  denied_code: code returned for a refusal (default AccessDenied)
+  empty_text: what `--output text` prints for an empty list ("" or "None")
+  leaks: [{key_unit, bucket, actions}]      extra permissions, to simulate a wrong setup
+  delete_lies: [{key_unit, bucket}]         the delete happens, but AccessDenied is returned
+  delete_noop_ok: [{key_unit, bucket}]      the delete returns success without deleting
+  write_lies: [{key_unit, bucket}]          the write happens, but AccessDenied is returned
+  stderr_key_on: {unit, op}                 that call fails with an error line holding its keys
+  hang: {unit, op, bucket}                  that call writes FAKE-AWS-IN-ATTESA on the terminal and
+                                            waits for Ctrl-C, then exits with 130 like the CLI
+A public bucket (public_read) lets anyone read objects but not list them, as on Hetzner.
+A put without Content-MD5 into an Object Lock bucket is refused before the permission check
+(pessimistic emulation of the provider).
+State: $FAKE_AWS_STATE (directory). Call log: $FAKE_AWS_LOG (JSON lines, without keys).
+Exit status 99 = hygiene violation by the caller, so that a dry run fails loudly.
+"""
+import base64
+import fcntl
+import hashlib
+import json
+import os
+import signal
+import stat
+import struct
+import sys
+import termios
+import time
+
+WORLD = json.load(open(os.environ["FAKE_AWS_WORLD"]))
+STATE = os.environ["FAKE_AWS_STATE"]
+LOG = os.environ["FAKE_AWS_LOG"]
+ARGV = sys.argv[1:]
+MARKS = ("FAKEID", "fakeSecret")  # every fake key part contains one of these
+
+OPNAMES = {
+    "list-buckets": "ListBuckets",
+    "list-objects-v2": "ListObjectsV2",
+    "get-object": "GetObject",
+    "head-object": "HeadObject",
+    "put-object": "PutObject",
+    "delete-object": "DeleteObject",
+    "get-bucket-policy": "GetBucketPolicy",
+    "put-bucket-policy": "PutBucketPolicy",
+}
+ACTIONS = {
+    "list-objects-v2": "s3:ListBucket",
+    "get-object": "s3:GetObject",
+    "head-object": "s3:GetObject",
+    "put-object": "s3:PutObject",
+    "delete-object": "s3:DeleteObject",
+    "get-bucket-policy": "s3:GetBucketPolicy",
+    "put-bucket-policy": "s3:PutBucketPolicy",
+}
+ALLOWED_AWS_VARS = {
+    "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PAGER", "AWS_DEFAULT_OUTPUT",
+    "AWS_CLI_AUTO_PROMPT", "AWS_EC2_METADATA_DISABLED", "AWS_RETRY_MODE", "AWS_MAX_ATTEMPTS",
+    "AWS_REQUEST_CHECKSUM_CALCULATION", "AWS_RESPONSE_CHECKSUM_VALIDATION",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+}
+
+
+def has_key(text):
+    return any(m in text for m in MARKS)
+
+
+def log(entry):
+    with open(LOG, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def violation(msg):
+    log({"violation": msg})
+    sys.stderr.write("FAKE-HYGIENE-VIOLATION: " + msg + "\n")
+    sys.exit(99)
+
+
+def die(code, op, msg, status=254):
+    line = "An error occurred (%s) when calling the %s operation: %s" % (code, OPNAMES.get(op, op), msg)
+    if WORLD.get("error_format", "new") == "new":
+        sys.stderr.write("\naws: [ERROR]: " + line + "\n\n")
+    else:
+        sys.stderr.write("\n" + line + "\n")
+    sys.exit(status)
+
+
+# ---- hygiene of the caller ----
+env = os.environ
+for a in ARGV:
+    if has_key(a):
+        violation("key value on the command line")
+for name, value in env.items():
+    if name.startswith("AWS_"):
+        if name not in ALLOWED_AWS_VARS:
+            violation("unexpected variable reaches the client: " + name)
+        if name not in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY") and has_key(value):
+            violation("key value in " + name)
+        continue
+    if name.endswith("_ACCESS_KEY_ID") or name.endswith("_SECRET_ACCESS_KEY"):
+        violation("unit key variable exported to the client: " + name)
+    if has_key(value):
+        violation("key value in the environment variable " + name)
+if env.get("AWS_CONFIG_FILE") != "/dev/null" or env.get("AWS_SHARED_CREDENTIALS_FILE") != "/dev/null":
+    violation("configuration or credentials file not disabled")
+if env.get("AWS_PAGER") != "":
+    violation("AWS_PAGER not empty")
+cwd_expected = env.get("FAKE_AWS_CWD")
+if not cwd_expected:
+    violation("FAKE_AWS_CWD missing: the harness must start the script in its own empty folder")
+try:
+    if os.path.realpath(os.getcwd()) != os.path.realpath(cwd_expected):
+        violation("the script works in another folder than the one the harness gave it")
+except OSError:
+    violation("the script's working folder is gone")
+for top in (env.get("TMPDIR"), env.get("HOME"), cwd_expected):
+    if not top or not os.path.isdir(top):
+        continue
+    for folder, _dirs, files in os.walk(top):
+        for fname in files:
+            path = os.path.join(folder, fname)
+            try:
+                data = open(path, "rb").read()
+            except OSError:
+                continue
+            if any(m.encode() in data for m in MARKS):
+                violation("key in a file: " + os.path.relpath(path, top))
+
+if env.get("FAKE_AWS_TTY") == "1":
+    # In a terminal run, echo must be off at every client call, from the first (aws --version,
+    # before the questions) to the last; and input pasted during the run must stay pending until
+    # the script exits: nothing reads or discards it before (the complete lines waiting on the
+    # terminal never decrease between two s3api calls).
+    try:
+        tty_fd = os.open("/dev/tty", os.O_RDONLY | os.O_NOCTTY)
+        echo_on = termios.tcgetattr(tty_fd)[3] & termios.ECHO
+        pending = struct.unpack("i", fcntl.ioctl(tty_fd, termios.FIONREAD, b"\0\0\0\0"))[0]
+        os.close(tty_fd)
+    except OSError:
+        violation("no terminal in a terminal run")
+    if echo_on:
+        violation("echo on during the run")
+
+if ARGV == ["--version"]:
+    print("aws-cli/2.99.0 Python/3.13.0 Linux/6.0.0 exe/x86_64.fake")
+    sys.exit(0)
+
+if env.get("FAKE_AWS_TTY") == "1":
+    pending_file = os.path.join(STATE, "pending-input")
+    before = int(open(pending_file).read()) if os.path.exists(pending_file) else 0
+    if pending < before:
+        violation("terminal input read or discarded before the end of the run")
+    open(pending_file, "w").write(str(pending))
+
+glob = {}
+rest = []
+i = 0
+while i < len(ARGV):
+    a = ARGV[i]
+    if a in ("--endpoint-url", "--region", "--cli-connect-timeout", "--cli-read-timeout"):
+        glob[a] = ARGV[i + 1]
+        i += 2
+    elif a == "--no-sign-request":
+        glob[a] = True
+        i += 1
+    else:
+        rest.append(a)
+        i += 1
+if len(rest) < 2 or rest[0] != "s3api" or rest[1] not in OPNAMES:
+    sys.stderr.write("fake aws: unsupported command %r\n" % rest[:2])
+    sys.exit(252)
+op = rest[1]
+params = {}
+positional = []
+j = 2
+while j < len(rest):
+    if rest[j].startswith("--"):
+        params[rest[j]] = rest[j + 1]
+        j += 2
+    else:
+        positional.append(rest[j])
+        j += 1
+for g in ("--endpoint-url", "--region"):
+    if g not in glob:
+        violation("missing " + g)
+
+# ---- authentication ----
+if glob.get("--no-sign-request"):
+    if "AWS_ACCESS_KEY_ID" in env or "AWS_SECRET_ACCESS_KEY" in env:
+        violation("keys present in an anonymous call")
+    principal = None
+else:
+    kid = env.get("AWS_ACCESS_KEY_ID")
+    secret = env.get("AWS_SECRET_ACCESS_KEY")
+    if not kid or not secret:
+        sys.stderr.write('\nUnable to locate credentials. You can configure credentials by running "aws configure".\n')
+        sys.exit(253)
+    principal = WORLD.get("keys", {}).get(kid)
+    if principal is None:
+        log({"unit": "?", "op": op, "result": "InvalidAccessKeyId"})
+        die("InvalidAccessKeyId", op, "The AWS Access Key Id you provided does not exist in our records.")
+    if principal["secret"] != secret:
+        die("SignatureDoesNotMatch", op, "The request signature we calculated does not match the signature you provided.")
+unit = principal["unit"] if principal else "ANONYMOUS"
+
+trap = WORLD.get("stderr_key_on")
+if trap and trap.get("unit") == unit and trap.get("op") == op:
+    log({"unit": unit, "op": op, "result": "error line with the keys"})
+    sys.stderr.write('\nCould not connect to the endpoint URL: "%s/?id=%s&secret=%s"\n'
+                     % (glob["--endpoint-url"], env.get("AWS_ACCESS_KEY_ID", ""), env.get("AWS_SECRET_ACCESS_KEY", "")))
+    sys.exit(255)
+
+hang = WORLD.get("hang")
+if hang and hang.get("unit") == unit and hang.get("op") == op and hang.get("bucket") == params.get("--bucket"):
+    log({"unit": unit, "op": op, "result": "waiting for Ctrl-C"})
+    signal.signal(signal.SIGINT, lambda *_: os._exit(130))  # AWS CLI v2 exits with 130 on Ctrl-C
+    with open("/dev/tty", "w") as tty:
+        tty.write("FAKE-AWS-IN-ATTESA\n")
+    time.sleep(60)
+    sys.exit(254)
+
+
+def text_list(items):
+    print("\t".join(items) if items else WORLD.get("empty_text", ""))
+
+
+if op == "list-buckets":
+    if principal is None:
+        die("AccessDenied", op, "Access Denied")
+    if params.get("--query") != "Buckets[].Name" or params.get("--output") != "text":
+        violation("unexpected list-buckets query")
+    log({"unit": unit, "op": op, "result": "ok"})
+    text_list(sorted(b for b, d in WORLD.get("buckets", {}).items() if d["project"] == principal["project"]))
+    sys.exit(0)
+
+bucket = params.get("--bucket")
+if bucket is None:
+    violation("missing --bucket")
+bk = WORLD.get("buckets", {}).get(bucket)
+if bk is None:
+    log({"unit": unit, "op": op, "bucket": bucket, "result": "NoSuchBucket"})
+    die("NoSuchBucket", op, "The specified bucket does not exist")
+if glob["--endpoint-url"] != bk["endpoint"] or glob["--region"] != bk["region"]:
+    violation("endpoint or region of another location for bucket " + bucket)
+
+state_file = os.path.join(STATE, bucket + ".json")
+if os.path.exists(state_file):
+    st = json.load(open(state_file))
+else:
+    st = {"objects": {}, "policy": bk.get("policy"), "seq": 0}
+objs = st["objects"]
+
+
+def save():
+    json.dump(st, open(state_file, "w"))
+
+
+if op == "put-object" and bk.get("object_lock") and "--content-md5" not in params:
+    die("InvalidRequest", op, "Content-MD5 HTTP header is required for Put Object requests with Object Lock parameters")
+
+if op == "put-bucket-policy":
+    # The CLI loads file:// while parsing the arguments, before any request.
+    ref = params.get("--policy", "")
+    if ref != "file:///dev/stdin" or not stat.S_ISFIFO(os.fstat(0).st_mode):
+        violation("the policy probe does not read the policy from a pipe (--policy file:///dev/stdin)")
+    try:
+        new_policy = json.loads(open(ref[len("file://"):]).read())
+    except (OSError, ValueError) as e:
+        sys.stderr.write("\nError parsing parameter '--policy': Unable to load paramfile %s: %s\n" % (ref, e))
+        sys.exit(252)
+    if principal is not None and principal["project"] == bk["project"]:
+        violation("an owner key puts a bucket policy")
+    if new_policy != st.get("policy"):
+        violation("the policy probe sends a policy different from the stored one")
+
+
+def policy_allows(action):
+    pol = st.get("policy")
+    if not pol or principal is None:
+        return False
+    for stmt in pol.get("Statement", []):
+        if stmt.get("Effect") != "Allow":
+            continue
+        acts = stmt.get("Action", [])
+        acts = [acts] if isinstance(acts, str) else acts
+        if action not in acts and "s3:*" not in acts:
+            continue
+        who = stmt.get("Principal", {}).get("AWS", [])
+        who = [who] if isinstance(who, str) else who
+        for p in who:
+            if p in ("arn:aws:iam:::user/p" + principal["project"],
+                     "arn:aws:iam:::user/p%s:%s" % (principal["project"], env.get("AWS_ACCESS_KEY_ID"))):
+                return True
+    return False
+
+
+def allowed(action):
+    if principal is None:
+        if bk.get("public_read") and action == "s3:GetObject":
+            return True
+        return bool(bk.get("public_write")) and action in ("s3:PutObject", "s3:DeleteObject")
+    if principal["project"] == bk["project"] or policy_allows(action):
+        return True
+    return any(x["key_unit"] == unit and x["bucket"] == bucket and action in x["actions"]
+               for x in WORLD.get("leaks", []))
+
+
+def matches(kind):
+    return any(x["key_unit"] == unit and x["bucket"] == bucket for x in WORLD.get(kind, []))
+
+
+if op == "delete-object" and matches("delete_noop_ok"):
+    log({"unit": unit, "op": op, "bucket": bucket, "result": "ok without deleting"})
+    sys.exit(0)
+lie = (op == "delete-object" and matches("delete_lies")) or (op == "put-object" and matches("write_lies"))
+if not allowed(ACTIONS[op]) and not lie:
+    log({"unit": unit, "op": op, "bucket": bucket, "result": "denied"})
+    if op == "head-object":
+        die("403", op, "Forbidden")  # a HEAD error has no body: the CLI shows the HTTP status
+    die(WORLD.get("denied_code", "AccessDenied"), op, "Access Denied")
+log({"unit": unit, "op": op, "bucket": bucket, "result": "allowed"})
+
+
+def current(key):
+    versions = objs.get(key) or []
+    v = versions[-1] if versions else None
+    return None if v is None or v.get("dm") else v
+
+
+if op == "list-objects-v2":
+    if params.get("--query") != "Contents[].Key" or params.get("--output") != "text":
+        violation("unexpected list-objects-v2 query")
+    keys = sorted(k for k in objs if k.startswith(params.get("--prefix", "")) and current(k))
+    print("\t".join(keys) if keys else "None")
+    sys.exit(0)
+
+if op in ("get-object", "head-object"):
+    v = current(params["--key"])
+    if v is None:
+        if op == "head-object":
+            die("404", op, "Not Found")
+        if allowed("s3:ListBucket"):
+            die("NoSuchKey", op, "The specified key does not exist.")
+        die("AccessDenied", op, "Access Denied")
+    data = base64.b64decode(v["data"])
+    if op == "get-object":
+        if len(positional) != 1:
+            violation("get-object without exactly one output file")
+        with open(positional[0], "wb") as f:
+            f.write(data)
+    print(json.dumps({"ContentLength": len(data), "ETag": '"%s"' % v["etag"], "VersionId": v["vid"]}, indent=4))
+    sys.exit(0)
+
+if op == "put-object":
+    body = open(params["--body"], "rb").read()
+    md5 = params.get("--content-md5")
+    if md5 is not None and md5 != base64.b64encode(hashlib.md5(body).digest()).decode():
+        die("BadDigest", op, "The Content-MD5 you specified did not match what we received.")
+    st["seq"] += 1
+    v = {"vid": "v%d" % st["seq"], "data": base64.b64encode(body).decode(), "etag": hashlib.md5(body).hexdigest()}
+    if bk.get("versioning") or bk.get("object_lock"):
+        objs.setdefault(params["--key"], []).append(v)
+    else:
+        objs[params["--key"]] = [v]
+    save()
+    if lie:
+        die(WORLD.get("denied_code", "AccessDenied"), op, "Access Denied")
+    print(json.dumps({"ETag": '"%s"' % v["etag"], "VersionId": v["vid"]}, indent=4))
+    sys.exit(0)
+
+if op == "delete-object":
+    if "--version-id" in params:
+        violation("the script must not delete versions")
+    out = {}
+    if bk.get("versioning") or bk.get("object_lock"):
+        st["seq"] += 1
+        objs.setdefault(params["--key"], []).append({"vid": "dm%d" % st["seq"], "dm": True})
+        out = {"DeleteMarker": True, "VersionId": "dm%d" % st["seq"]}
+    else:
+        objs.pop(params["--key"], None)
+    save()
+    if lie:
+        die(WORLD.get("denied_code", "AccessDenied"), op, "Access Denied")
+    if out:
+        print(json.dumps(out, indent=4))
+    sys.exit(0)
+
+if op == "get-bucket-policy":
+    if params.get("--query") != "Policy" or params.get("--output") != "text":
+        violation("unexpected get-bucket-policy query")
+    if not st.get("policy"):
+        die("NoSuchBucketPolicy", op, "The bucket policy does not exist")
+    text = json.dumps(st["policy"])
+    if has_key(text) and not stat.S_ISFIFO(os.fstat(1).st_mode):
+        violation("a bucket policy that holds a key is written to a file, not to the script's memory")
+    print(text)
+    sys.exit(0)
+
+if op == "put-bucket-policy":
+    st["policy"] = new_policy
+    save()
+    sys.exit(0)
+
+violation("unhandled operation " + op)
