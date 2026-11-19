@@ -533,7 +533,7 @@ Indirizzi e regioni, che non sono segreti: `https://fsn1.your-objectstorage.com`
 **Regole.**
 
 - Le chiavi le crea l'utente nella console. Stanno solo nel gestore di password e nella copia sigillata (OPS-009): mai in chat, in git, in un file o in una schermata, nemmeno la sola Access key.
-- Il client S3 è **AWS CLI v2, versione 2.39.4** (passo 1). Prende le chiavi solo dall'ambiente del terminale delle chiavi (passo 4). Non si usano mai:
+- Il client S3 è **AWS CLI v2, versione 2.39.4** (passo 1). Prende le chiavi solo dal suo ambiente, dove gliele mette, per ogni singolo comando, il terminale delle chiavi (passo 4). Non si usano mai:
   - `aws configure` in nessuna forma (nemmeno `aws configure agent-toolkit`, che l'installatore suggerisce) e `aws login`: scrivono in `~/.aws`;
   - `aws update`: installa l'ultima versione, non quella fissata;
   - l'opzione `--debug`: scrive nei messaggi la Access key.
@@ -631,7 +631,7 @@ aws-cli/2.39.4 Python/3.14.8 Linux/7.0.0-43-generic exe/x86_64.ubuntu.26
 cd ~ && rm -rf "$D"
 ```
 
-A3 (Claude): `~/.aws/credentials` e `~/.aws/config` non esistono (controllo della sola esistenza). Il client può creare `~/.aws/cli/cache/session.db`, un numero di sessione senza chiavi. Il terminale delle chiavi lo spegne (`AWS_CLI_SESSION_ID_DISABLED=true`); lo script di I2, che toglie tutte le variabili `AWS_*`, no.
+A3 (Claude): `~/.aws/credentials` e `~/.aws/config` non esistono (controllo della sola esistenza). Il client può creare `~/.aws/cli/cache/session.db`, un numero di sessione senza chiavi. Il terminale delle chiavi lo spegne (`AWS_CLI_SESSION_ID_DISABLED=true`); lo script di I2, che toglie tutte le variabili `AWS_*`, no: per questo I2 lo lancia con una cartella di casa nuova e vuota, dove il file finisce al posto di `~/.aws`.
 
 **Cambio di versione.** Si ripetono gli stessi passi con il numero nuovo; al posto di `sudo ./aws/install` si usa `sudo ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update`. Dopo il 01/07/2027 la chiave pubblica si riprende dalla pagina di AWS, che pubblica la stessa chiave con la scadenza prolungata: l'impronta non cambia. Non si prende da un keyserver: `keyserver.ubuntu.com` ne ha una copia scaduta.
 
@@ -689,24 +689,24 @@ Controlli:
 
 Un terminale delle chiavi è sempre una finestra nuova dell'applicazione «Terminal» (Terminale), aperta apposta e mai usata per altro: dal menu delle applicazioni, oppure con Ctrl+Maiusc+N da una finestra del Terminale già aperta. Se ne apre una all'inizio di D, una per I2, e una nuova quando la precedente è stata chiusa; negli altri passi si continua in quella aperta, come dicono i passi.
 
-- Non si usa il terminale di VS Code, e da questa finestra non si avvia Claude Code.
+- Non si usa il terminale di VS Code, e da questa finestra non si avvia Claude Code. La lista di controllo dice che ne erediterebbe le chiavi: con il blocco qui sotto non sono più esportate, ma la regola resta, perché questa finestra serve solo alle chiavi.
 - Qui si lanciano solo i comandi di questa sezione.
 - Si incolla con il tasto destro → «Paste» (Incolla) o con Ctrl+Maiusc+V; si copia con il tasto destro → «Copy» (Copia) o con Ctrl+Maiusc+C (regole del terminale e degli appunti).
 - Ogni blocco si incolla tutto insieme, poi si preme Invio.
 
-Il primo comando è tutto il blocco qui sotto, incollato in una volta sola, poi Invio. Se il Terminale chiede conferma per incollare più righe, si conferma. Il blocco stampa due righe, da incollare a Claude (A4):
+Il primo comando è tutto il blocco qui sotto, incollato in una volta sola, poi Invio. Se il Terminale chiede conferma per incollare più righe, si conferma. Il blocco stampa due righe (tre, se manca il client), da incollare a Claude (A4):
 
 ```
 cronologia: spenta
 terminale: ptyxis-agent (shell 12345, 18/11/2026 16:10:00)
 ```
 
-`ptyxis-agent` è il Terminale di Ubuntu 26.04 (Ptyxis). Se compare «cronologia: ACCESA», o la scritta che parla di VS Code, si chiude la finestra e se ne apre una nuova.
+`ptyxis-agent` è il Terminale di Ubuntu 26.04 (Ptyxis). Se compare «cronologia: ACCESA», o la scritta che parla di VS Code, si chiude la finestra e se ne apre una nuova. Se compare «ATTENZIONE: il client aws non è in /usr/local/bin», non si va avanti e lo si dice a Claude (passo 1): senza quel file nessun comando verso Hetzner parte. Un eventuale suggerimento del Terminale per installare il client (con `snap` o `apt`) non si segue: installerebbe un client diverso da quello controllato al passo 1.
 
 Per la lettura (D0), ecco cosa fa il blocco.
 
-- Spegne la cronologia della shell e il suo file: nessun comando resta salvato.
-- Toglie le variabili `AWS_*` ereditate e prepara il client:
+- Spegne la cronologia della shell e il suo file (nessun comando resta salvato) e il passaggio automatico ai programmi delle variabili nuove (`allexport`). Toglie un eventuale alias o funzione `aws` di un file di avvio del terminale, e la funzione di Ubuntu che, per un comando non trovato, lancia un altro programma (`command_not_found_handle`): così al posto di `aws` non parte nient'altro.
+- Toglie le variabili `AWS_*` ereditate (le due delle chiavi anche per nome, nel caso un file di avvio del terminale le avesse solo dichiarate) e prepara il client:
   - nessun file di configurazione né di credenziali (`/dev/null`);
   - nessun pager, uscite in JSON, nessun numero di sessione;
   - checksum solo dove l'operazione li richiede;
@@ -717,8 +717,8 @@ Per la lettura (D0), ecco cosa fa il blocco.
 | Funzione | Cosa fa | Righe |
 |---|---|---|
 | `load_key <nome>` | Chiede Access key e Secret key della voce `<nome>` del gestore di password, senza mostrarle (`read -rs`). Richiede le parti vuote o con spazi, e la Secret key se arriva di nuovo la Access key. Rifiuta, e allora la chiave resta non caricata: una parte uguale a una parte di un'altra chiave già caricata (appunti rimasti); una Secret key non più lunga della Access key (parti scambiate). Se prima della domanda era già arrivato del testo, incollato troppo presto, lo scarta, lo dice e si ferma: così non diventa una chiave. Caricata di nuovo, una chiave prende i valori nuovi. Tiene le chiavi nella memoria di questo terminale | tutte |
-| `use_key <nome>` | Esporta la chiave `<nome>` (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) per i comandi che seguono. Se `<nome>` non è caricata, non resta in uso nessuna chiave, e i comandi che seguono non usano nessuna chiave (in F e J2 la domanda di `compare_key` arriva lo stesso) | tutte |
-| `s3 fsn1\|hel1 <operazione> …` | Un comando `aws s3api` verso Falkenstein o Helsinki, con la chiave in uso. Alla fine scrive luogo, nome della chiave, data, ora e codice di uscita (0 = riuscito) | D–J |
+| `use_key <nome>` | Mette la chiave `<nome>` in `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` per i comandi che seguono, senza esportarla: la riceve solo il client `aws`, da `_aws`. Nella lista di controllo «esportare» una chiave e «chiave esportata» vogliono dire metterla in uso con `use_key` e la chiave in uso; l'`export` è il passaggio della chiave al solo comando `aws`. Se `<nome>` non è caricata, non resta in uso nessuna chiave, e i comandi che seguono non usano nessuna chiave (in F e J2 la domanda di `compare_key` arriva lo stesso) | tutte |
+| `s3 fsn1\|hel1 <operazione> …` | Un comando `aws s3api` verso Falkenstein o Helsinki, con la chiave in uso. Se nella risposta del client comparisse l'Access key di una chiave caricata, la mostra come nome tra parentesi quadre (`[file-prod]`); i messaggi di errore il client li scrive direttamente sullo schermo, e non passano da questa sostituzione. Alla fine scrive luogo, nome della chiave, data, ora e codice di uscita (0 = riuscito) | D–J |
 | `show_config <unità>` | Versioning, ciclo di vita, Object Lock e policy del bucket dell'unità, con la sua chiave | E |
 | `show_policy <unità>` | La policy del bucket. Ogni Access key che conosce la mostra solo come nome tra parentesi quadre (`[specchio-lettura]`); ogni altro valore dopo `p<id>:`, e ogni sequenza di 16 o più maiuscole e cifre, come `[chiave sconosciuta]` | E7, F, J, 12 |
 | `put_policy_keys <nome>…` | Manda la policy di `foondaco-backup` nella forma per chiave, con le Access key delle chiavi `<nome>` caricate. Prima prova ogni chiave chiedendo l'elenco dei suoi bucket a `fsn1` e a `hel1`: se la chiave non funziona (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o ha dei bucket, non manda niente. Poi mostra la policy con i nomi al posto delle chiavi e la manda: arriva al client da `/dev/stdin`, mai dalla riga di comando. Un messaggio di errore lo stampa con i nomi al posto delle Access key | F, J2, J6, 12 |
@@ -730,12 +730,12 @@ Per la lettura (D0), ecco cosa fa il blocco.
 | `watch_revocation` | J4, con la chiave `prova-ripristino` in uso: la lista di J2 subito e poi a 5, 10, … 60 minuti dall'inizio, finché due prove di fila sono rifiutate con `InvalidAccessKeyId`. Gli errori del client, della rete o del fornitore non contano; un altro codice si stampa e interrompe la serie. Le prove perse perché il computer era sospeso, o perché una chiamata è durata più di 5 minuti, non si recuperano: lo dice con «prove saltate» | J4 |
 | `clean_leftovers <unità>` | Cancella gli oggetti rimasti sotto `check-bucket-isolation/` dopo un'interruzione di I2 | I |
 
-Le chiavi non finiscono mai sullo schermo, in un file o sulla riga di un comando: arrivano solo, come variabili d'ambiente, ai programmi lanciati da questo terminale. `python3` legge solo le uscite del client, che non contengono chiavi. Gli unici file che il blocco scrive sono quelli di prova, in una cartella temporanea (`$WORK`).
+Le chiavi non finiscono mai sullo schermo, in un file o fra gli argomenti di un comando, e non sono esportate: le riceve solo il client `aws`, come variabili d'ambiente di quel solo comando. Nella riga di `_aws` compaiono solo i nomi delle due variabili: i valori vanno nell'ambiente del client, non fra i suoi argomenti. Mentre il client fa la sua chiamata (di solito meno di un secondo; se la rete non risponde, anche qualche minuto, finché il client smette di riprovare), le chiavi sono nel suo ambiente: è il minimo, perché il client le deve avere. Per il client la cartella di casa è la cartella temporanea (`HOME=$WORK`), dove non c'è una cartella `.aws`: non legge alias, modelli o impostazioni da `~/.aws`. I programmi li cerca solo in `/usr/local/bin` (`PATH=/usr/local/bin`), dove l'ha installato il passo 1: così non lancia `lsb_release` e `uname`, che altrimenti lancerebbe a ogni chiamata passando loro le chiavi, e nessun programma della cartella di casa può prendere il posto di `aws`. Lo script di I2 passa anche lui le chiavi solo al suo client; quel client però cerca i programmi anche in `/usr/bin` e `/bin` (riga 1307), e a ogni chiamata lancia `lsb_release` (che lancia `getopt`, `cut` e `tr`) e `uname` di `/usr/bin`, passando loro le chiavi per pochi millesimi di secondo: sono programmi di sistema, che si cambiano solo con la password di amministratore. Gli altri programmi del blocco (`python3`, `date`, `sleep`, `sed`…) non ricevono le chiavi. `python3` legge solo le uscite del client, che non contengono chiavi. Gli unici file che il blocco scrive sono quelli di prova, in una cartella temporanea (`$WORK`).
 
 ```bash
 # Terminale delle chiavi (infra/README.md, «Archivi S3 (OPS-T03)»): primo comando, incollato tutto insieme.
-set +o history; unset HISTFILE
-for v in $(compgen -e); do case $v in AWS_*) unset "$v" ;; esac; done
+set +o history; set +o allexport; unset HISTFILE; unalias aws 2>/dev/null; unset -f aws command_not_found_handle
+for v in $(compgen -e); do case $v in AWS_*) unset "$v" ;; esac; done; unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 export AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_PAGER= \
   AWS_DEFAULT_OUTPUT=json AWS_CLI_AUTO_PROMPT=off AWS_EC2_METADATA_DISABLED=true \
   AWS_RETRY_MODE=standard AWS_MAX_ATTEMPTS=4 AWS_CLI_SESSION_ID_DISABLED=true \
@@ -748,7 +748,7 @@ declare -A KEY_ID=() KEY_SECRET=()
 KEY_IN_USE= OUT= WORK=$(mktemp -d)
 
 _now() { date '+%d/%m/%Y %H:%M:%S'; }
-_aws() { local place=$1; shift; aws --endpoint-url "https://$place.your-objectstorage.com" --region "$place" s3api "$@"; }
+_aws() { local place=$1; shift; HOME=$WORK PATH=/usr/local/bin AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY aws --endpoint-url "https://$place.your-objectstorage.com" --region "$place" s3api "$@"; }
 _code() { printf '%s\n' "$1" | sed -n 's/.*An error occurred (\([A-Za-z0-9]*\)).*/\1/p' | head -n 1; }
 _reason() { local c; c=$(_code "$1"); if [ -n "$c" ]; then printf '%s\n' "$c"; else printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -n 1; fi; }
 _json() { printf '%s' "$OUT" | python3 -I -c 'import json, sys
@@ -787,12 +787,12 @@ _early_input() { # testo arrivato prima di una domanda (incollato troppo presto)
 }
 
 s3() { # s3 fsn1|hel1 <operazione> [opzioni]: un comando del client con la chiave in uso
-  local place=${1:-} rc
+  local place=${1:-} rc text name
   case $place in fsn1|hel1) ;; *) echo 'Uso: s3 fsn1|hel1 <operazione> [opzioni]'; return 2 ;; esac
   [ -n "$KEY_IN_USE" ] || { echo 'Nessuna chiave in uso: prima use_key <nome>'; return 2; }
   shift
   OUT=$(_aws "$place" "$@"); rc=$?
-  [ -z "$OUT" ] || printf '%s\n' "$OUT"
+  [ -z "$OUT" ] || { text=$OUT; for name in "${!KEY_ID[@]}"; do text=${text//"${KEY_ID[$name]}"/"[$name]"}; done; printf '%s\n' "$text"; }
   echo "[$place · chiave «$KEY_IN_USE» · $(_now)] codice di uscita: $rc"
   return "$rc"
 }
@@ -835,7 +835,7 @@ use_key() { # use_key <nome>: la chiave <nome> diventa quella dei comandi che se
     unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; KEY_IN_USE=
     echo "La chiave «$name» non è caricata in questo terminale: prima load_key $name. Ora nessuna chiave è in uso."; return 1
   fi
-  export AWS_ACCESS_KEY_ID="${KEY_ID[$name]}" AWS_SECRET_ACCESS_KEY="${KEY_SECRET[$name]}"
+  AWS_ACCESS_KEY_ID="${KEY_ID[$name]}" AWS_SECRET_ACCESS_KEY="${KEY_SECRET[$name]}"   # non esportate: le riceve solo aws, da _aws
   KEY_IN_USE=$name
   echo "In uso la chiave «$name»."
 }
@@ -1076,7 +1076,7 @@ for o in json.loads(sys.stdin.read() or "{}").get("Contents") or []:
   echo "$b: cancellati $n oggetti sotto check-bucket-isolation/ (nei bucket con le versioni restano nascosti da un delete marker)"
 }
 
-command -v aws >/dev/null || echo 'ATTENZIONE: il client aws non è installato (README, passo 1)'
+[ -x /usr/local/bin/aws ] || echo 'ATTENZIONE: il client aws non è in /usr/local/bin (README, passo 1)'
 if [[ -o history ]]; then echo 'cronologia: ACCESA: chiudi questo terminale e aprine uno nuovo'; else echo 'cronologia: spenta'; fi
 if [ "${TERM_PROGRAM:-}" = vscode ] || compgen -e | grep -q '^VSCODE_'; then
   echo "terminale: $(ps -o comm= -p "$PPID"), ma è il terminale di VS Code o ne viene: chiudilo e apri il Terminale di Ubuntu"
@@ -1231,7 +1231,7 @@ use_key pgbackrest-prod
 put_policy_keys specchio-lettura
 ```
 
-`put_policy_keys` prima prova `specchio-lettura`: se è rifiutata (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o ha dei bucket, non manda niente e dice perché; con un errore di rete o del fornitore lo scrive («vado avanti») e manda lo stesso. Poi mostra la policy con i nomi al posto delle chiavi e la manda. Il testo che manda, con un segnaposto al posto della Access key (16852089 è l'id di `lettura-backup-prod`):
+`put_policy_keys` prima prova `specchio-lettura`: se è rifiutata (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o ha dei bucket, non manda niente e dice perché; con ogni altro errore, per esempio di rete o del fornitore, lo scrive («non riuscita (…); vado avanti») e manda lo stesso. Poi mostra la policy con i nomi al posto delle chiavi e la manda. Il testo che manda, con un segnaposto al posto della Access key (16852089 è l'id di `lettura-backup-prod`):
 
 ```json
 {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam:::user/p16852089:<Access key di specchio-lettura>"},"Action":["s3:ListBucket","s3:GetObject"],"Resource":["arn:aws:s3:::foondaco-backup","arn:aws:s3:::foondaco-backup/*"]}]}
@@ -1304,11 +1304,11 @@ export FILE_PROD_BUCKET=foondaco-file FILE_PROD_ENDPOINT=https://fsn1.your-objec
   FILE_TEST_BUCKET=foondaco-file-test FILE_TEST_ENDPOINT=https://fsn1.your-objectstorage.com FILE_TEST_REGION=fsn1 \
   BACKUP_TEST_BUCKET=foondaco-backup-test BACKUP_TEST_ENDPOINT=https://fsn1.your-objectstorage.com BACKUP_TEST_REGION=fsn1 \
   MIRROR_DST_BUCKET=foondaco-specchio MIRROR_DST_ENDPOINT=https://hel1.your-objectstorage.com MIRROR_DST_REGION=hel1
-bash infra/scripts/check-bucket-isolation.sh
+if [[ $(git branch --show-current) = @(ops-t03|main) ]] && h=$(git rev-parse -q --verify HEAD:infra/scripts/check-bucket-isolation.sh) && [ "$h" = "$(git hash-object --no-filters infra/scripts/check-bucket-isolation.sh)" ]; then BASH_ENV= HOME=$(mktemp -d) PATH=/usr/local/bin:/usr/bin:/bin bash infra/scripts/check-bucket-isolation.sh; else echo "Script NON lanciato: il ramo non è ops-t03 né main, oppure infra/scripts/check-bucket-isolation.sh non è uguale, byte per byte, a quello dell'ultimo commit. Nessuna chiave è stata chiesta: non incollarne, e dillo a Claude."; false; fi
 echo "codice di uscita: $?"
 ```
 
-Il primo comando deve stampare `ops-t03`. Lo script chiede dodici parti, Access key e poi Secret key per ogni chiave, e dopo ognuna scrive «ricevuta»:
+Il primo comando deve stampare `ops-t03` (dopo l'unione del compito, `main`). Lo script parte solo se il ramo è `ops-t03` o `main` (`@(ops-t03|main)` vuol dire «l'uno o l'altro») e se il file dello script è uguale, byte per byte, a quello salvato nell'ultimo commit: si confrontano due impronte, quella dello script nell'ultimo commit (`git rev-parse`) e quella del file nella cartella (`git hash-object`). Su `ops-t03` lo script è fermo dalla fase test, quindi è quello letto in I1; può cambiare solo tornando alla fase test (`TORNA AI TEST`, oppure `TORNA AL PIANO` e poi `APPROVO`), e allora lo si rilegge prima di lanciarlo. Su `main`, dopo l'unione, può averlo cambiato un compito successivo: prima di lanciarlo Claude controlla se è cambiato dopo I1 (`git log --oneline -- infra/scripts/check-bucket-isolation.sh`), e se sì lo si rilegge (regola della lettura). Se manca una delle due condizioni, il blocco scrive «Script NON lanciato…» e non chiede niente, e a Claude si incolla solo quella riga. Lo script parte senza file di avvio (`BASH_ENV=`), con una cartella di casa nuova e vuota (`HOME=$(mktemp -d)`) e con le sole cartelle di sistema (`PATH=/usr/local/bin:/usr/bin:/bin`): il suo client non legge e non scrive niente in `~/.aws`, e nessun programma delle cartelle della cartella di casa (come `~/.nvm/…/bin`) riceve le chiavi. Oltre al client, a ogni chiamata le ricevono solo `lsb_release` e `uname` di `/usr/bin` (e `getopt`, `cut` e `tr`, che `lsb_release` lancia), per pochi millesimi di secondo (riga 733). Lo script chiede dodici parti, Access key e poi Secret key per ogni chiave, e dopo ognuna scrive «ricevuta»:
 
 | Lo script chiede | Voce del gestore di password |
 |---|---|

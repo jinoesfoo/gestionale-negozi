@@ -29,6 +29,12 @@ Lista: `docs/verifiche/ops-t03.md`. Eseguita dal 18/11/2026. Fornitore: Hetzner 
 | C4 | In corso (19/11/2026): nelle finestre di creazione dei quattro bucket di Falkenstein «Object Lock» è «Disabled» (C3); lo specchio, con Object Lock «Enabled», aspetta la fine dell'avviso di Helsinki, e la sua ora di creazione si annota qui. Lo confermano E5 ed E6. |
 | C5 | Riuscito per i quattro bucket di Falkenstein (19/11/2026); lo specchio aspetta. Dopo C1, «⋯» → «Enable protection»: nella riga di ciascun bucket dell'elenco «Object Storage» compare il lucchetto, accanto al menu «⋯». Una schermata per bucket, con il nome del progetto nella barra in alto: `foondaco-file` (`file-prod`), `foondaco-backup` (`backup-prod`), `foondaco-file-test` (`file-test`), `foondaco-backup-test` (`backup-test`). |
 
+## D. Configurazione dal terminale
+
+| # | Esito |
+|---|---|
+| D0 | In corso (19/11/2026), prima di qualsiasi chiave caricata. Lettura in quattro parti: Claude indica per ogni parte le righe del README e i punti da guardare (dove entrano ed escono le chiavi, con chi parlano i comandi, quali file scrivono, che cosa cambiano), il controllo lo fa l'utente. Parte 1, il blocco del terminale delle chiavi (passo 4): «parte 1 letta», sul README del commit b56d742. Poi quattro giri di verificatori indipendenti, sulla guida e sui comandi, hanno portato a cambiare il README senza spostare i numeri di riga. Le chiavi non sono più esportate e le riceve solo il client `aws`, per il solo comando (righe 737, 738, 751, 838). Il client non legge `~/.aws`, cerca i programmi solo in `/usr/local/bin` e quindi non lancia `lsb_release` e `uname` (751, 1079); alias, funzioni `aws` e `command_not_found_handle` sono tolti (737). `s3` mostra come nome un'Access key caricata nelle risposte (790, 795). I2 lancia lo script solo dal ramo `ops-t03` o `main` e solo se è uguale, byte per byte, all'ultimo commit, senza file di avvio, con una cartella di casa nuova e le sole cartelle di sistema (1307). Testi alle righe 536, 634, 692, 697, 704, 708, 709, 720, 721, 733, 1234 e 1311. Prove con il client finto: le prove di prima danno gli stessi risultati; 61 prove nuove riuscite, di cui 40 falliscono sui blocchi di prima; 43 prove incollando i blocchi in un terminale. Rilettura delle righe cambiate nella parte 1 (692, 697, 704, 708, 709, 720, 721, 733, 737, 738, 751, 790, 795, 838, 1079), con le correzioni della guida: in corso. |
+
 ## I. Isolamento delle unità (OPS-007, OPS-008)
 
 | # | Esito |
