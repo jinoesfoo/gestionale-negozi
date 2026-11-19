@@ -1,0 +1,42 @@
+# Controlli di ogni pull request (FON-005). Il nome del job, `controlli`, resta fisso:
+# la regola di `main` sceglie i controlli obbligatori per nome del job, e i compiti successivi
+# (FON-T08 con test:int, OPS-T09 con pnpm audit, ...) aggiungono i loro passi qui.
+name: ci
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  controlli:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      # La versione di pnpm la legge dal campo packageManager di package.json. Serve la v6, almeno 6.1.0:
+      # le versioni precedenti non installano pnpm 12, il cui comando resta il segnaposto del pacchetto
+      # finché non gira il suo script di installazione.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test unitari
+        run: pnpm test
