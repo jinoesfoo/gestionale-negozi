@@ -72,8 +72,9 @@ const httpUrl = (check: (parsed: URL) => boolean = () => true) =>
 const s3Endpoint = httpUrl((parsed) => parsed.href === `${parsed.origin}/`);
 
 /**
- * Nome di dominio, `localhost` in sviluppo: altrimenti almeno due parti di lettere, cifre e trattini, l'ultima che
- * inizia con una lettera (niente indirizzi IP). Esce in minuscolo, come gli host delle richieste.
+ * Nome di dominio: `localhost`, ammesso con ogni APP_ENV perché i test lo usano con `test` come il server di test,
+ * oppure almeno due parti di lettere, cifre e trattini, l'ultima che inizia con una lettera (niente indirizzi IP).
+ * Esce in minuscolo, come gli host delle richieste.
  */
 const domainName = z
   .string()
