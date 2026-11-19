@@ -53,14 +53,32 @@ type Env = Record<string, string | undefined>;
 
 const text = z.string().min(1);
 
-const url = z.string().refine((value) => {
-  try {
-    new URL(value);
-    return true;
-  } catch {
-    return false;
-  }
-});
+/**
+ * Indirizzo che inizia con `http://` o `https://`, più le regole `check` della variabile (01 §Variabili d'ambiente,
+ * «Formato degli indirizzi e del dominio»). Il protocollo si controlla sul testo: `new URL` accetta anche
+ * `localhost:9000`, che legge come un indirizzo con il protocollo `localhost:`, e `http:localhost:9000`.
+ */
+const httpUrl = (check: (parsed: URL) => boolean = () => true) =>
+  z.string().refine((value) => {
+    if (!/^https?:\/\//.test(value)) return false;
+    try {
+      return check(new URL(value));
+    } catch {
+      return false;
+    }
+  });
+
+/** Endpoint S3: solo protocollo, host e porta. Il bucket sta in S3_BUCKET, le chiavi nelle loro variabili. */
+const s3Endpoint = httpUrl((parsed) => parsed.href === `${parsed.origin}/`);
+
+/**
+ * Nome di dominio, `localhost` in sviluppo: altrimenti almeno due parti di lettere, cifre e trattini, l'ultima che
+ * inizia con una lettera (niente indirizzi IP). Esce in minuscolo, come gli host delle richieste.
+ */
+const domainName = z
+  .string()
+  .regex(/^(?:localhost|(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?)$/i)
+  .transform((value) => value.toLowerCase());
 
 const postgresUrl = z.string().refine((value) => {
   try {
@@ -91,7 +109,11 @@ const stripeWebhookSecret = z.string().refine((value) => value.startsWith('whsec
 const orPlaceholder = (schema: z.ZodType<string>) =>
   z.string().refine((value) => isPlaceholder(value) || schema.safeParse(value).success);
 
-const sentryDsn = orPlaceholder(url);
+/**
+ * DSN di Sentry: `https://<chiave pubblica>@<host>/<id numerico del progetto>`, con un percorso facoltativo prima
+ * dell'id. Con un DSN senza chiave o senza id l'SDK non invia gli errori e non lo segnala (OPS-012).
+ */
+const sentryDsn = orPlaceholder(httpUrl((parsed) => parsed.username !== '' && /\/\d+$/.test(parsed.pathname)));
 
 const flag = z.enum(['true', 'false']).transform((value) => value === 'true');
 
@@ -100,12 +122,12 @@ const flag = z.enum(['true', 'false']).transform((value) => value === 'true');
 const common = {
   NODE_ENV: z.enum(['development', 'test', 'production']),
   APP_ENV: z.enum(['dev', 'test', 'prod']),
-  PUBLIC_BASE_DOMAIN: text,
+  PUBLIC_BASE_DOMAIN: domainName,
   APP_VERSION: text.optional(),
 };
 
 const s3 = {
-  S3_ENDPOINT: url,
+  S3_ENDPOINT: s3Endpoint,
   S3_REGION: text,
   S3_BUCKET: text,
   S3_ACCESS_KEY_ID: text,
@@ -139,7 +161,7 @@ const workerShape = {
   STRIPE_SECRET_KEY: stripeSecretKey,
   SDI_PROVIDER: text,
   SDI_API_KEY: text.optional(),
-  SDI_API_URL: orPlaceholder(url).optional(),
+  SDI_API_URL: orPlaceholder(httpUrl()).optional(),
   EMAIL_API_KEY: text,
   EMAIL_FROM: orPlaceholder(email),
   SENTRY_DSN: sentryDsn,

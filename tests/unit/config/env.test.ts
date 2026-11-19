@@ -59,6 +59,14 @@ const cliEnv = (): Env => ({
   ADMIN_ALERT_EMAIL: 'avvisi@example.com',
 });
 
+/** Il worker con un fornitore SDI vero: SDI_API_KEY e SDI_API_URL diventano obbligatorie e il loro formato conta. */
+const workerWithSdi = (): Env => ({
+  ...workerEnv(),
+  SDI_PROVIDER: 'fornitore-vero',
+  SDI_API_KEY: 'VALORE-PROVA-SDI-KEY',
+  SDI_API_URL: 'https://sdi.example.com',
+});
+
 /** Esegue il parser e restituisce l'errore, che deve essere un EnvError. */
 function envError(parse: (env: Env) => unknown, env: Env): EnvError {
   try {
@@ -363,6 +371,149 @@ describe('schema del CLI e di migrate', () => {
   });
 });
 
+// 01 §Variabili d'ambiente, «Formato degli indirizzi e del dominio» (nota della revisione di FON-T01): new URL accetta
+// anche localhost:9000, che legge come un indirizzo con il protocollo localhost:, quindi gli schemi controllano il
+// testo. I valori sbagliati qui sotto sono errori realistici che new URL non ferma; quelli giusti provano che le regole
+// non rifiutano i valori veri, compresi l'emulatore S3 in http e localhost.
+describe('indirizzi e dominio', () => {
+  type Case = [string, (env: Env) => unknown, () => Env];
+  const s3Cases: Case[] = [
+    ["l'app", parseAppEnv, appEnv],
+    ['il worker', parseWorkerEnv, workerEnv],
+    ['il CLI', parseCliEnv, cliEnv],
+    ['migrate', parseMigrateEnv, cliEnv],
+  ];
+  // Il worker con un fornitore SDI vero, così SDI_API_URL è richiesta e il suo formato conta.
+  const urlCases: [...Case, string[]][] = [
+    ["l'app (S3_ENDPOINT e SENTRY_DSN)", parseAppEnv, appEnv, ['S3_ENDPOINT', 'SENTRY_DSN']],
+    [
+      'il worker (S3_ENDPOINT, SENTRY_DSN e SDI_API_URL)',
+      parseWorkerEnv,
+      workerWithSdi,
+      ['S3_ENDPOINT', 'SENTRY_DSN', 'SDI_API_URL'],
+    ],
+    ['il CLI (S3_ENDPOINT)', parseCliEnv, cliEnv, ['S3_ENDPOINT']],
+    ['migrate (S3_ENDPOINT)', parseMigrateEnv, cliEnv, ['S3_ENDPOINT']],
+  ];
+  const validUrls: Record<string, string[]> = {
+    S3_ENDPOINT: [
+      'http://127.0.0.1:9000',
+      'http://localhost:9000',
+      'https://s3.example.com',
+      'https://s3.example.com/',
+    ],
+    SENTRY_DSN: ['https://chiavepubblica@o123.ingest.de.sentry.io/456', 'http://chiave@sentry.local:9000/1'],
+    SDI_API_URL: ['https://sdi.example.com', 'https://api.example.com/v1/', 'http://127.0.0.1:8080'],
+  };
+
+  it.each(urlCases)('FON-002: per %s gli indirizzi iniziano con http:// o https://', (_, parse, base, names) => {
+    // Senza protocollo (come l'host di PGBACKREST_REPO1_S3_ENDPOINT con la porta), con un altro protocollo, o senza
+    // le due barre: new URL li accetta, il client S3, l'SDK di Sentry e il fornitore SDI no.
+    const wrong = [
+      'localhost:9000',
+      'minio:9000',
+      's3.example.com:443',
+      's3://bucket-di-prova',
+      'ftp://chiave@files.example.com/1',
+      'http:localhost:9000',
+    ];
+    for (const name of names) {
+      for (const value of wrong) {
+        expect(acceptedValues(parse, base(), { [name]: value }), `${name}=${value}`).toEqual([]);
+      }
+      for (const value of validUrls[name] ?? []) {
+        expect(acceptedValues(parse, base(), { [name]: value }), `${name}=${value}`).toEqual([name]);
+      }
+    }
+  });
+
+  it.each(s3Cases)(
+    'FON-002: per %s S3_ENDPOINT ha solo protocollo, host e porta, senza percorso, parametri o credenziali',
+    (_, parse, base) => {
+      // Il bucket sta in S3_BUCKET e le chiavi in S3_ACCESS_KEY_ID e S3_SECRET_ACCESS_KEY.
+      const withKeys = 'https://VALORE-PROVA-ACCESS:VALORE-PROVA-SECRET@s3.example.com';
+      for (const value of [
+        'https://s3.example.com/bucket-di-prova',
+        'https://s3.example.com?region=eu-central-1',
+        withKeys,
+      ]) {
+        expect(acceptedValues(parse, base(), { S3_ENDPOINT: value }), value).toEqual([]);
+      }
+      const env = { ...base(), S3_ENDPOINT: withKeys };
+      expectNoValues(envError(parse, env).message, env);
+      for (const value of ['https://s3.example.com:443', 'http://[::1]:9000']) {
+        expect(acceptedValues(parse, base(), { S3_ENDPOINT: value }), value).toEqual(['S3_ENDPOINT']);
+      }
+    },
+  );
+
+  const dsnCases: Case[] = [
+    ["l'app", parseAppEnv, appEnv],
+    ['il worker', parseWorkerEnv, workerEnv],
+  ];
+  it.each(dsnCases)(
+    "FON-002: per %s SENTRY_DSN, quando non è un segnaposto, ha la chiave pubblica e l'id numerico del progetto",
+    (_, parse, base) => {
+      // Con un DSN che l'SDK di Sentry non sa leggere gli errori non partono, e non lo dice nessuno (OPS-012).
+      for (const value of [
+        'https://o123.ingest.de.sentry.io/456', // senza chiave, come l'indirizzo di una pagina del progetto
+        'https://chiavepubblica@o123.ingest.de.sentry.io', // senza id del progetto
+        'https://chiavepubblica@o123.ingest.de.sentry.io/progetto-app', // il nome del progetto al posto dell'id
+      ]) {
+        expect(acceptedValues(parse, base(), { SENTRY_DSN: value }), value).toEqual([]);
+      }
+      for (const value of [
+        'https://chiavepubblica@o123.ingest.de.sentry.io/456',
+        'https://chiave@sentry.example.com/sentry/7', // Sentry installato in proprio, sotto un percorso
+      ]) {
+        expect(acceptedValues(parse, base(), { SENTRY_DSN: value }), value).toEqual(['SENTRY_DSN']);
+      }
+    },
+  );
+
+  const domainCases: [string, (env: Env) => { PUBLIC_BASE_DOMAIN: string }, () => Env][] = [
+    ["l'app", parseAppEnv, appEnv],
+    ['il worker', parseWorkerEnv, workerEnv],
+    ['il CLI', parseCliEnv, cliEnv],
+    ['migrate', parseMigrateEnv, cliEnv],
+  ];
+  it.each(domainCases)(
+    'FON-002: per %s PUBLIC_BASE_DOMAIN è un nome di dominio, senza protocollo, porta, percorso o punto finale',
+    (_, parse, base) => {
+      for (const value of [
+        'https://negozi.example',
+        'negozi.example:443',
+        'localhost:3000', // la porta sta negli host di sviluppo (localhost:3000), non nel dominio
+        'negozi.example/',
+        'negozi.example/gestione',
+        '.negozi.example', // come l'attributo Domain di un cookie
+        '*.negozi.example', // come nel certificato jolly o nel DNS
+        'negozi.example.', // con il punto finale del DNS
+        'negozi .example',
+        '127.0.0.1', // un indirizzo IP non ha sottodomini: app.127.0.0.1 non esiste
+        'negozi', // un nome di una parte sola, tranne localhost
+      ]) {
+        expect(acceptedValues(parse, base(), { PUBLIC_BASE_DOMAIN: value }), value).toEqual([]);
+      }
+      for (const value of [
+        'localhost',
+        'negozi.example',
+        'negozi-prova.example.it',
+        'xn--perch-fsa.example',
+        'Negozi.EXAMPLE',
+      ]) {
+        expect(acceptedValues(parse, base(), { PUBLIC_BASE_DOMAIN: value }), value).toEqual(['PUBLIC_BASE_DOMAIN']);
+      }
+    },
+  );
+
+  // Gli host delle richieste arrivano in minuscolo (Next.js li legge con new URL): chi confronta un host con
+  // PUBLIC_BASE_DOMAIN, come il proxy, non deve convertirlo.
+  it.each(domainCases)('FON-002: per %s PUBLIC_BASE_DOMAIN si legge in minuscolo', (_, parse, base) => {
+    expect(parse({ ...base(), PUBLIC_BASE_DOMAIN: 'Negozi.EXAMPLE' }).PUBLIC_BASE_DOMAIN).toBe('negozi.example');
+  });
+});
+
 describe('segnaposto', () => {
   it('FON-002: isPlaceholder riconosce i valori segnaposto', () => {
     expect(isPlaceholder('placeholder-stripe')).toBe(true);
@@ -461,7 +612,6 @@ describe('segnaposto', () => {
     const common: Env = {
       APP_VERSION: 'placeholder-versione',
       PUBLIC_BASE_DOMAIN: 'placeholder.example',
-      S3_ENDPOINT: 'placeholder://s3',
       S3_REGION: 'placeholder-region',
       S3_BUCKET: 'placeholder-bucket',
       S3_ACCESS_KEY_ID: 'placeholder-s3-access',
@@ -472,8 +622,8 @@ describe('segnaposto', () => {
       JOB_PAYLOAD_KEY: keyStartingWith('placeholder'),
       SHOP_SECRETS_KEY: keyStartingWith('placeholder'),
     };
-    // Valori che rifiuta già il formato: gli indirizzi PostgreSQL, un token corto anche fra le variabili elencate e un
-    // interruttore.
+    // Valori che rifiuta già il formato: gli indirizzi PostgreSQL, l'indirizzo S3 (inizia con http:// o https://, quindi
+    // non può iniziare con placeholder), un token corto anche fra le variabili elencate e un interruttore.
     const placeholder = 'placeholder-VALORE-PROVA';
     const cases: [(env: Env) => unknown, Env, Env, Env][] = [
       [
@@ -485,19 +635,25 @@ describe('segnaposto', () => {
           BETTER_AUTH_SECRET: 'placeholder-better-auth-0123456789abcdef',
           HEALTH_TOKEN: 'placeholder-health-token',
         },
-        { DATABASE_URL: placeholder, DATABASE_JOBS_URL: placeholder, EMAIL_WEBHOOK_TOKEN: placeholder },
+        {
+          S3_ENDPOINT: placeholder,
+          DATABASE_URL: placeholder,
+          DATABASE_JOBS_URL: placeholder,
+          EMAIL_WEBHOOK_TOKEN: placeholder,
+        },
       ],
       [
         parseWorkerEnv,
         workerEnv(),
         { ...common, ...keys },
-        { DATABASE_URL: placeholder, DATABASE_JOBS_URL: placeholder },
+        { S3_ENDPOINT: placeholder, DATABASE_URL: placeholder, DATABASE_JOBS_URL: placeholder },
       ],
       [
         parseCliEnv,
         cliEnv(),
         common,
         {
+          S3_ENDPOINT: placeholder,
           DATABASE_OWNER_URL: placeholder,
           DATABASE_JOBS_URL: placeholder,
           ISOLATION_APP_DATABASE_URL: placeholder,
@@ -568,13 +724,6 @@ describe('valori da sostituire (CAMBIA)', () => {
     DATABASE_JOBS_URL: 'postgres://app_jobs:CAMBIA-password-app-jobs@localhost:5432/app',
     ISOLATION_APP_DATABASE_URL: 'postgres://app_user:CAMBIA-password-app-user@localhost:5432/app',
   };
-  // Con un fornitore SDI vero, così SDI_API_KEY e SDI_API_URL sono richieste e il loro formato conta.
-  const workerWithSdi = (): Env => ({
-    ...workerEnv(),
-    SDI_PROVIDER: 'fornitore-vero',
-    SDI_API_KEY: 'VALORE-PROVA-SDI-KEY',
-    SDI_API_URL: 'https://sdi.example.com',
-  });
   const withoutCambia = (values: Env): Env =>
     Object.fromEntries(Object.entries(values).map(([name, value]) => [name, value?.replaceAll('CAMBIA', 'VALORE')]));
 
