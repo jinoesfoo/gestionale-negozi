@@ -6,7 +6,7 @@ Chi esegue: **C** = Claude; **U** = utente, nella console di Hetzner o dal suo t
 
 Valori: i nomi di progetti, bucket e chiavi, i luoghi, i comandi del client e il testo della policy stanno in `infra/README.md`, «Archivi S3 (OPS-T03)». Qui i cinque bucket si chiamano `<file-prod>`, `<backup-prod>`, `<file-test>`, `<backup-test>` e `<specchio>`; `<lettura>` è il progetto senza bucket con le chiavi di sola lettura; `specchio-lettura` e `specchio-scrittura` sono le chiavi dello specchio (`MIRROR_SRC_*` e `MIRROR_DST_*`).
 
-Decisioni del piano: fornitore Hetzner; un progetto per unità, più il progetto `<lettura>`; versioning sui due bucket dei file (versioni precedenti per 30 giorni); i bucket dei backup senza versioning e senza ciclo di vita; lo specchio creato con Object Lock, conservazione predefinita COMPLIANCE di 45 giorni e ciclo di vita a 45 giorni; la policy di `<backup-prod>` dà alle chiavi di `<lettura>` solo `s3:ListBucket` e `s3:GetObject`; file e backup a Falkenstein (`fsn1`), specchio a Helsinki (`hel1`).
+Decisioni del piano: fornitore Hetzner; un progetto per unità, più il progetto `<lettura>`; versioning sui due bucket dei file (versioni precedenti per 30 giorni); i bucket dei backup senza versioning e senza ciclo di vita; lo specchio creato con Object Lock, conservazione predefinita COMPLIANCE di 45 giorni e ciclo di vita a 45 giorni; la policy di `<backup-prod>` dà alle chiavi di `<lettura>` solo `s3:ListBucket` e `s3:GetObject`; file e backup a Falkenstein (`fsn1`), specchio a Norimberga (`nbg1`), non più a Helsinki, dove dal 19/11/2026 non si creano bucket nuovi (piano rifatto il 20/11/2026; specifica 08, OPS-T03, «Luogo dello specchio»).
 
 **Regola dei 15 minuti** (08, OPS-T03): dopo ogni modifica di versioning, Object Lock, conservazione, policy o ciclo di vita, compresa la creazione dello specchio con Object Lock, si aspettano 15 minuti prima di scrivere nel bucket o di provarlo. L'ora di ogni modifica si annota.
 
@@ -40,7 +40,7 @@ Decisioni del piano: fornitore Hetzner; un progetto per unità, più il progetto
 
 | # | Chi | Controllo | Esito atteso |
 |---|---|---|---|
-| C1 | U | In ciascuno dei cinque progetti delle unità, l'elenco dei bucket | Un solo bucket per progetto, con il nome e il luogo del README: `fsn1` per i due dei file e i due dei backup, `hel1` per lo specchio; una schermata per progetto |
+| C1 | U | In ciascuno dei cinque progetti delle unità, l'elenco dei bucket | Un solo bucket per progetto, con il nome e il luogo del README: `fsn1` per i due dei file e i due dei backup, `nbg1` per lo specchio; una schermata per progetto |
 | C2 | U | Il progetto `<lettura>`, in tutti i luoghi che la console mostra | Nessun bucket; schermata |
 | C3 | U | Visibilità di ciascuno dei cinque bucket | «Private»; una schermata per bucket |
 | C4 | U | Object Lock, scelto alla creazione del bucket | Attivo solo su `<specchio>`; ora della creazione dello specchio annotata. Lo confermano E5 ed E6 |
