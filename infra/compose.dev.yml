@@ -1,0 +1,62 @@
+# Servizi di sviluppo in locale (01 §Servizi, FON-T03): PostgreSQL con l'immagine del progetto ed emulatore S3 con il
+# bucket versionato degli esempi di sviluppo. Li usano `pnpm dev`, `pnpm worker`, `pnpm db:migrate` e `pnpm test:int`,
+# sullo stesso database `app` e sullo stesso bucket `app-dev`.
+#
+#   docker compose -f infra/compose.dev.yml up -d
+#
+# I percorsi sono relativi a infra/ (il file si usa senza --project-directory). Le porte sono pubblicate solo su
+# 127.0.0.1; i dati stanno in volumi con nome; le cartelle del progetto sono montate solo in lettura (nessun bind
+# mount scrivibile: docs/due-postazioni.md, «Limiti»). Le password sono i valori di sviluppo dei file
+# .env.*.example, nessuna è un segreto vero. Il nome del progetto (name:) lo fissa FON-T08.
+services:
+  postgres:
+    build:
+      context: ./postgres
+    # Come l'immagine dei server, senza archiviazione dei WAL (08 §pgBackRest).
+    command: ['postgres', '-c', 'config_file=/etc/postgresql/postgresql.conf', '-c', 'archive_mode=off']
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: dev-password-postgres
+      APP_OWNER_PASSWORD: dev-password-app-owner
+      APP_USER_PASSWORD: dev-password-app-user
+      APP_WORKER_PASSWORD: dev-password-app-worker
+      APP_JOBS_PASSWORD: dev-password-app-jobs
+      # Solo qui e in CI: CREATEDB ad app_owner per il database usa e getta app_fresh dei test (FON-003).
+      ROLES_ALLOW_CREATEDB: '1'
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+
+  # Emulatore S3 (SeaweedFS, tutti i componenti in un processo). Le credenziali sono quelle di S3_ACCESS_KEY_ID e
+  # S3_SECRET_ACCESS_KEY degli esempi; il versioning lo attiva s3-init.
+  s3:
+    image: chrislusf/seaweedfs:4.53
+    command: ['mini', '-dir=/data', '-ip=s3', '-master.port=9333', '-filer.port=8888', '-s3.port=8333', '-webdav=false']
+    environment:
+      AWS_ACCESS_KEY_ID: dev-s3-access-key
+      AWS_SECRET_ACCESS_KEY: dev-s3-secret-key
+    ports:
+      - '127.0.0.1:9000:8333'
+    volumes:
+      - s3data:/data
+
+  # Una tantum, a ogni up: crea il bucket se manca e ne attiva il versioning (infra/s3/init-bucket.sh).
+  s3-init:
+    image: chrislusf/seaweedfs:4.53
+    entrypoint: ['/bin/sh', '/opt/s3/init-bucket.sh']
+    environment:
+      S3_BUCKET: app-dev
+      WEED_MASTER: s3:9333
+      WEED_FILER: s3:8888
+    volumes:
+      - ./s3:/opt/s3:ro
+    depends_on:
+      - s3
+    restart: 'no'
+
+volumes:
+  pgdata:
+  s3data:

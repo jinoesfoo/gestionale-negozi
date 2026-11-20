@@ -42,6 +42,17 @@ const PLACEHOLDER_VARIABLES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Vero se una delle variabili di PLACEHOLDER_VARIABLES ha ancora un segnaposto dell'avvio iniziale: il campo
+ * `placeholders` di /api/health (FON-009), che non dice quale variabile.
+ */
+export function hasPlaceholders(env: Record<string, string | undefined>): boolean {
+  for (const name of PLACEHOLDER_VARIABLES) {
+    if (isPlaceholder(env[name])) return true;
+  }
+  return false;
+}
+
+/**
  * Segno dei valori da sostituire negli esempi dei server (`infra/env.example/`): un valore che lo contiene ancora, in
  * maiuscolo, non è valido (01 §Variabili d'ambiente, «Valori da sostituire»).
  */
@@ -248,12 +259,20 @@ function parseShape<S extends Shape>(
   return out as Parsed<S>;
 }
 
+/**
+ * La versione dell'app, per /api/health (FON-009): APP_VERSION, oppure `dev` se manca. Non valida: in prod la
+ * variabile è obbligatoria, e l'avvio (resolveVersion negli schemi) rifiuta un ambiente che non la ha.
+ */
+export function appVersion(env: Env): string {
+  return read(env, 'APP_VERSION') ?? 'dev';
+}
+
 /** APP_VERSION: obbligatoria in prod, predefinita `dev` negli altri ambienti. */
 function resolveVersion(env: Env, problems: Problems): string {
-  const version = read(env, 'APP_VERSION');
-  if (version !== undefined) return version;
-  if (read(env, 'APP_ENV') === 'prod') problems.add('APP_VERSION', 'mancante');
-  return 'dev';
+  if (read(env, 'APP_VERSION') === undefined && read(env, 'APP_ENV') === 'prod') {
+    problems.add('APP_VERSION', 'mancante');
+  }
+  return appVersion(env);
 }
 
 /** App e worker rifiutano DATABASE_OWNER_URL anche vuota: la ricevono comunque (FON-002). */
