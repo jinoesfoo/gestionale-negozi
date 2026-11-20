@@ -13,5 +13,11 @@ export interface OwnerConnection {
 /** Una connessione come app_owner, con una sola connessione al database (migrazioni e comandi sono sequenziali). */
 export function createOwnerConnection(url: string): OwnerConnection {
   const pool = new Pool({ connectionString: url, max: 1 });
+  // Come in client.ts: fra una query e l'altra la connessione torna libera nel pool, e se cade lì (database riavviato)
+  // il pool emette 'error'; senza ascoltatore il processo terminerebbe con un errore non gestito. La query successiva
+  // apre una connessione nuova, o fallisce con il suo errore. Si scrive solo il codice dell'errore, non il messaggio.
+  pool.on('error', (error: Error & { code?: string }) => {
+    console.error(`Connessione inattiva del proprietario caduta (${error.code ?? 'senza codice'}).`);
+  });
   return { db: drizzle({ client: pool }), close: () => pool.end() };
 }
