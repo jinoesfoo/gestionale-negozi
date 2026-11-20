@@ -30,7 +30,7 @@ Prima di iniziare: l'utente ha creato i file di ambiente locali copiando i cinqu
 
 | # | Chi | Controllo | Esito atteso |
 |---|---|---|---|
-| C1 | U | `bash infra/scripts/check-roles-no-createdb.sh` | Stampa `OK: senza ROLES_ALLOW_CREATEDB, 01-roles.sh crea i quattro ruoli e app_owner non ha CREATEDB.` ed esce con 0; nessun container `check-roles-no-createdb-*` resta dopo (`docker ps -a`) |
+| C1 | U | `docker volume ls --filter dangling=true` prima e dopo `bash infra/scripts/check-roles-no-createdb.sh` | Lo script stampa `OK: senza ROLES_ALLOW_CREATEDB, 01-roles.sh crea i quattro ruoli e app_owner non ha CREATEDB.` ed esce con 0; dopo, nessun container `check-roles-no-createdb-*` (`docker ps -a`) e l'elenco dei volumi non attaccati a un container è uguale a quello di prima (lo script toglie anche il volume anonimo del suo container) |
 
 ## D. Clone pulito (FON-001)
 

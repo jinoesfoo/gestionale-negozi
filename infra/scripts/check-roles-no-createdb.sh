@@ -5,7 +5,8 @@
 #
 # Avvia un container usa e getta con l'immagine postgres di base di infra/postgres/Dockerfile (riga FROM), senza la
 # variabile, con 01-roles.sh e roles.sql.tpl montati in sola lettura come nell'immagine del progetto, aspetta la fine
-# dell'inizializzazione e legge rolcreatedb di app_owner. Il container si toglie alla fine, anche in caso di errore.
+# dell'inizializzazione e legge rolcreatedb di app_owner. Il container si toglie alla fine, anche in caso di errore,
+# insieme al suo volume anonimo (l'immagine dichiara /var/lib/postgresql come volume: `docker rm` senza -v lo lascia).
 # Le password sono valori di prova, usati solo da questo container.
 #
 # Chiama Docker: lo esegue l'utente nel suo terminale (docs/due-postazioni.md, «Regole di struttura») e, da FON-T08,
@@ -33,7 +34,7 @@ IMAGE="$(sed -nE 's/^FROM[[:space:]]+(postgres:[^[:space:]]+).*/\1/p' "$DOCKERFI
 [ -n "$IMAGE" ] || fail "nessuna riga 'FROM postgres:<versione>' in infra/postgres/Dockerfile"
 
 cleanup() {
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  docker rm -f -v "$NAME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
