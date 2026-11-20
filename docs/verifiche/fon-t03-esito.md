@@ -38,6 +38,16 @@ Lista: `docs/verifiche/fon-t03.md`. Postazione joo. Esiti dei passi **C** riport
 | D4 | 20/11/2026 | Superato (utente). `docker ps -a` e `docker volume ls`: nessun container né volume `fon001-fresh-clone-*`. Resta l'immagine `fon001-fresh-clone-24196-postgres` costruita dalla prova (`down -v` non toglie le immagini; fuori dal controllo). |
 | D5 | 20/11/2026 | Superato. `start`: `postgres` healthy con i dati di prima (registro delle migrazioni con 1 riga), `s3-init` riconferma `Versioning: Enabled`. |
 
+Seconda prova di D2–D5 (20/11/2026), dopo la revisione: con `TORNA AI TEST` lo script toglie anche l'immagine PostgreSQL costruita (`down -v --rmi local`) e D4 controlla anche `docker image ls`.
+
+| # | Data | Esito |
+|---|---|---|
+| D1 | 20/11/2026 | Superato. Commit `0c2ad65` sul ramo `fon-t03`; restano non salvati solo il registro della postazione e i file che la sandbox monta nella radice (lo script lo segnala: il clone usa solo il commit). |
+| D2 | 20/11/2026 | Superato (utente). Servizi di sviluppo spenti (`Exited (0)`). |
+| D3 | 20/11/2026 | Superato (utente). Clone di `0c2ad65434a236ab9d5297ff88105fd2ff15b6d8`, `up -d` del progetto `fon001-fresh-clone-185133` (immagine `fon001-fresh-clone-185133-postgres` costruita), `pnpm db:migrate` (`Migrazioni applicate.`), `pnpm dev`: `OK: GET http://localhost:3000/api/health ha risposto 200 dopo 2 secondi.` |
+| D4 | 20/11/2026 | Superato (utente). `docker ps -a`, `docker volume ls`, `docker image ls`: nessun container, volume o immagine `fon001-fresh-clone-*` (tolta anche l'immagine della prova); restano i servizi di sviluppo (`infra-*`), i loro volumi `infra_pgdata` e `infra_s3data`, il volume anonimo `6d53c4e2…` di `infra-s3-init-1` (`docker ps -a --filter volume=…`: è di quel container, l'immagine dell'emulatore dichiara `/data` come volume) e le immagini `chrislusf/seaweedfs:4.53`, `infra-postgres`, `postgres:18.7-trixie`. |
+| D5 | 20/11/2026 | Superato. `start`: `postgres` healthy, `s3-init`: `Il bucket app-dev esiste già.`, `Versioning: Enabled`; `gabbia.sh test:int` subito dopo: 5 file, 14 test verdi (con i due controlli nuovi di FON-003 su `app_owner`). |
+
 ## E. Prova di `AVVIO.md` §6 su joo
 
 | # | Data | Esito |
