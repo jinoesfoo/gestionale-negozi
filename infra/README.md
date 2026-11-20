@@ -525,10 +525,10 @@ Serve un account Hetzner dell'utente (`AVVIO.md`, «Fuori da GitHub»): si crea 
 | `backup-prod` | 16852084 | `foondaco-backup` | Falkenstein, `fsn1` | niente versioning né ciclo di vita; policy di sola lettura per le chiavi di `lettura-backup-prod` | `pgbackrest-prod` → `PGBACKREST_REPO1_S3_KEY` e `PGBACKREST_REPO1_S3_KEY_SECRET` di `postgres.env` della produzione (OPS-T01a) |
 | `file-test` | 16852085 | `foondaco-file-test` | Falkenstein, `fsn1` | come `file-prod` | `file-test` → `S3_ACCESS_KEY_ID` e `S3_SECRET_ACCESS_KEY` del server di test (FON-T07b) |
 | `backup-test` | 16852086 | `foondaco-backup-test` | Falkenstein, `fsn1` | niente versioning né ciclo di vita | `pgbackrest-test` → `PGBACKREST_REPO1_S3_KEY` e `PGBACKREST_REPO1_S3_KEY_SECRET` di `postgres.env` del server di test (OPS-T01a) |
-| `specchio` | 16852088 | `foondaco-specchio` | **Helsinki, `hel1`** | Object Lock con conservazione predefinita COMPLIANCE di 45 giorni; versioni precedenti e delete marker tolti dopo 45 giorni | `specchio-scrittura` → `MIRROR_DST_ACCESS_KEY_ID` e `MIRROR_DST_SECRET_ACCESS_KEY` di `backup-mirror.env` del server di test (OPS-T01b) |
+| `specchio` | 16852088 | `foondaco-specchio` | **Norimberga (nella console «Nuremberg»), `nbg1`**, non Helsinki: specifica 08, OPS-T03, «Luogo dello specchio» | Object Lock con conservazione predefinita COMPLIANCE di 45 giorni; versioni precedenti e delete marker tolti dopo 45 giorni | `specchio-scrittura` → `MIRROR_DST_ACCESS_KEY_ID` e `MIRROR_DST_SECRET_ACCESS_KEY` di `backup-mirror.env` del server di test (OPS-T01b) |
 | `lettura-backup-prod` | 16852089 | nessuno | — | — | `specchio-lettura` → `MIRROR_SRC_ACCESS_KEY_ID` e `MIRROR_SRC_SECRET_ACCESS_KEY` di `backup-mirror.env` del server di test (OPS-T01b); le chiavi temporanee `prova-ripristino-AAAAMMGG` della prova mensile (OPS-004), cancellate a fine prova (nel terminale delle chiavi si chiamano `prova-ripristino`) |
 
-Indirizzi e regioni, che non sono segreti: `https://fsn1.your-objectstorage.com` con la regione `fsn1`, `https://hel1.your-objectstorage.com` con la regione `hel1`.
+Indirizzi e regioni, che non sono segreti: `https://fsn1.your-objectstorage.com` con la regione `fsn1`, `https://nbg1.your-objectstorage.com` con la regione `nbg1`.
 
 **Regole.**
 
@@ -542,7 +542,7 @@ Indirizzi e regioni, che non sono segreti: `https://fsn1.your-objectstorage.com`
 - Nella console non si usano mai «Reset visibility/policy» (menu «⋯» del bucket nell'elenco) né «Reset Bucket visibility» (menu «Actions» nella pagina del bucket): potrebbero sostituire la policy. Le chiavi si creano solo da «Security» → «S3 credentials». Anche «Generate credentials» del menu «⋯» di un bucket crea una chiave del progetto, che ne avrebbe così due.
 - Stato del servizio: https://status.hetzner.com.
   - Il 18/11/2026 Object Storage risultava «partially degraded» a Helsinki (scritture lente o fallite, dal 13/11) e a Falkenstein (dal 14/11), tutti e due in «Monitoring».
-  - Dal 18/11/2026 alle 14:32 UTC: «Object Storage HEL: Creation of new buckets temporarily unavailable». Lo specchio, a Helsinki, si crea solo quando l'avviso è chiuso; gli altri bucket non aspettano.
+  - Dal 18/11/2026 alle 14:32 UTC: «Object Storage HEL: Creation of new buckets temporarily unavailable»: dal 19/11/2026 alle 10:00 ora italiana a Helsinki non si creano bucket nuovi, per un ampliamento di circa tre settimane (pagina letta il 20/11/2026). Per questo lo specchio si crea a Norimberga, dove il 20/11/2026 non c'erano avvisi aperti di Object Storage (solo la manutenzione del 02/12, qui sotto); prima di crearlo si guarda di nuovo la pagina.
   - Il 02/12/2026, dalle 12 alle 24 ora italiana, c'è una manutenzione di Object Storage con brevi interruzioni: in quella finestra non si fanno i passi da D a J.
   - Un errore di rete o del fornitore non è un esito (lista di controllo, I, voce 1).
 - Se la console è in tedesco: «Sicherheit» → «S3-Zugangsdaten» → «Zugangsdaten generieren»; «Bucket erstellen»; «Schutz aktivieren»; «Sichtbarkeit/Richtlinie zurücksetzen» (da non usare).
@@ -669,8 +669,8 @@ Una chiave creata nel progetto sbagliato non si sposta. Nel progetto dove si tro
 In ciascuno dei cinque progetti delle unità, non in `lettura-backup-prod` (si entra nel progetto e si guarda che sia quello giusto, come al passo 2):
 
 1. Menu a sinistra «STORAGE» → «Object Storage» → «Create Bucket». Se «Object Storage» non si vede, un clic su «STORAGE» apre il gruppo.
-2. «Location»: «Falkenstein» per i quattro bucket di file e backup, «Helsinki» per `foondaco-specchio`. Si guarda ogni volta: il 19/11/2026 la finestra di `foondaco-file-test` era compilata con «Nuremberg».
-3. «Name/URL»: il nome del bucket. La parte grigia dopo il nome deve dire `.fsn1.your-objectstorage.com` (Falkenstein) o `.hel1.your-objectstorage.com` (Helsinki).
+2. «Location»: «Falkenstein» per i quattro bucket di file e backup, «Nuremberg» (Norimberga) solo per `foondaco-specchio`. Si guarda ogni volta: il 19/11/2026 la finestra di `foondaco-file-test` era compilata con «Nuremberg», che per quel bucket era sbagliato.
+3. «Name/URL»: il nome del bucket. La parte grigia dopo il nome deve dire `.fsn1.your-objectstorage.com` (Falkenstein) per i quattro bucket di file e backup, `.nbg1.your-objectstorage.com` (Nuremberg) per lo specchio.
 4. «Object Lock»: «Disabled», tranne per `foondaco-specchio`, dove si sceglie «Enabled». Dopo la creazione non si cambia più.
 5. «Visibility»: «Private».
 6. Prima del pulsante, una schermata della finestra compilata: è la schermata di C3 e, per lo specchio, anche di C4.
@@ -680,7 +680,7 @@ Se un nome è già preso (i nomi sono unici fra tutti i clienti di Hetzner), ci 
 
 Controlli:
 
-- **C1.** In ogni progetto, «Object Storage» mostra un solo bucket, con il suo nome e il luogo (colonna «Location»: Falkenstein o Helsinki). Una schermata per progetto.
+- **C1.** In ogni progetto, «Object Storage» mostra un solo bucket, con il suo nome e il luogo (colonna «Location»: Falkenstein, oppure Nuremberg per lo specchio). Una schermata per progetto.
 - **C2.** In `lettura-backup-prod`, «Object Storage» non mostra bucket («You don't have any Buckets yet»). L'elenco comprende tutti i luoghi. Una schermata.
 - **C3.** La schermata della finestra di creazione, con «Private». Se la pagina del bucket mostra la visibilità, anche una schermata di quella. Le prove vere sono E8 (nessuna policy sugli altri bucket) e le richieste senza chiave di I2.
 - **C5**, solo dopo che C1 è giusto. Un bucket nel progetto sbagliato, nel luogo sbagliato o con Object Lock sbagliato non si sposta e non si rinomina: si cancella finché è vuoto e senza protezione (menu «⋯» alla fine della sua riga → «Delete» → conferma), e si rifà. Con lo stesso proprietario il nome si può riusare subito; per gli altri clienti resta bloccato 14 giorni (FAQ di Hetzner «Buckets & objects», letta il 19/11/2026). Poi, nell'elenco di «Object Storage»: menu «⋯» alla fine della riga del bucket → «Enable protection». Accanto al bucket compare un lucchetto. Una schermata per bucket.
@@ -718,11 +718,11 @@ Per la lettura (D0), ecco cosa fa il blocco.
 |---|---|---|
 | `load_key <nome>` | Chiede Access key e Secret key della voce `<nome>` del gestore di password, senza mostrarle (`read -rs`). Richiede le parti vuote o con spazi, e la Secret key se arriva di nuovo la Access key. Rifiuta, e allora la chiave resta non caricata: una parte uguale a una parte di un'altra chiave già caricata (appunti rimasti); una Secret key non più lunga della Access key (parti scambiate). Se prima della domanda era già arrivato del testo, incollato troppo presto, lo scarta, lo dice e si ferma: così non diventa una chiave. Caricata di nuovo, una chiave prende i valori nuovi. Tiene le chiavi nella memoria di questo terminale | tutte |
 | `use_key <nome>` | Mette la chiave `<nome>` in `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` per i comandi che seguono, senza esportarla: la riceve solo il client `aws`, da `_aws`. Nella lista di controllo «esportare» una chiave e «chiave esportata» vogliono dire metterla in uso con `use_key` e la chiave in uso; l'`export` è il passaggio della chiave al solo comando `aws`. Se `<nome>` non è caricata, non resta in uso nessuna chiave, e i comandi che seguono non usano nessuna chiave (in F e J2 la domanda di `compare_key` arriva lo stesso) | tutte |
-| `s3 fsn1\|hel1 <operazione> …` | Un comando `aws s3api` verso Falkenstein o Helsinki, con la chiave in uso. Se nella risposta del client comparisse l'Access key di una chiave caricata, la mostra come nome tra parentesi quadre (`[file-prod]`); i messaggi di errore il client li scrive direttamente sullo schermo, e non passano da questa sostituzione. Alla fine scrive luogo, nome della chiave, data, ora e codice di uscita (0 = riuscito) | D–J |
+| `s3 fsn1\|nbg1 <operazione> …` | Un comando `aws s3api` verso Falkenstein o Norimberga, con la chiave in uso. Se nella risposta del client comparisse l'Access key di una chiave caricata, la mostra come nome tra parentesi quadre (`[file-prod]`); i messaggi di errore il client li scrive direttamente sullo schermo, e non passano da questa sostituzione. Alla fine scrive luogo, nome della chiave, data, ora e codice di uscita (0 = riuscito) | D–J |
 | `show_config <unità>` | Versioning, ciclo di vita, Object Lock e policy del bucket dell'unità, con la sua chiave | E |
 | `show_policy <unità>` | La policy del bucket. Ogni Access key che conosce la mostra solo come nome tra parentesi quadre (`[specchio-lettura]`); ogni altro valore dopo `p<id>:`, e ogni sequenza di 16 o più maiuscole e cifre, come `[chiave sconosciuta]` | E7, F, J, 12 |
-| `put_policy_keys <nome>…` | Manda la policy di `foondaco-backup` nella forma per chiave, con le Access key delle chiavi `<nome>` caricate. Prima prova ogni chiave chiedendo l'elenco dei suoi bucket a `fsn1` e a `hel1`: se la chiave non funziona (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o ha dei bucket, non manda niente. Poi mostra la policy con i nomi al posto delle chiavi e la manda: arriva al client da `/dev/stdin`, mai dalla riga di comando. Un messaggio di errore lo stampa con i nomi al posto delle Access key | F, J2, J6, 12 |
-| `check_bucket_list` | I nomi dei bucket del progetto della chiave in uso, chiesti a `fsn1` e a `hel1`. Se ce n'è almeno uno lo dice e risponde con un errore: nel blocco di F, F1 e F2 non partono | F |
+| `put_policy_keys <nome>…` | Manda la policy di `foondaco-backup` nella forma per chiave, con le Access key delle chiavi `<nome>` caricate. Prima prova ogni chiave chiedendo l'elenco dei suoi bucket a `fsn1` e a `nbg1`: se la chiave non funziona (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o ha dei bucket, non manda niente. Poi mostra la policy con i nomi al posto delle chiavi e la manda: arriva al client da `/dev/stdin`, mai dalla riga di comando. Un messaggio di errore lo stampa con i nomi al posto delle Access key | F, J2, J6, 12 |
+| `check_bucket_list` | I nomi dei bucket del progetto della chiave in uso, chiesti a `fsn1` e a `nbg1`. Se ce n'è almeno uno lo dice e risponde con un errore: nel blocco di F, F1 e F2 non partono | F |
 | `compare_key <nome>` | Chiede sempre di nuovo l'Access key della voce `<nome>`, senza mostrarla, e dice solo se è «uguale» o «diversa» da quella in uso. Se `<nome>` non è la chiave in uso (per esempio perché `load_key` ha rifiutato le due parti) dice «confronto non fatto». Con «diversa» o «confronto non fatto» risponde con un errore: nel blocco di F, F1 e F2 non partono; in quello di J2, lista e scrittura. Una risposta vuota, o la Secret key della chiave in uso (appunti rimasti), la richiede. Come `load_key`, scarta il testo arrivato prima della domanda | F, J2 |
 | `test_ops005 file-prod\|file-test` | G1–G5: scrive due versioni di `prova-ops-005.txt`, le elenca, legge la prima, la recupera, poi cancella tutte le versioni | G |
 | `test_lock` | H1–H5 sullo specchio, con il `VersionId` letto in H1, che stampa a ogni passo. Si ferma se H2 non è come atteso, e se H3 o H4 riescono davvero (il blocco non funziona). In H4 manda la data solo se è nel futuro e precedente a quella di H2. Risponde senza errore solo se arriva in fondo | H1–H5 |
@@ -742,7 +742,7 @@ export AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_PAGER
   AWS_REQUEST_CHECKSUM_CALCULATION=when_required AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
 READ_PROJECT_ID=16852089   # id del progetto lettura-backup-prod (B3)
 declare -A BUCKET=([file-prod]=foondaco-file [backup-prod]=foondaco-backup [file-test]=foondaco-file-test [backup-test]=foondaco-backup-test [specchio]=foondaco-specchio)
-declare -A PLACE=([file-prod]=fsn1 [backup-prod]=fsn1 [file-test]=fsn1 [backup-test]=fsn1 [specchio]=hel1)
+declare -A PLACE=([file-prod]=fsn1 [backup-prod]=fsn1 [file-test]=fsn1 [backup-test]=fsn1 [specchio]=nbg1)
 declare -A OWNER_KEY=([file-prod]=file-prod [backup-prod]=pgbackrest-prod [file-test]=file-test [backup-test]=pgbackrest-test [specchio]=specchio-scrittura)
 declare -A KEY_ID=() KEY_SECRET=()
 KEY_IN_USE= OUT= WORK=$(mktemp -d)
@@ -786,9 +786,9 @@ _early_input() { # testo arrivato prima di una domanda (incollato troppo presto)
   echo "Se era una parte di chiave, quella chiave è esposta (passo 12). Altrimenti si rilancia il blocco quando è tornato il prompt."
 }
 
-s3() { # s3 fsn1|hel1 <operazione> [opzioni]: un comando del client con la chiave in uso
+s3() { # s3 fsn1|nbg1 <operazione> [opzioni]: un comando del client con la chiave in uso
   local place=${1:-} rc text name
-  case $place in fsn1|hel1) ;; *) echo 'Uso: s3 fsn1|hel1 <operazione> [opzioni]'; return 2 ;; esac
+  case $place in fsn1|nbg1) ;; *) echo 'Uso: s3 fsn1|nbg1 <operazione> [opzioni]'; return 2 ;; esac
   [ -n "$KEY_IN_USE" ] || { echo 'Nessuna chiave in uso: prima use_key <nome>'; return 2; }
   shift
   OUT=$(_aws "$place" "$@"); rc=$?
@@ -859,10 +859,10 @@ compare_key() { # F, J2: compare_key <nome>: chiede sempre l'Access key della vo
   else echo "confronto con la chiave in uso («$KEY_IN_USE»): diversa"; return 1; fi
 }
 
-check_bucket_list() { # F: solo i nomi dei bucket del progetto della chiave in uso, a fsn1 e a hel1; se ce n'è uno risponde 1
+check_bucket_list() { # F: solo i nomi dei bucket del progetto della chiave in uso, a fsn1 e a nbg1; se ce n'è uno risponde 1
   local place out rc found=
   [ -n "$KEY_IN_USE" ] || { echo "Nessuna chiave in uso: l'elenco dei bucket non è stato chiesto."; return 2; }
-  for place in fsn1 hel1; do
+  for place in fsn1 nbg1; do
     out=$(_aws "$place" list-buckets --query 'Buckets[].Name' --output text 2>&1); rc=$?
     if [ "$rc" -ne 0 ]; then
       echo "$place: non riuscito (codice di uscita $rc): $(_reason "$out")"
@@ -895,7 +895,7 @@ put_policy_keys() { # F, J2, J6: la policy di foondaco-backup nella forma per ch
   [ "$#" -ge 1 ] || { echo 'Uso: put_policy_keys specchio-lettura [prova-ripristino]'; return 2; }
   for name in "$@"; do
     [ -n "$name" ] && [ -n "${KEY_ID[$name]:-}" ] || { echo "La chiave «$name» non è caricata in questo terminale. Policy non mandata: finito il blocco, lo si rilancia copiando le due parti dalla voce di «$name»."; return 1; }
-    for place in fsn1 hel1; do # la chiave funziona e non ha bucket? Le chiavi vanno al client solo come variabili d'ambiente
+    for place in fsn1 nbg1; do # la chiave funziona e non ha bucket? Le chiavi vanno al client solo come variabili d'ambiente
       out=$(AWS_ACCESS_KEY_ID=${KEY_ID[$name]} AWS_SECRET_ACCESS_KEY=${KEY_SECRET[$name]} _aws "$place" list-buckets --query 'Buckets[].Name' --output text 2>&1); rc=$?
       if [ "$rc" -eq 0 ]; then
         [ -z "$out" ] || [ "$out" = None ] || { echo "Prova di «$name» a $place: ha dei bucket, quindi non è una chiave di lettura-backup-prod. Policy non mandata: finito il blocco, lo si rilancia copiando le due parti dalla voce di «$name»."; return 1; }
@@ -976,33 +976,33 @@ test_lock() { # H1–H5: le versioni bloccate dello specchio, con la chiave spec
   md5=$(openssl dgst -md5 -binary "$WORK/blocco.txt" | openssl base64 -A)
   echo "== H1: scrittura di $k con Content-MD5 $md5"
   t0=$(date +%s)
-  s3 hel1 put-object --bucket "$b" --key "$k" --body "$WORK/blocco.txt" --content-md5 "$md5" || return 1
+  s3 nbg1 put-object --bucket "$b" --key "$k" --body "$WORK/blocco.txt" --content-md5 "$md5" || return 1
   vh1=$(_json VersionId)
   [ -n "$vh1" ] || { echo 'H1: la risposta non ha un VersionId: mi fermo'; return 1; }
   echo "H1: VersionId «$vh1»"
   echo "== H2: conservazione della versione $vh1"
-  s3 hel1 get-object-retention --bucket "$b" --key "$k" --version-id="$vh1" || { echo 'H2: lettura non riuscita: mi fermo prima di H3'; return 1; }
+  s3 nbg1 get-object-retention --bucket "$b" --key "$k" --version-id="$vh1" || { echo 'H2: lettura non riuscita: mi fermo prima di H3'; return 1; }
   until1=$(_json Retention RetainUntilDate)
   verdict=$(_retention "$(_json Retention Mode)" "$until1" "$t0"); rc=$?
   echo "H2: $verdict"
   [ "$rc" -eq 0 ] || { echo 'H2: mi fermo prima di H3; si ripete E5'; return 1; }
   echo "== H3: cancellazione definitiva della versione $vh1 (attesa: AccessDenied)"
-  s3 hel1 delete-object --bucket "$b" --key "$k" --version-id="$vh1"
-  s3 hel1 list-object-versions --bucket "$b" --prefix "$k" || { echo 'H3: lista non riuscita: mi fermo'; return 1; }
+  s3 nbg1 delete-object --bucket "$b" --key "$k" --version-id="$vh1"
+  s3 nbg1 list-object-versions --bucket "$b" --prefix "$k" || { echo 'H3: lista non riuscita: mi fermo'; return 1; }
   if _versions_of "$k" | grep -q "^versione $vh1 "; then echo "H3: la versione $vh1 c'è ancora: sì"
   else echo "H3: la versione $vh1 c'è ancora: no: il blocco non funziona, mi fermo"; return 1; fi
   echo "== H4: conservazione accorciata della versione $vh1 (attesa: AccessDenied)"
   h4=$(_day_before "$until1") || { echo "H4: il giorno prima di $until1 non è nel futuro o non è precedente: non lo mando"; return 1; }
   echo "H4: data di H2 $until1; data mandata $h4 (${h4}T00:00:00Z)"
-  s3 hel1 put-object-retention --bucket "$b" --key "$k" --version-id="$vh1" --retention "Mode=COMPLIANCE,RetainUntilDate=${h4}T00:00:00Z"
-  s3 hel1 get-object-retention --bucket "$b" --key "$k" --version-id="$vh1" || { echo 'H4: rilettura non riuscita: mi fermo'; return 1; }
+  s3 nbg1 put-object-retention --bucket "$b" --key "$k" --version-id="$vh1" --retention "Mode=COMPLIANCE,RetainUntilDate=${h4}T00:00:00Z"
+  s3 nbg1 get-object-retention --bucket "$b" --key "$k" --version-id="$vh1" || { echo 'H4: rilettura non riuscita: mi fermo'; return 1; }
   if [ "$(_json Retention RetainUntilDate)" = "$until1" ]; then echo "H4: la data della versione $vh1 è ancora quella di H2: sì"
   else echo "H4: la data della versione $vh1 è ancora quella di H2: no: il blocco non funziona, mi fermo"; return 1; fi
   echo "== H5: cancellazione senza --version-id, poi lettura della versione $vh1"
-  s3 hel1 delete-object --bucket "$b" --key "$k"
-  s3 hel1 list-object-versions --bucket "$b" --prefix "$k"
+  s3 nbg1 delete-object --bucket "$b" --key "$k"
+  s3 nbg1 list-object-versions --bucket "$b" --prefix "$k"
   echo "H5: la versione più recente è un delete marker: $(_versions_of "$k" | grep -q '^delete-marker .* più-recente' && echo sì || echo no)"
-  s3 hel1 get-object --bucket "$b" --key "$k" --version-id="$vh1" "$WORK/letto.txt" &&
+  s3 nbg1 get-object --bucket "$b" --key "$k" --version-id="$vh1" "$WORK/letto.txt" &&
     echo "H5: la versione $vh1 si legge ancora e contiene «$(cat "$WORK/letto.txt")»"
 }
 
@@ -1012,15 +1012,15 @@ test_h6() { # H6, solo informativo (OPS-T01b): scrittura nello specchio senza Co
   printf 'prova senza Content-MD5, %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$WORK/senza-md5.txt"
   echo "== H6: scrittura di $k senza Content-MD5 né checksum (AWS_REQUEST_CHECKSUM_CALCULATION=$AWS_REQUEST_CHECKSUM_CALCULATION)"
   t0=$(date +%s)
-  s3 hel1 put-object --bucket "$b" --key "$k" --body "$WORK/senza-md5.txt" || { echo 'H6: scrittura rifiutata (codice qui sopra)'; return 0; }
+  s3 nbg1 put-object --bucket "$b" --key "$k" --body "$WORK/senza-md5.txt" || { echo 'H6: scrittura rifiutata (codice qui sopra)'; return 0; }
   vid=$(_json VersionId)
-  if s3 hel1 get-object-retention --bucket "$b" --key "$k" --version-id="$vid"; then
+  if s3 nbg1 get-object-retention --bucket "$b" --key "$k" --version-id="$vid"; then
     echo "H6: accettata; $(_retention "$(_json Retention Mode)" "$(_json Retention RetainUntilDate)" "$t0")"
   else
     echo 'H6: accettata, ma la lettura della conservazione non è riuscita (codice qui sopra)'
   fi
   echo 'H6: ora la nascondo con un delete marker, come in H5'
-  s3 hel1 delete-object --bucket "$b" --key "$k"
+  s3 nbg1 delete-object --bucket "$b" --key "$k"
 }
 
 watch_revocation() { # J4: con la chiave prova-ripristino, la lista di J2 subito e poi ogni 5 minuti, finché è rifiutata due volte di fila con InvalidAccessKeyId; al massimo 60 minuti
@@ -1137,9 +1137,9 @@ s3 fsn1 put-bucket-lifecycle-configuration --bucket foondaco-file-test --lifecyc
 
 ```bash
 use_key specchio-scrittura
-s3 hel1 get-object-lock-configuration --bucket foondaco-specchio &&
+s3 nbg1 get-object-lock-configuration --bucket foondaco-specchio &&
   [ "$(_json ObjectLockConfiguration ObjectLockEnabled)" = Enabled ] &&
-  s3 hel1 put-object-lock-configuration --bucket foondaco-specchio --object-lock-configuration '{"ObjectLockEnabled":"Enabled","Rule":{"DefaultRetention":{"Mode":"COMPLIANCE","Days":45}}}' ||
+  s3 nbg1 put-object-lock-configuration --bucket foondaco-specchio --object-lock-configuration '{"ObjectLockEnabled":"Enabled","Rule":{"DefaultRetention":{"Mode":"COMPLIANCE","Days":45}}}' ||
   echo 'D3: la modifica non è partita o non è riuscita: lo si dice a Claude'
 ```
 
@@ -1147,7 +1147,7 @@ s3 hel1 get-object-lock-configuration --bucket foondaco-specchio &&
 
 ```bash
 use_key specchio-scrittura
-s3 hel1 put-bucket-lifecycle-configuration --bucket foondaco-specchio --lifecycle-configuration '{"Rules":[{"ID":"versioni-precedenti","Status":"Enabled","Prefix":"","NoncurrentVersionExpiration":{"NoncurrentDays":45},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":7}},{"ID":"delete-marker-scaduti","Status":"Enabled","Prefix":"","Expiration":{"ExpiredObjectDeleteMarker":true}}]}'
+s3 nbg1 put-bucket-lifecycle-configuration --bucket foondaco-specchio --lifecycle-configuration '{"Rules":[{"ID":"versioni-precedenti","Status":"Enabled","Prefix":"","NoncurrentVersionExpiration":{"NoncurrentDays":45},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":7}},{"ID":"delete-marker-scaduti","Status":"Enabled","Prefix":"","Expiration":{"ExpiredObjectDeleteMarker":true}}]}'
 ```
 
 **D5.** Policy di `foondaco-backup`, nella forma per progetto: tutte le chiavi di `lettura-backup-prod` possono solo elencare e leggere.
@@ -1208,7 +1208,7 @@ else echo 'F1 e F2 non partono: il motivo è nelle righe qui sopra. Non incollar
 ```
 
 - Le domande sono sempre tre, tutte dalla voce `specchio-lettura`: Access key e Secret key per `load_key`, poi di nuovo l'Access key per `compare_key`. Dopo la terza le domande sono finite: alla riga che finisce con `$` non si incolla mai una parte di chiave, solo un blocco.
-- `compare_key` deve dire «uguale», e `check_bucket_list` «fsn1: nessun bucket» e «hel1: nessun bucket». Con «diversa», con «confronto non fatto» (le due parti rifiutate da `load_key`) o con un bucket nell'elenco, F1 e F2 non partono: si rilancia il blocco, copiando con attenzione dalla voce `specchio-lettura`.
+- `compare_key` deve dire «uguale», e `check_bucket_list` «fsn1: nessun bucket» e «nbg1: nessun bucket». Con «diversa», con «confronto non fatto» (le due parti rifiutate da `load_key`) o con un bucket nell'elenco, F1 e F2 non partono: si rilancia il blocco, copiando con attenzione dalla voce `specchio-lettura`.
 - Una riga «non riuscito» di `check_bucket_list` non ferma F1 e F2, ma il controllo non è completo e quel giro non vale per F: si segue il punto degli errori qui sotto, poi si rilancia il blocco; se resta, lo si dice a Claude.
 - **F1**, la lista: codice di uscita 0.
 - **F2**, la scrittura: `AccessDenied`.
@@ -1303,7 +1303,7 @@ export FILE_PROD_BUCKET=foondaco-file FILE_PROD_ENDPOINT=https://fsn1.your-objec
   BACKUP_PROD_BUCKET=foondaco-backup BACKUP_PROD_ENDPOINT=https://fsn1.your-objectstorage.com BACKUP_PROD_REGION=fsn1 \
   FILE_TEST_BUCKET=foondaco-file-test FILE_TEST_ENDPOINT=https://fsn1.your-objectstorage.com FILE_TEST_REGION=fsn1 \
   BACKUP_TEST_BUCKET=foondaco-backup-test BACKUP_TEST_ENDPOINT=https://fsn1.your-objectstorage.com BACKUP_TEST_REGION=fsn1 \
-  MIRROR_DST_BUCKET=foondaco-specchio MIRROR_DST_ENDPOINT=https://hel1.your-objectstorage.com MIRROR_DST_REGION=hel1
+  MIRROR_DST_BUCKET=foondaco-specchio MIRROR_DST_ENDPOINT=https://nbg1.your-objectstorage.com MIRROR_DST_REGION=nbg1
 if [[ $(git branch --show-current) = @(ops-t03|main) ]] && h=$(git rev-parse -q --verify HEAD:infra/scripts/check-bucket-isolation.sh) && [ "$h" = "$(git hash-object --no-filters infra/scripts/check-bucket-isolation.sh)" ]; then BASH_ENV= HOME=$(mktemp -d) PATH=/usr/local/bin:/usr/bin:/bin bash infra/scripts/check-bucket-isolation.sh; else echo "Script NON lanciato: il ramo non è ops-t03 né main, oppure infra/scripts/check-bucket-isolation.sh non è uguale, byte per byte, a quello dell'ultimo commit. Nessuna chiave è stata chiesta: non incollarne, e dillo a Claude."; false; fi
 echo "codice di uscita: $?"
 ```
