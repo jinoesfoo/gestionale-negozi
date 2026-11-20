@@ -11,6 +11,8 @@ AVVIO.md
 .gitmodules
 .github/CODEOWNERS
 pnpm-lock.yaml
+# Generati da drizzle-kit (db:generate): si lasciano come li scrive.
+drizzle/meta/
 # File personali che la sandbox di Claude Code monta nella radice come illeggibili.
 .bashrc
 .bash_profile
