@@ -37,12 +37,26 @@ describe('ruoli del database', () => {
     expect(rows).toEqual([{ db: 'app', owner: 'app_owner' }]);
   });
 
-  it('FON-003: app_user, app_worker e app_jobs non hanno BYPASSRLS', async () => {
+  it('FON-003: lo schema drizzle delle migrazioni appartiene ad app_owner', async () => {
+    // Lo crea il migratore, che si collega come app_owner (pnpm db:migrate, eseguito prima di test:int).
+    const { rows } = await owner().query<{ owner: string }>(
+      "SELECT nspowner::regrole::text AS owner FROM pg_namespace WHERE nspname = 'drizzle'",
+    );
+    expect(rows).toEqual([{ owner: 'app_owner' }]);
+  });
+
+  it('FON-003: app_owner ha BYPASSRLS, app_user, app_worker e app_jobs no', async () => {
+    // app_owner deve poter migrare e lanciare i comandi del CLI anche sulle tabelle con FORCE ROW LEVEL SECURITY (00 §6).
     const { rows } = await owner().query<{ rolname: string; rolbypassrls: boolean }>(
       'SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname = ANY($1) ORDER BY rolname',
-      [RUNTIME_ROLES],
+      [ALL_ROLES],
     );
-    expect(rows).toEqual([...RUNTIME_ROLES].sort().map((rolname) => ({ rolname, rolbypassrls: false })));
+    expect(Object.fromEntries(rows.map((row) => [row.rolname, row.rolbypassrls]))).toEqual({
+      app_owner: true,
+      app_user: false,
+      app_worker: false,
+      app_jobs: false,
+    });
   });
 
   it('FON-003: app_user e app_jobs non possiedono tabelle né altri oggetti dello schema public', async () => {

@@ -11,8 +11,9 @@
 # - I file di ambiente sono le copie degli esempi .env.app.example, .env.worker.example, .env.migrate.example, che
 #   contengono le password di sviluppo coerenti con infra/compose.dev.yml.
 # - Compose usa un nome di progetto proprio (COMPOSE_PROJECT_NAME, che vale anche sopra un `name:` del file), quindi
-#   container e volumi nuovi, tolti alla fine con `down -v`; i servizi di sviluppo non si toccano, ma devono essere
-#   spenti, perché le porte 5432, 9000 e 3000 servono libere (lo script si ferma e lo dice).
+#   container e volumi nuovi, tolti alla fine con `down -v`, insieme all'immagine PostgreSQL costruita per la prova
+#   (`--rmi local`: solo le immagini senza `image:` nel file, non quelle scaricate); i servizi di sviluppo non si
+#   toccano, ma devono essere spenti, perché le porte 5432, 9000 e 3000 servono libere (lo script si ferma e lo dice).
 #
 # Chiama Docker: lo esegue l'utente nel suo terminale (docs/due-postazioni.md, «Regole di struttura») e, da FON-T08,
 # la CI, in un job separato. Uso: bash infra/scripts/check-fresh-clone.sh  (esce con 0 se la prova riesce)
@@ -44,7 +45,7 @@ cleanup() {
     wait "$DEV_PID" 2>/dev/null
   fi
   if [ -n "$WORK" ] && [ -f "$WORK/repo/infra/compose.dev.yml" ]; then
-    (cd "$WORK/repo" && COMPOSE_PROJECT_NAME="$PROJECT" docker compose -f infra/compose.dev.yml down -v --remove-orphans >/dev/null 2>&1)
+    (cd "$WORK/repo" && COMPOSE_PROJECT_NAME="$PROJECT" docker compose -f infra/compose.dev.yml down -v --rmi local --remove-orphans >/dev/null 2>&1)
   fi
   if [ -n "$WORK" ]; then
     rm -rf "$WORK"

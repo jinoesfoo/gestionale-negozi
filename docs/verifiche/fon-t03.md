@@ -39,7 +39,7 @@ Prima di iniziare: l'utente ha creato i file di ambiente locali copiando i cinqu
 | D1 | C | Commit di tutto il lavoro sul ramo `fon-t03` (dalla fase codice i commit sul ramo sono permessi) | `git status` pulito, a parte i file non tracciati che la sandbox monta nella radice |
 | D2 | U | Spegnere i servizi di sviluppo (`docker compose -f infra/compose.dev.yml stop`) e un eventuale `pnpm dev` | Le porte 5432, 9000 e 3000 sono libere |
 | D3 | U | `bash infra/scripts/check-fresh-clone.sh` | Stampa `OK: GET http://localhost:3000/api/health ha risposto 200 dopo N secondi.` con N ≤ 60 ed esce con 0 |
-| D4 | U | Dopo D3: `docker ps -a`, `docker volume ls` | Nessun container o volume `fon001-fresh-clone-*` rimasto; la cartella temporanea del clone non esiste più |
+| D4 | U | Dopo D3: `docker ps -a`, `docker volume ls`, `docker image ls` | Nessun container, volume o immagine `fon001-fresh-clone-*` rimasto (lo script toglie anche l'immagine PostgreSQL costruita per la prova; l'immagine dell'emulatore S3, scaricata, resta); la cartella temporanea del clone non esiste più |
 | D5 | C | `docker compose -f infra/compose.dev.yml start` | I servizi di sviluppo ripartono con i dati di prima |
 
 ## E. Prova di `AVVIO.md` §6 su joo
