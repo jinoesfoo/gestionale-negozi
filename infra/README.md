@@ -1447,7 +1447,7 @@ Per la prova mensile (OPS-004) la chiave temporanea si crea e si cancella nello 
 - Forma della policy di `foondaco-backup` in uso: _(F)_.
 - Tempo della revoca di una chiave cancellata: _(J4)_.
 - Copia fuori linea delle sei chiavi (OPS-009): ultimo aggiornamento il _(K1)_.
-- Rotazioni delle chiavi: nessuna.
+- Rotazioni delle chiavi: `specchio-scrittura`, 21/11/2026, per precauzione: alle sue domande nel blocco di E del primo terminale non si è caricata, e non si sa se una sua parte è comparsa sullo schermo (passo 12). La copia sigillata non c'era ancora (passo 13).
 
 ## PostgreSQL e backup
 
