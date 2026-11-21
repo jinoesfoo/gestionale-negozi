@@ -25,7 +25,7 @@ Lista: `docs/verifiche/fon-t10.md`. Postazione joo. Tutti i passi sono dell'uten
 | B3 | 21/11/2026 | Superato. `Authentication-Results: mx.google.com; dkim=pass header.i=@foondaco.com header.s=brevo1; spf=pass (… designates 77.32.148.28 as permitted sender) smtp.mailfrom=bounces-…@hb.d.sender-sib.com; dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=foondaco.com`. SPF passa sul mittente della busta di Brevo (IP condivisi), DMARC passa grazie al DKIM allineato su `foondaco.com` (firma `d=foondaco.com`, `s=brevo1`), come previsto in `infra/README.md` (DOM-T01). |
 | B4 | 21/11/2026 | Superato. `pnpm email:prova <casella dell'utente su Gmail> noreply@foondaco.it`: `Email di prova inviata da noreply@foondaco.it (id del messaggio di Brevo: <202611211602.64605119918@smtp-relay.mailin.fr>).`, codice 0. Il mittente `noreply@foondaco.it` l'utente lo ha creato su Brevo durante la prova («Add sender», «Skip for now» sul sottodominio personalizzato). |
 | B5 | 21/11/2026 | Superato. `Authentication-Results: mx.google.com; dkim=pass header.i=@foondaco.it header.s=brevo1; spf=pass (… designates 77.32.148.27 as permitted sender) smtp.mailfrom=bounces-…@ha.d.sender-sib.com; dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=foondaco.it`. |
-| B6 | | Da confermare (utente): `EMAIL_PROVIDER=fake` e il valore di sviluppo di `EMAIL_API_KEY` rimessi in `.env.worker`. |
+| B6 | 21/11/2026 | Fatto (utente, confermato in chat): in `.env.worker` di nuovo `EMAIL_PROVIDER=fake` ed `EMAIL_API_KEY=dev-email-api-key`, il valore di `.env.worker.example`. |
 
 ## Note
 
