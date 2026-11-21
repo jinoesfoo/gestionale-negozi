@@ -1,0 +1,4 @@
+# Differenze del server di test rispetto a infra/compose.yml (01 §Servizi Docker Compose). Per ora nessuna: la
+# specifica non ne elenca (nota (1) del piano di FON-T06); le aggiunge il primo compito che ne ha bisogno.
+# /srv/app/dc usa questo file quando /srv/app/deploy-env contiene `test`.
+services: {}
