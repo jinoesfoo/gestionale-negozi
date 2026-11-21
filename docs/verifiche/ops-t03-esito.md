@@ -82,6 +82,20 @@ Terminale 2, righe 1294–1301 del README (eco uguale alle righe 1295–1301), s
 
 Esito: la forma per progetto della policy funziona; la forma per chiave non serve (README, «Valori letti»; J6 «non serve»). Restano I2 e J2 a confermarlo (regola della policy: nessuna modifica della policy dopo E7).
 
+## G. OPS-005: sovrascrittura e recupero di un file
+
+Terminale 2, righe 1348–1351 del README (`load_key file-prod`, `load_key file-test`, `test_ops005 file-prod`, `test_ops005 file-test`), 21/11/2026 17:32:27–17:33:03. Uscita incollata dall'utente, da «== G1». Uguale per `foondaco-file` (chiave `file-prod`) e `foondaco-file-test` (chiave `file-test`).
+
+| # | Esito |
+|---|---|
+| G1 | Riuscito: due `VersionId` diversi (`foondaco-file`: «231NPEjNBE84g0X9sG99mJia2icKjhr» e «m.kI04h1ANs35GWhMY1olT9I9v5U.6W»; `foondaco-file-test`: «MKuHGDJcbloHtTYkYgQ.08VlbZwqInD» e «AJA0.flesLrBVXSt3xuodqVz26o1iV4»). |
+| G2 | Riuscito: «versioni 2; la più recente è la seconda scrittura: sì» per tutti e due; quella con il `VersionId` della seconda scrittura ha `"IsLatest": true`. |
+| G3 | Riuscito: «il file letto contiene «versione 1»» per tutti e due. |
+| G4 | Riuscito: dopo `copy-object` della prima versione (risposta senza `VersionId`, come previsto dal README), «il file letto contiene «versione 1»» e «versioni 3» per tutti e due. |
+| G5 | Riuscito: le tre versioni cancellate una alla volta, poi «versioni e delete marker rimasti: 0» per tutti e due. |
+
+**Osservazione (21/11/2026): l'intestazione `Expiration` di Hetzner.** Le risposte di `put-object` e `get-object` nei due bucket dei file riportano `"Expiration": "expiry-date=\"Tue, 22 Dec 2026 00:00:00 GMT\", rule-id=\"versioni-precedenti\""` anche per la versione corrente. Non vuol dire che le versioni correnti scadano: nel codice di Ceph RGW (il sistema di Hetzner, «ceph5» negli identificativi delle richieste), nelle versioni reef e quincy `s3_expiration_header` calcola questa intestazione dalla regola `NoncurrentVersionExpiration` quando la richiesta riguarda una versione precisa (`rule_expiration = obj_key.instance.empty() ? expiration : noncur_expiration`); nelle versioni squid e main è corretto, con il commento «It must never be derived from a NoncurrentVersionExpiration rule» (sorgente letto da Claude su GitHub il 21/11/2026). Le regole rilette in E2 non hanno nessun `Expiration` con `Days` o `Date`, quindi nessuna regola fa scadere le versioni correnti. La prova dal vivo che una versione corrente resta oltre i 30 giorni non fa parte di questa lista di controllo: Claude la propone come controllo da fare dopo il 22/12/2026.
+
 ## I. Isolamento delle unità (OPS-007, OPS-008)
 
 | # | Esito |
