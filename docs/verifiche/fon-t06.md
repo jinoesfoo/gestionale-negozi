@@ -34,7 +34,8 @@ Tutti con `docker run --rm gestionale-negozi-app:fon-t06-prova …`, senza file 
 | # | Chi | Controllo | Esito atteso |
 |---|---|---|---|
 | C1 | U | `bash infra/check-ports.sh` (dopo averlo letto) | Stampa `OK: configurazione Compose (test) senza problemi.`, la stessa riga per `prod` e la riga finale `OK: …`; esce con 0 |
-| C2 | C | `grep -nE 'image:\|env_file:\|command:' infra/compose.yml` | Cinque `env_file`, uno per servizio, nella forma `${ENV_DIR:-/srv/app/env}/<servizio>.env` (`caddy`, `app`, `worker`, `migrate`, `postgres`); immagini `ghcr.io/jinoesfoo/gestionale-negozi-caddy:${CADDY_TAG}`, `…-app:${APP_TAG}` per `app`, `worker` e `migrate`, `…-postgres:${POSTGRES_TAG}`; comandi `node dist/worker.js` e `node dist/migrate.js` (per `app` vale il `CMD` dell'immagine, `node server.js`, oppure lo stesso comando scritto nel file) |
+| C2 | C | `grep -nE 'image:\|env_file:\|command:' infra/compose.yml` | Cinque `env_file`, uno per servizio, nella forma `${ENV_DIR:-/srv/app/env}/<servizio>.env` (`caddy`, `app`, `worker`, `migrate`, `postgres`); immagini `ghcr.io/jinoesfoo/gestionale-negozi-caddy:${CADDY_TAG:?…}`, `…-app:${APP_TAG:?…}` per `app`, `worker` e `migrate`, `…-postgres:${POSTGRES_TAG:?…}`, ciascuna con un messaggio che nomina la variabile e `/srv/app/.env`; comandi `node dist/worker.js` e `node dist/migrate.js` (per `app` vale il `CMD` dell'immagine, `node server.js`, oppure lo stesso comando scritto nel file) |
+| C3 | C | `docker compose -p app --project-directory . -f infra/compose.yml -f infra/compose.test.yml config -q --no-env-resolution` (dalla radice del progetto, dove non c'è un file `.env`, e senza i tag nell'ambiente) | Codice diverso da 0; il messaggio nomina uno dei tre tag (`CADDY_TAG`, `APP_TAG`, `POSTGRES_TAG`) e `/srv/app/.env`; nessuna configurazione stampata |
 
 ## D. L'immagine con il database di sviluppo (FON-002, FON-009)
 

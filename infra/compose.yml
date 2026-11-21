@@ -2,7 +2,9 @@
 #
 # Sui server si usa sempre attraverso /srv/app/dc (infra/scripts/dc), che aggiunge il file dell'ambiente
 # (compose.test.yml o compose.prod.yml) e imposta il progetto `app`, la cartella /srv/app e /srv/app/.env, da cui
-# Compose legge APP_TAG, CADDY_TAG e POSTGRES_TAG (scritti da deploy.sh). I percorsi relativi partono dalla cartella
+# Compose legge APP_TAG, CADDY_TAG e POSTGRES_TAG (scritti da deploy.sh; prima di FON-T08 a mano, DOM-T02). Sono
+# obbligatori tutti e tre (`${X_TAG:?…}`): se uno manca o è vuoto, ogni comando di /srv/app/dc si ferma subito con un
+# messaggio che lo nomina, anche per un servizio che non usa quell'immagine. I percorsi relativi partono dalla cartella
 # del progetto, /srv/app: ./infra/… è la cartella infra/ del commit rilasciato.
 #
 # Ogni servizio ha il suo file di ambiente in /srv/app/env/, che scrive l'utente; ENV_DIR serve solo a
@@ -21,7 +23,7 @@ x-logging: &logging
 
 services:
   caddy:
-    image: ghcr.io/jinoesfoo/gestionale-negozi-caddy:${CADDY_TAG}
+    image: ghcr.io/jinoesfoo/gestionale-negozi-caddy:${CADDY_TAG:?manca CADDY_TAG in /srv/app/.env}
     # Nessun depends_on: nel bootstrap di DOM-T02 caddy si avvia da solo.
     env_file: ${ENV_DIR:-/srv/app/env}/caddy.env
     ports:
@@ -35,7 +37,7 @@ services:
     logging: *logging
 
   app:
-    image: ghcr.io/jinoesfoo/gestionale-negozi-app:${APP_TAG}
+    image: ghcr.io/jinoesfoo/gestionale-negozi-app:${APP_TAG:?manca APP_TAG in /srv/app/.env}
     command: ['node', 'server.js']
     env_file: ${ENV_DIR:-/srv/app/env}/app.env
     networks: [internal]
@@ -47,7 +49,7 @@ services:
     logging: *logging
 
   worker:
-    image: ghcr.io/jinoesfoo/gestionale-negozi-app:${APP_TAG}
+    image: ghcr.io/jinoesfoo/gestionale-negozi-app:${APP_TAG:?manca APP_TAG in /srv/app/.env}
     command: ['node', 'dist/worker.js']
     env_file: ${ENV_DIR:-/srv/app/env}/worker.env
     networks: [internal]
@@ -60,7 +62,7 @@ services:
   # Una tantum: `/srv/app/dc run --rm migrate` (migrazioni) e `/srv/app/dc run --rm migrate node dist/cli.js
   # <comando>` (CLI). Nel profilo tools, così `up -d` non lo avvia. L'unico servizio con DATABASE_OWNER_URL.
   migrate:
-    image: ghcr.io/jinoesfoo/gestionale-negozi-app:${APP_TAG}
+    image: ghcr.io/jinoesfoo/gestionale-negozi-app:${APP_TAG:?manca APP_TAG in /srv/app/.env}
     command: ['node', 'dist/migrate.js']
     env_file: ${ENV_DIR:-/srv/app/env}/migrate.env
     networks: [internal]
@@ -72,7 +74,7 @@ services:
     logging: *logging
 
   postgres:
-    image: ghcr.io/jinoesfoo/gestionale-negozi-postgres:${POSTGRES_TAG}
+    image: ghcr.io/jinoesfoo/gestionale-negozi-postgres:${POSTGRES_TAG:?manca POSTGRES_TAG in /srv/app/.env}
     env_file: ${ENV_DIR:-/srv/app/env}/postgres.env
     networks: [internal]
     volumes:

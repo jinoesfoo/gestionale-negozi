@@ -54,8 +54,11 @@ describe('Dockerfile dell’immagine dell’app', () => {
   });
 
   it('FON-006: la fase finale copia infra/ in /opt/infra', () => {
-    // Dal contesto (`COPY infra /opt/infra`) o da una fase precedente (`COPY --from=build /build/infra /opt/infra`).
-    expect(finalStage()).toContainEqual(expect.stringMatching(/^COPY\s.*\s(\S*\/)?infra\/?\s+\/opt\/infra\/?$/));
+    // Dal contesto (`COPY infra /opt/infra`) o da una fase precedente (`COPY --from=build /build/infra /opt/infra`),
+    // con o senza opzioni (`--from`, `--chown`) fra COPY e la sorgente.
+    expect(finalStage()).toContainEqual(
+      expect.stringMatching(/^COPY\s+(--\S+\s+)*(\S*\/)?infra\/?\s+\/opt\/infra\/?$/),
+    );
   });
 
   it('FON-006: il comando predefinito avvia il server standalone di Next.js (node server.js)', () => {

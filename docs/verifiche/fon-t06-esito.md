@@ -27,8 +27,9 @@ Lista: `docs/verifiche/fon-t06.md`. Postazione joo. Esiti dei passi **C** riport
 
 | # | Data | Esito |
 |---|---|---|
-| C1 | 21/11/2026 | Superato (utente). `bash infra/check-ports.sh`: `OK: configurazione Compose (test) senza problemi.`, `OK: configurazione Compose (prod) senza problemi.`, `OK: solo caddy pubblica porte, log a rotazione, DATABASE_OWNER_URL solo in migrate (test e prod).` |
-| C2 | 21/11/2026 | Superato. Cinque `env_file` nella forma `${ENV_DIR:-/srv/app/env}/<servizio>.env` (`caddy`, `app`, `worker`, `migrate`, `postgres`); immagini `ghcr.io/jinoesfoo/gestionale-negozi-caddy:${CADDY_TAG}`, `…-app:${APP_TAG}` per `app`, `worker` e `migrate`, `…-postgres:${POSTGRES_TAG}`; comandi `['node', 'server.js']`, `['node', 'dist/worker.js']`, `['node', 'dist/migrate.js']`. |
+| C1 | | Da rifare (utente) dopo il cambio dei tag in `infra/compose.yml` (`TORNA AI TEST` del 21/11/2026, revisione). Prova precedente, superata (utente): `bash infra/check-ports.sh`: `OK: configurazione Compose (test) senza problemi.`, `OK: configurazione Compose (prod) senza problemi.`, `OK: solo caddy pubblica porte, log a rotazione, DATABASE_OWNER_URL solo in migrate (test e prod).` |
+| C2 | 21/11/2026 | Superato dopo la revisione, con il testo atteso nuovo: immagini `ghcr.io/jinoesfoo/gestionale-negozi-caddy:${CADDY_TAG:?manca CADDY_TAG in /srv/app/.env}`, `…-app:${APP_TAG:?manca APP_TAG in /srv/app/.env}` per `app`, `worker` e `migrate`, `…-postgres:${POSTGRES_TAG:?manca POSTGRES_TAG in /srv/app/.env}`; `env_file` e comandi invariati. Prova precedente, superata sulla forma `${X_TAG}`: cinque `env_file` nella forma `${ENV_DIR:-/srv/app/env}/<servizio>.env` (`caddy`, `app`, `worker`, `migrate`, `postgres`); immagini `ghcr.io/jinoesfoo/gestionale-negozi-caddy:${CADDY_TAG}`, `…-app:${APP_TAG}` per `app`, `worker` e `migrate`, `…-postgres:${POSTGRES_TAG}`; comandi `['node', 'server.js']`, `['node', 'dist/worker.js']`, `['node', 'dist/migrate.js']`. |
+| C3 | 21/11/2026 | Superato (passo aggiunto dopo la revisione). Prima del cambio di `infra/compose.yml` (fase test) Compose stampava solo avvisi (`The "APP_TAG" variable is not set. Defaulting to a blank string.`, e lo stesso per `CADDY_TAG` e `POSTGRES_TAG`) e caricava il progetto. Dopo: codice 1, nessuna configurazione stampata, un errore per ogni immagine, per esempio `error while interpolating services.app.image: required variable APP_TAG is missing a value: manca APP_TAG in /srv/app/.env` (anche per `caddy`, `migrate`, `postgres`, `worker`). |
 
 ## D. L'immagine con il database di sviluppo
 
@@ -41,7 +42,7 @@ Lista: `docs/verifiche/fon-t06.md`. Postazione joo. Esiti dei passi **C** riport
 
 | # | Data | Esito |
 |---|---|---|
-| E1 | 21/11/2026 | Superato, dopo il controllo di allineamento (`origin/main` = `1bb4377`, già base del ramo). `pnpm lint` verde (ESLint e Prettier); `pnpm typecheck` verde; `pnpm test`: 14 file, 553 test superati. In più, nella gabbia, `test:int`: 5 file, 14 test superati. |
+| E1 | 21/11/2026 | Superato dopo la revisione (cambio dei tag): `pnpm lint` e `pnpm typecheck` verdi; `pnpm test`: 15 file, 556 test superati (i 3 nuovi di `tests/unit/infra/compose-file.test.ts` compresi); `test:int` nella gabbia: 5 file, 14 test superati. Prima prova, superata dopo il controllo di allineamento (`origin/main` = `1bb4377`, già base del ramo). `pnpm lint` verde (ESLint e Prettier); `pnpm typecheck` verde; `pnpm test`: 14 file, 553 test superati. In più, nella gabbia, `test:int`: 5 file, 14 test superati. |
 | E2 | 21/11/2026 | Superato. `docker image rm gestionale-negozi-app:fon-t06-prova`: `Untagged` e `Deleted`; `docker image ls gestionale-negozi-app` non elenca nessuna immagine. |
 
 ## Note

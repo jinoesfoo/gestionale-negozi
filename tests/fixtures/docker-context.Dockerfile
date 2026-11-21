@@ -3,7 +3,8 @@
 #
 #   docker build --no-cache --progress=plain -f tests/fixtures/docker-context.Dockerfile .
 #
-# Nessuna immagine con nome: la prova lascia solo la cache di costruzione.
+# Nessuna immagine con nome, ma la prova lascia un'immagine senza nome (nell'ultima riga dell'output,
+# `writing image sha256:…`), da togliere subito dopo con `docker image rm <id>`.
 FROM node:24.22.3-trixie-slim
 COPY . /contesto
 # Il primo livello del contesto.
