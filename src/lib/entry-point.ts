@@ -3,8 +3,10 @@
 // (`node dist/<nome>.js`, oppure `node --import tsx src/<nome>.ts` in sviluppo), mai quando sono importati (dai test,
 // o da un altro modulo).
 //
-// Il nome si confronta due volte, con il file lanciato e con il modulo che chiede. Nei file costruiti da tsup ogni
-// modulo incluso ha lo stesso import.meta.url, quello del file costruito: se un comando del CLI importasse
+// Servono due condizioni. Il file lanciato deve essere il modulo che chiede (stesso percorso reale): un altro
+// programma con lo stesso nome (per esempio il cli.js di un'altra libreria) che importa src/cli.ts non lo fa partire.
+// E il nome deve essere quello chiesto: nei file costruiti da tsup ogni modulo incluso ha lo stesso import.meta.url,
+// quello del file costruito, quindi il percorso coincide sempre e decide il nome. Se un comando del CLI importasse
 // runMigrations da src/migrate.ts, dentro dist/cli.js il controllo di migrate vedrebbe `cli`, non `migrate`, e non
 // partirebbe.
 import { realpathSync } from 'node:fs';
@@ -24,7 +26,8 @@ export function isEntryPoint(moduleUrl: string, name: string): boolean {
   const launched = process.argv[1];
   if (launched === undefined) return false;
   try {
-    return entryName(realpathSync(launched)) === name && entryName(fileURLToPath(moduleUrl)) === name;
+    const modulePath = realpathSync(fileURLToPath(moduleUrl));
+    return realpathSync(launched) === modulePath && entryName(modulePath) === name;
   } catch {
     return false;
   }
