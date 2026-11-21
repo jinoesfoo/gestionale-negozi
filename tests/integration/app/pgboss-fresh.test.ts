@@ -62,6 +62,20 @@ describe('pg-boss su un database nuovo', () => {
 // (nota della revisione di FON-T03: i file di integrazione girano in parallelo, e un altro file che chiudesse le
 // connessioni di app_fresh farebbe fallire questo a caso). Le prove del file girano in ordine: qui sotto il pg-boss di
 // app_fresh è già avviato dalla prova precedente.
+//
+// pg-boss crea da sé, all'avvio con la pianificazione attiva, le sue code interne (in 12.38.2 `__pgboss__send-it`, del
+// pianificatore, timekeeper.js): non fanno parte dell'elenco di 05, e le prove le lasciano fuori dai confronti (nota
+// (14) della fase codice di FON-T10).
+
+const isInternalQueue = (name: string) => name.startsWith('__pgboss__');
+
+/** I nomi delle code del progetto (senza quelle interne di pg-boss), in ordine. */
+async function projectQueueNames(fresh: PgBoss): Promise<string[]> {
+  return (await fresh.getQueues())
+    .map((queue) => queue.name)
+    .filter((name) => !isInternalQueue(name))
+    .sort();
+}
 
 class ExitCalled extends Error {
   constructor(readonly code: number | string | null | undefined) {
@@ -77,10 +91,11 @@ function freshBoss(): PgBoss {
 describe('code dei lavori su un database nuovo', () => {
   it('FON-003: ensureQueues crea su app_fresh tutte le code di 05, ciascuna con la politica dichiarata', async () => {
     const fresh = freshBoss();
-    expect(await fresh.getQueues()).toEqual([]);
+    // Prima: nessuna delle code dell'elenco (pg-boss può avere già le sue interne).
+    expect(await projectQueueNames(fresh)).toEqual([]);
     await ensureQueues(fresh);
     const queues = await fresh.getQueues();
-    expect(queues.map((queue) => queue.name).sort()).toEqual(QUEUES.map((queue) => queue.name).sort());
+    expect(await projectQueueNames(fresh)).toEqual(QUEUES.map((queue) => queue.name).sort());
     for (const queue of QUEUES) {
       expect(queues.find((stored) => stored.name === queue.name)?.policy, queue.name).toBe(queue.policy);
     }
