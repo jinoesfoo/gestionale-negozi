@@ -10,6 +10,13 @@ import type { EmailMessage, EmailSender } from './sender';
 /** Lunghezza massima del messaggio di Brevo riportato in un errore. */
 const MAX_DETAIL_LENGTH = 300;
 
+/**
+ * Tempo massimo della chiamata a Brevo, lettura della risposta compresa (nota (18) di 01). Sta sotto gli 8 secondi
+ * dell'arresto ordinato del worker (WORKER_STOP_TIMEOUT_MS): un invio in corso all'arresto finisce, bene o male, prima
+ * che pg-boss lo abbandoni, invece di scadere e ripartire (con il rischio di una seconda email).
+ */
+export const BREVO_TIMEOUT_MS = 5_000;
+
 export const BREVO_SEND_URL = 'https://api.brevo.com/v3/smtp/email';
 
 export interface BrevoOptions {
@@ -65,9 +72,13 @@ export class BrevoEmailSender implements EmailSender {
           htmlContent: message.html,
           textContent: message.text,
         }),
+        signal: AbortSignal.timeout(BREVO_TIMEOUT_MS),
       });
     } catch (error) {
       const reason = error instanceof Error ? error.name : 'errore sconosciuto';
+      if (reason === 'TimeoutError') {
+        throw new Error(`Invio con Brevo non riuscito: nessuna risposta entro ${BREVO_TIMEOUT_MS / 1000} secondi.`);
+      }
       throw new Error(`Invio con Brevo non riuscito: Brevo non raggiungibile (${reason}).`);
     }
     if (!response.ok) {
