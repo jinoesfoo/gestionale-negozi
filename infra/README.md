@@ -537,14 +537,19 @@ Indirizzi e regioni, che non sono segreti: `https://fsn1.your-objectstorage.com`
   - `aws configure` in nessuna forma (nemmeno `aws configure agent-toolkit`, che l'installatore suggerisce) e `aws login`: scrivono in `~/.aws`;
   - `aws update`: installa l'ultima versione, non quella fissata;
   - l'opzione `--debug`: scrive nei messaggi la Access key.
-- Valgono le regole scritte in alto nella lista di controllo: dei 15 minuti, della policy, del terminale delle chiavi, degli appunti e della lettura.
+- **Il correttivo del client** (specifica 08, OPS-T03, «Difetto del client S3»; lista di controllo, regola del correttivo). Il client 2.39.4 ha un difetto aperto, aws/aws-cli#10161, non corretto fino alla 2.42.1 (letto il 21/11/2026). Quando una risposta di errore ha il testo vuoto, si ferma con `aws: [ERROR]: argument of type 'NoneType' is not a container or iterable` (codice di uscita 255) e non mostra il codice. Hetzner risponde così a ogni `AccessDenied` e alle impostazioni assenti (`NoSuchLifecycleConfiguration`, `ObjectLockConfigurationNotFoundError`).
+  - **Cosa fa.** Un piccolo modulo Python per il client (un «plugin»), scritto dal blocco del passo 4 e da `check-bucket-isolation.sh`, mette un testo vuoto al posto di quello mancante, prima del controllo che si ferma. Così il client mostra il codice. Non legge né cambia altro: né le richieste, né le chiavi, né il resto delle risposte.
+  - **Dove sta.** Il modulo sta nella cartella temporanea del terminale, in sola lettura, con accanto un file di configurazione del client che contiene solo il suo nome e la sua cartella, nessuna chiave. Le righe del correttivo, fra i segni `# >>> aws-cli-empty-message` e `# <<< aws-cli-empty-message`, sono uguali byte per byte nel blocco e nello script. Le confronta la prova A5, che prova anche il correttivo con il client vero.
+  - **I controlli.** Prima di qualsiasi chiave, il blocco controlla senza rete che il client carichi il correttivo e sia il 2.39.4, e scrive «correttivo del client: attivo (aws-cli/2.39.4 …)». Prima di ogni comando ricontrolla i due file: se sono cambiati, il comando non parte.
+  - **Quando si toglie.** Quando una versione del client corregge il difetto: A5 lo segnala, perché senza correttivo il client non si ferma più. Allora, con un compito nuovo, si fissa la versione nuova al passo 1 e si toglie il correttivo.
+- Valgono le regole scritte in alto nella lista di controllo: dei 15 minuti, della policy, del terminale delle chiavi, degli appunti, della lettura e del correttivo.
 - I 15 minuti valgono anche per le riletture: prima, Hetzner può rispondere con la configurazione vecchia (FAQ di Hetzner «Buckets and objects», letta il 18/11/2026).
 - Nella console non si usano mai «Reset visibility/policy» (menu «⋯» del bucket nell'elenco) né «Reset Bucket visibility» (menu «Actions» nella pagina del bucket): potrebbero sostituire la policy. Le chiavi si creano solo da «Security» → «S3 credentials». Anche «Generate credentials» del menu «⋯» di un bucket crea una chiave del progetto, che ne avrebbe così due.
 - Stato del servizio: https://status.hetzner.com.
   - Il 18/11/2026 Object Storage risultava «partially degraded» a Helsinki (scritture lente o fallite, dal 13/11) e a Falkenstein (dal 14/11), tutti e due in «Monitoring».
   - Dal 18/11/2026 alle 14:32 UTC: «Object Storage HEL: Creation of new buckets temporarily unavailable»: dal 19/11/2026 alle 10:00 ora italiana a Helsinki non si creano bucket nuovi, per un ampliamento di circa tre settimane (pagina letta il 20/11/2026). Per questo lo specchio si crea a Norimberga, dove il 20/11/2026 non c'erano avvisi aperti di Object Storage (solo la manutenzione del 02/12, qui sotto); prima di crearlo si guarda di nuovo la pagina.
   - Il 02/12/2026, dalle 12 alle 24 ora italiana, c'è una manutenzione di Object Storage con brevi interruzioni: in quella finestra non si fanno i passi da D a J.
-  - Un errore di rete o del fornitore non è un esito (lista di controllo, I, voce 1).
+  - Un errore di rete o del fornitore non è un esito (lista di controllo, I, voce «Rete o fornitore»).
 - Se la console è in tedesco: «Sicherheit» → «S3-Zugangsdaten» → «Zugangsdaten generieren»; «Bucket erstellen»; «Schutz aktivieren»; «Sichtbarkeit/Richtlinie zurücksetzen» (da non usare).
 
 ### 1. Client S3 (A2; A3 la fa Claude)
@@ -694,43 +699,54 @@ Un terminale delle chiavi è sempre una finestra nuova dell'applicazione «Termi
 - Si incolla con il tasto destro → «Paste» (Incolla) o con Ctrl+Maiusc+V; si copia con il tasto destro → «Copy» (Copia) o con Ctrl+Maiusc+C (regole del terminale e degli appunti).
 - Ogni blocco si incolla tutto insieme, poi si preme Invio.
 
-Il primo comando è tutto il blocco qui sotto, incollato in una volta sola, poi Invio. Se il Terminale chiede conferma per incollare più righe, si conferma. Il blocco stampa due righe (tre, se manca il client), da incollare a Claude (A4):
+Il primo comando è tutto il blocco qui sotto, incollato in una volta sola, poi Invio. Se il Terminale chiede conferma per incollare più righe, si conferma. Il blocco stampa tre righe, da incollare a Claude (A4):
 
 ```
 cronologia: spenta
 terminale: ptyxis-agent (shell 12345, 18/11/2026 16:10:00)
+correttivo del client: attivo (aws-cli/2.39.4 Python/3.14.8 Linux/7.0.0-43-generic exe/x86_64.ubuntu.26)
 ```
 
-`ptyxis-agent` è il Terminale di Ubuntu 26.04 (Ptyxis). Se compare «cronologia: ACCESA», o la scritta che parla di VS Code, si chiude la finestra e se ne apre una nuova. Se compare «ATTENZIONE: il client aws non è in /usr/local/bin», non si va avanti e lo si dice a Claude (passo 1): senza quel file nessun comando verso Hetzner parte. Un eventuale suggerimento del Terminale per installare il client (con `snap` o `apt`) non si segue: installerebbe un client diverso da quello controllato al passo 1.
+`ptyxis-agent` è il Terminale di Ubuntu 26.04 (Ptyxis).
+- Se compare «cronologia: ACCESA», o la scritta che parla di VS Code, si chiude la finestra e se ne apre una nuova.
+- Se compare «ATTENZIONE: il client aws non è in /usr/local/bin», non si va avanti e lo si dice a Claude (passo 1): senza quel file nessun comando verso Hetzner parte. Un eventuale suggerimento del Terminale per installare il client (con `snap` o `apt`) non si segue: installerebbe un client diverso da quello controllato al passo 1.
+- Se al posto della terza riga compare «ATTENZIONE: correttivo del client non attivo», eventualmente con una riga «risposta del client: …», non si caricano chiavi: si chiude la finestra e lo si dice a Claude, incollandogli quelle righe (regola del correttivo). In quel terminale `load_key` non chiede chiavi, e nessun comando parte.
+- Se dopo l'incolla il Terminale mostra una riga che comincia con `> ` e non stampa le righe attese, il blocco è arrivato a metà: Ctrl+C, si chiude la finestra e se ne apre una nuova.
 
 Per la lettura (D0), ecco cosa fa il blocco.
 
 - Spegne la cronologia della shell e il suo file (nessun comando resta salvato) e il passaggio automatico ai programmi delle variabili nuove (`allexport`). Toglie un eventuale alias o funzione `aws` di un file di avvio del terminale, e la funzione di Ubuntu che, per un comando non trovato, lancia un altro programma (`command_not_found_handle`): così al posto di `aws` non parte nient'altro.
 - Toglie le variabili `AWS_*` ereditate (le due delle chiavi anche per nome, nel caso un file di avvio del terminale le avesse solo dichiarate) e prepara il client:
-  - nessun file di configurazione né di credenziali (`/dev/null`);
+  - nessun file di credenziali (`/dev/null`); come file di configurazione, dalla riga di `CLIENT_READY` in poi, solo quello del correttivo, senza chiavi;
   - nessun pager, uscite in JSON, nessun numero di sessione;
   - checksum solo dove l'operazione li richiede;
   - quattro tentativi per ogni richiesta.
 - Scrive le tabelle dei cinque bucket (nome, luogo, chiave proprietaria) e l'id di `lettura-backup-prod`.
+- Scrive il correttivo del client (regole, «Il correttivo del client»): le righe fra `# >>> aws-cli-empty-message` e `# <<< aws-cli-empty-message`, uguali a quelle di `check-bucket-isolation.sh`.
+  - Il testo fra `<<'AWS_CLI_PLUGIN'` e `AWS_CLI_PLUGIN` è il modulo Python. `_empty_message` mette `''` al posto di un testo d'errore mancante (`None`). `awscli_initialize` la fa eseguire al client prima del suo controllo che si ferma (`register_first`), e scrive «foondaco_empty_message: loaded» solo quando la variabile `FOONDACO_AWS_CLI_PLUGIN_CHECK` vale 1, cioè nel controllo all'avvio.
+  - `aws_cli_plugin_write` scrive il modulo e il file di configurazione (tre righe: `[plugins]`, la cartella del modulo, il suo nome) in una sottocartella di `$WORK`. Rifiuta un percorso non assoluto o con «:», e lascia tutto in sola lettura.
+  - `aws_cli_plugin_intact` controlla che la configurazione in uso sia la sua, che nella cartella ci sia solo il modulo, e che il modulo e la configurazione siano ancora quelli scritti.
+  - `aws_cli_plugin_check` chiede al client, senza chiavi e senza rete (`aws --version`), se carica il correttivo e se è il 2.39.4. Risponde con la versione, oppure scrive «risposta del client: …».
+  - Poi il blocco esporta la configurazione del correttivo (`AWS_CONFIG_FILE`), e solo se il controllo riesce segna il client come pronto (`CLIENT_READY`). Senza, `load_key` non chiede chiavi e `_aws` non lancia il client.
 - Definisce le funzioni:
 
 | Funzione | Cosa fa | Righe |
 |---|---|---|
 | `load_key <nome>` | Chiede Access key e Secret key della voce `<nome>` del gestore di password, senza mostrarle (`read -rs`). Richiede le parti vuote o con spazi, e la Secret key se arriva di nuovo la Access key. Rifiuta, e allora la chiave resta non caricata: una parte uguale a una parte di un'altra chiave già caricata (appunti rimasti); una Secret key non più lunga della Access key (parti scambiate). Se prima della domanda era già arrivato del testo, incollato troppo presto, lo scarta, lo dice e si ferma: così non diventa una chiave. Caricata di nuovo, una chiave prende i valori nuovi. Tiene le chiavi nella memoria di questo terminale | tutte |
 | `use_key <nome>` | Mette la chiave `<nome>` in `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` per i comandi che seguono, senza esportarla: la riceve solo il client `aws`, da `_aws`. Nella lista di controllo «esportare» una chiave e «chiave esportata» vogliono dire metterla in uso con `use_key` e la chiave in uso; l'`export` è il passaggio della chiave al solo comando `aws`. Se `<nome>` non è caricata, non resta in uso nessuna chiave, e i comandi che seguono non usano nessuna chiave (in F e J2 la domanda di `compare_key` arriva lo stesso) | tutte |
-| `s3 fsn1\|nbg1 <operazione> …` | Un comando `aws s3api` verso Falkenstein o Norimberga, con la chiave in uso. Se nella risposta del client comparisse l'Access key di una chiave caricata, la mostra come nome tra parentesi quadre (`[file-prod]`); i messaggi di errore il client li scrive direttamente sullo schermo, e non passano da questa sostituzione. Alla fine scrive luogo, nome della chiave, data, ora e codice di uscita (0 = riuscito) | D–J |
+| `s3 fsn1\|nbg1 <operazione> …` | Un comando `aws s3api` verso Falkenstein o Norimberga, con la chiave in uso. Se nella risposta del client comparisse l'Access key di una chiave caricata, la mostra come nome tra parentesi quadre (`[file-prod]`); i messaggi di errore il client li scrive direttamente sullo schermo, e non passano da questa sostituzione. Alla fine scrive luogo, nome della chiave, data, ora e codice di uscita (0 = riuscito). Il client lo lancia `_aws`, che prima ricontrolla il correttivo: se non è attivo o è cambiato, scrive «correttivo del client alterato o non attivo: comando non mandato» e risponde con il codice 3, senza lanciare il client | D–J |
 | `show_config <unità>` | Versioning, ciclo di vita, Object Lock e policy del bucket dell'unità, con la sua chiave | E |
 | `show_policy <unità>` | La policy del bucket. Ogni Access key che conosce la mostra solo come nome tra parentesi quadre (`[specchio-lettura]`); ogni altro valore dopo `p<id>:`, e ogni sequenza di 16 o più maiuscole e cifre, come `[chiave sconosciuta]` | E7, F, J, 12 |
-| `put_policy_keys <nome>…` | Manda la policy di `foondaco-backup` nella forma per chiave, con le Access key delle chiavi `<nome>` caricate. Prima prova ogni chiave chiedendo l'elenco dei suoi bucket a `fsn1` e a `nbg1`: se la chiave non funziona (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o ha dei bucket, non manda niente. Poi mostra la policy con i nomi al posto delle chiavi e la manda: arriva al client da `/dev/stdin`, mai dalla riga di comando. Un messaggio di errore lo stampa con i nomi al posto delle Access key | F, J2, J6, 12 |
-| `check_bucket_list` | I nomi dei bucket del progetto della chiave in uso, chiesti a `fsn1` e a `nbg1`. Se ce n'è almeno uno lo dice e risponde con un errore: nel blocco di F, F1 e F2 non partono | F |
+| `put_policy_keys <nome>…` | Manda la policy di `foondaco-backup` nella forma per chiave, con le Access key delle chiavi `<nome>` caricate. Prima prova ogni chiave chiedendo l'elenco dei suoi bucket a `fsn1` e a `nbg1`: se la chiave non funziona (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o ha dei bucket, non manda niente. Poi mostra la policy con i nomi al posto delle chiavi e la manda: arriva al client da `/dev/stdin`, mai dalla riga di comando. Un messaggio di errore lo stampa con i nomi al posto delle Access key. Se il correttivo non è attivo (`_not_fixed`: codice 3, o la riga `argument of type 'NoneType'`), non manda niente | F, J2, J6, 12 |
+| `check_bucket_list` | I nomi dei bucket del progetto della chiave in uso, chiesti a `fsn1` e a `nbg1`. Se ce n'è almeno uno lo dice e risponde con un errore: nel blocco di F, F1 e F2 non partono. Lo stesso se il correttivo non è attivo | F |
 | `compare_key <nome>` | Chiede sempre di nuovo l'Access key della voce `<nome>`, senza mostrarla, e dice solo se è «uguale» o «diversa» da quella in uso. Se `<nome>` non è la chiave in uso (per esempio perché `load_key` ha rifiutato le due parti) dice «confronto non fatto». Con «diversa» o «confronto non fatto» risponde con un errore: nel blocco di F, F1 e F2 non partono; in quello di J2, lista e scrittura. Una risposta vuota, o la Secret key della chiave in uso (appunti rimasti), la richiede. Come `load_key`, scarta il testo arrivato prima della domanda | F, J2 |
 | `test_ops005 file-prod\|file-test` | G1–G5: scrive due versioni di `prova-ops-005.txt`, le elenca, legge la prima, la recupera, poi cancella tutte le versioni | G |
 | `test_lock` | H1–H5 sullo specchio, con il `VersionId` letto in H1, che stampa a ogni passo. Si ferma se H2 non è come atteso, e se H3 o H4 riescono davvero (il blocco non funziona). In H4 manda la data solo se è nel futuro e precedente a quella di H2. Risponde senza errore solo se arriva in fondo | H1–H5 |
 | `test_h6` | H6: una scrittura senza `Content-MD5` né checksum, la lettura della sua conservazione, poi un delete marker | H6 |
-| `watch_revocation` | J4, con la chiave `prova-ripristino` in uso: la lista di J2 subito e poi a 5, 10, … 60 minuti dall'inizio, finché due prove di fila sono rifiutate con `InvalidAccessKeyId`. Gli errori del client, della rete o del fornitore non contano; un altro codice si stampa e interrompe la serie. Le prove perse perché il computer era sospeso, o perché una chiamata è durata più di 5 minuti, non si recuperano: lo dice con «prove saltate» | J4 |
+| `watch_revocation` | J4, con la chiave `prova-ripristino` in uso: la lista di J2 subito e poi a 5, 10, … 60 minuti dall'inizio, finché due prove di fila sono rifiutate con `InvalidAccessKeyId`. Gli errori del client, della rete o del fornitore non contano; un altro codice si stampa e interrompe la serie. Le prove perse perché il computer era sospeso, o perché una chiamata è durata più di 5 minuti, non si recuperano: lo dice con «prove saltate». Se il correttivo non è attivo, si ferma: la serie non vale (regola del correttivo) | J4 |
 | `clean_leftovers <unità>` | Cancella gli oggetti rimasti sotto `check-bucket-isolation/` dopo un'interruzione di I2 | I |
 
-Le chiavi non finiscono mai sullo schermo, in un file o fra gli argomenti di un comando, e non sono esportate: le riceve solo il client `aws`, come variabili d'ambiente di quel solo comando. Nella riga di `_aws` compaiono solo i nomi delle due variabili: i valori vanno nell'ambiente del client, non fra i suoi argomenti. Mentre il client fa la sua chiamata (di solito meno di un secondo; se la rete non risponde, anche qualche minuto, finché il client smette di riprovare), le chiavi sono nel suo ambiente: è il minimo, perché il client le deve avere. Per il client la cartella di casa è la cartella temporanea (`HOME=$WORK`), dove non c'è una cartella `.aws`: non legge alias, modelli o impostazioni da `~/.aws`. I programmi li cerca solo in `/usr/local/bin` (`PATH=/usr/local/bin`), dove l'ha installato il passo 1: così non lancia `lsb_release` e `uname`, che altrimenti lancerebbe a ogni chiamata passando loro le chiavi, e nessun programma della cartella di casa può prendere il posto di `aws`. Lo script di I2 passa anche lui le chiavi solo al suo client; quel client però cerca i programmi anche in `/usr/bin` e `/bin` (riga 1307), e a ogni chiamata lancia `lsb_release` (che lancia `getopt`, `cut` e `tr`) e `uname` di `/usr/bin`, passando loro le chiavi per pochi millesimi di secondo: sono programmi di sistema, che si cambiano solo con la password di amministratore. Gli altri programmi del blocco (`python3`, `date`, `sleep`, `sed`…) non ricevono le chiavi. `python3` legge solo le uscite del client, che non contengono chiavi. Gli unici file che il blocco scrive sono quelli di prova, in una cartella temporanea (`$WORK`).
+Le chiavi non finiscono mai sullo schermo, in un file o fra gli argomenti di un comando, e non sono esportate: le riceve solo il client `aws`, come variabili d'ambiente di quel solo comando. Nella riga di `_aws` compaiono solo i nomi delle due variabili: i valori vanno nell'ambiente del client, non fra i suoi argomenti. Mentre il client fa la sua chiamata (di solito meno di un secondo; se la rete non risponde, anche qualche minuto, finché il client smette di riprovare), le chiavi sono nel suo ambiente: è il minimo, perché il client le deve avere. Per il client la cartella di casa è la cartella temporanea (`HOME=$WORK`), dove non c'è una cartella `.aws`: non legge alias, modelli o impostazioni da `~/.aws`. I programmi li cerca solo in `/usr/local/bin` (`PATH=/usr/local/bin`), dove l'ha installato il passo 1: così non lancia `lsb_release` e `uname`, che altrimenti lancerebbe a ogni chiamata passando loro le chiavi, e nessun programma della cartella di casa può prendere il posto di `aws`. Lo script di I2 passa anche lui le chiavi solo al suo client; quel client però cerca i programmi anche in `/usr/bin` e `/bin` (riga 1400), e a ogni chiamata lancia `lsb_release` (che lancia `getopt`, `cut` e `tr`) e `uname` di `/usr/bin`, passando loro le chiavi per pochi millesimi di secondo: sono programmi di sistema, che si cambiano solo con la password di amministratore. Dentro il client gira anche il correttivo (regole, «Il correttivo del client»), che non legge le chiavi né le scrive. Sta in una cartella che può cambiare solo l'utente, in sola lettura, e si ricontrolla prima di ogni comando. Un programma che gira con l'utente potrebbe comunque già leggere le chiavi dal client mentre lavora, quindi il correttivo non apre una strada nuova. Gli altri programmi del blocco (`python3`, `date`, `sleep`, `sed`, `env`, `mkdir`, `chmod`…) non ricevono le chiavi; il controllo all'avvio lancia il client con `env`, quando non c'è ancora nessuna chiave. `python3` legge solo le uscite del client, che non contengono chiavi. I file che il blocco scrive, tutti in una cartella temporanea (`$WORK`), sono il correttivo con la sua configurazione, all'avvio, e quelli di prova.
 
 ```bash
 # Terminale delle chiavi (infra/README.md, «Archivi S3 (OPS-T03)»): primo comando, incollato tutto insieme.
@@ -746,9 +762,77 @@ declare -A PLACE=([file-prod]=fsn1 [backup-prod]=fsn1 [file-test]=fsn1 [backup-t
 declare -A OWNER_KEY=([file-prod]=file-prod [backup-prod]=pgbackrest-prod [file-test]=file-test [backup-test]=pgbackrest-test [specchio]=specchio-scrittura)
 declare -A KEY_ID=() KEY_SECRET=()
 KEY_IN_USE= OUT= WORK=$(mktemp -d)
+AWS_CLI_BASE=$WORK   # il correttivo del client (regole, «Il correttivo del client»): righe uguali a quelle di check-bucket-isolation.sh
+# >>> aws-cli-empty-message (aws/aws-cli#10161; infra/README.md, «Archivi S3 (OPS-T03)»)
+IFS= read -r -d '' AWS_CLI_PLUGIN_TEXT <<'AWS_CLI_PLUGIN'
+"""AWS CLI v2 plugin written by infra/README.md ("Archivi S3 (OPS-T03)") and check-bucket-isolation.sh.
+
+An S3 error response with an empty <Message> is parsed as None, and the CLI's own check in
+awscli/customizations/s3errormsg.py then stops with a TypeError (exit status 255) instead of
+showing the error code (aws/aws-cli#10161). Hetzner answers AccessDenied and missing settings
+that way. Here the None becomes "" before that check runs. Nothing else is read or changed.
+"""
+import os
+import sys
+
+
+def _empty_message(parsed, **kwargs):
+    error = parsed.get('Error') if isinstance(parsed, dict) else None
+    if isinstance(error, dict) and 'Message' in error and error['Message'] is None:
+        error['Message'] = ''
+
+
+def awscli_initialize(event_hooks):
+    event_hooks.register_first('after-call.s3', _empty_message)
+    if os.environ.get('FOONDACO_AWS_CLI_PLUGIN_CHECK') == '1':
+        sys.stderr.write('foondaco_empty_message: loaded\n')
+AWS_CLI_PLUGIN
+AWS_CLI_PLUGIN_DIR=$AWS_CLI_BASE/aws-cli-plugin
+AWS_CLI_CONFIG=$AWS_CLI_BASE/aws-config
+AWS_CLI_CONFIG_TEXT="[plugins]
+cli_legacy_plugin_path = $AWS_CLI_PLUGIN_DIR
+foondaco_empty_message = foondaco_empty_message"
+aws_cli_plugin_write() {
+  case $AWS_CLI_BASE in /*) ;; *) return 1 ;; esac
+  case $AWS_CLI_BASE in *:* | *$'\n'*) return 1 ;; esac
+  mkdir -m 700 -- "$AWS_CLI_PLUGIN_DIR" &&
+    printf '%s' "$AWS_CLI_PLUGIN_TEXT" >"$AWS_CLI_PLUGIN_DIR/foondaco_empty_message.py" &&
+    printf '%s\n' "$AWS_CLI_CONFIG_TEXT" >"$AWS_CLI_CONFIG" &&
+    chmod 400 -- "$AWS_CLI_PLUGIN_DIR/foondaco_empty_message.py" "$AWS_CLI_CONFIG" &&
+    chmod 500 -- "$AWS_CLI_PLUGIN_DIR"
+}
+aws_cli_plugin_intact() {
+  local entries
+  [ "${AWS_CONFIG_FILE-}" = "$AWS_CLI_CONFIG" ] || return 1
+  entries=$(cd -- "$AWS_CLI_PLUGIN_DIR" 2>/dev/null && shopt -s nullglob dotglob && printf '%s\n' *) || return 1
+  [ "$entries" = foondaco_empty_message.py ] &&
+    [ "$(<"$AWS_CLI_PLUGIN_DIR/foondaco_empty_message.py")" = "$(printf '%s' "$AWS_CLI_PLUGIN_TEXT")" ] &&
+    [ "$(<"$AWS_CLI_CONFIG")" = "$AWS_CLI_CONFIG_TEXT" ]
+}
+aws_cli_plugin_check() {
+  local out
+  aws_cli_plugin_intact || return 1
+  if out=$(FOONDACO_AWS_CLI_PLUGIN_CHECK=1 "$@" --version 2>&1 </dev/null); then
+    case $out in
+      $'foondaco_empty_message: loaded\naws-cli/2.39.4 '*) printf '%s\n' "${out#*$'\n'}"; return 0 ;;
+    esac
+  fi
+  out=${out//[[:cntrl:]]/ }
+  printf 'risposta del client: %s\n' "${out:0:300}" >&2
+  return 1
+}
+# <<< aws-cli-empty-message
+CLIENT_READY= CLIENT_VERSION=
+if aws_cli_plugin_write && export AWS_CONFIG_FILE=$AWS_CLI_CONFIG &&
+  CLIENT_VERSION=$(aws_cli_plugin_check env HOME="$WORK" PATH=/usr/local/bin aws); then CLIENT_READY=1; fi
 
 _now() { date '+%d/%m/%Y %H:%M:%S'; }
-_aws() { local place=$1; shift; HOME=$WORK PATH=/usr/local/bin AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY aws --endpoint-url "https://$place.your-objectstorage.com" --region "$place" s3api "$@"; }
+_aws() { local place=$1; shift
+  if [ -z "$CLIENT_READY" ] || ! aws_cli_plugin_intact; then
+    echo 'correttivo del client alterato o non attivo: comando non mandato (lista di controllo, regola del correttivo)' >&2; return 3
+  fi
+  HOME=$WORK PATH=/usr/local/bin AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY aws --endpoint-url "https://$place.your-objectstorage.com" --region "$place" s3api "$@"; }
+_not_fixed() { [ "$1" = 3 ] || [[ $2 == *"argument of type 'NoneType'"* ]]; }   # correttivo non attivo (regola del correttivo)
 _code() { printf '%s\n' "$1" | sed -n 's/.*An error occurred (\([A-Za-z0-9]*\)).*/\1/p' | head -n 1; }
 _reason() { local c; c=$(_code "$1"); if [ -n "$c" ]; then printf '%s\n' "$c"; else printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -n 1; fi; }
 _json() { printf '%s' "$OUT" | python3 -I -c 'import json, sys
@@ -800,6 +884,7 @@ s3() { # s3 fsn1|nbg1 <operazione> [opzioni]: un comando del client con la chiav
 load_key() { # load_key <nome>: chiede Access key e Secret key della voce <nome>, senza mostrarle
   local name=${1:-} part value id= secret= other was_in_use=
   [[ $name =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Nome «$name» non valido: solo lettere minuscole, cifre e trattini, per esempio load_key file-prod. Nessuna chiave è stata chiesta: non incollarla ora."; return 2; }
+  [ -n "$CLIENT_READY" ] || { echo "Correttivo del client non attivo: nessuna chiave è stata chiesta, non incollarla. Chiudi questo terminale e dillo a Claude (regola del correttivo)."; return 2; }
   [ "$KEY_IN_USE" != "$name" ] || { was_in_use=1; unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; KEY_IN_USE=; }
   unset "KEY_ID[$name]" "KEY_SECRET[$name]"   # i valori di prima spariscono: restano solo quelli nuovi, se superano i controlli
   _early_input && return 1
@@ -864,7 +949,8 @@ check_bucket_list() { # F: solo i nomi dei bucket del progetto della chiave in u
   [ -n "$KEY_IN_USE" ] || { echo "Nessuna chiave in uso: l'elenco dei bucket non è stato chiesto."; return 2; }
   for place in fsn1 nbg1; do
     out=$(_aws "$place" list-buckets --query 'Buckets[].Name' --output text 2>&1); rc=$?
-    if [ "$rc" -ne 0 ]; then
+    if _not_fixed "$rc" "$out"; then echo "$place: correttivo del client non attivo: mi fermo (regola del correttivo)"; return 2
+    elif [ "$rc" -ne 0 ]; then
       echo "$place: non riuscito (codice di uscita $rc): $(_reason "$out")"
     elif [ -z "$out" ] || [ "$out" = None ]; then echo "$place: nessun bucket"
     else echo "$place: $(printf '%s' "$out" | tr -s '[:space:]' ' ')"; found=1; fi
@@ -899,6 +985,8 @@ put_policy_keys() { # F, J2, J6: la policy di foondaco-backup nella forma per ch
       out=$(AWS_ACCESS_KEY_ID=${KEY_ID[$name]} AWS_SECRET_ACCESS_KEY=${KEY_SECRET[$name]} _aws "$place" list-buckets --query 'Buckets[].Name' --output text 2>&1); rc=$?
       if [ "$rc" -eq 0 ]; then
         [ -z "$out" ] || [ "$out" = None ] || { echo "Prova di «$name» a $place: ha dei bucket, quindi non è una chiave di lettura-backup-prod. Policy non mandata: finito il blocco, lo si rilancia copiando le due parti dalla voce di «$name»."; return 1; }
+      elif _not_fixed "$rc" "$out"; then
+        echo "Prova di «$name» a $place: correttivo del client non attivo. Policy non mandata (regola del correttivo)."; return 1
       else
         case $(_code "$out") in
           InvalidAccessKeyId|SignatureDoesNotMatch) echo "Prova di «$name» a $place: $(_code "$out"), la chiave non funziona. Policy non mandata: finito il blocco, lo si rilancia copiando le due parti dalla voce di «$name» (una chiave appena creata può metterci qualche minuto)."; return 1 ;;
@@ -1040,7 +1128,8 @@ watch_revocation() { # J4: con la chiave prova-ripristino, la lista di J2 subito
     t=$(date '+%H:%M:%S')
     out=$(_aws fsn1 list-objects-v2 --bucket foondaco-backup --max-items 5 2>&1 >/dev/null); rc=$?
     code=$(_code "$out")
-    if [ "$rc" -eq 0 ]; then echo "$t lista riuscita"; last_ok=$t refusals=0 first_refusal=
+    if _not_fixed "$rc" "$out"; then echo "$t correttivo del client non attivo: la serie non vale, mi fermo (regola del correttivo)"; return 2
+    elif [ "$rc" -eq 0 ]; then echo "$t lista riuscita"; last_ok=$t refusals=0 first_refusal=
     elif [ "$code" = InvalidAccessKeyId ]; then
       refusals=$((refusals + 1)); [ "$refusals" -gt 1 ] || first_refusal=$t
       echo "$t lista rifiutata: $code"
@@ -1083,6 +1172,8 @@ if [ "${TERM_PROGRAM:-}" = vscode ] || compgen -e | grep -q '^VSCODE_'; then
 else
   echo "terminale: $(ps -o comm= -p "$PPID") (shell $$, $(_now))"
 fi
+if [ -n "$CLIENT_READY" ]; then echo "correttivo del client: attivo ($CLIENT_VERSION)"
+else echo 'ATTENZIONE: correttivo del client non attivo: non caricare chiavi qui; chiudi questo terminale e dillo a Claude (regola del correttivo)'; fi
 ```
 
 **Uso delle chiavi.**
@@ -1098,8 +1189,10 @@ fi
 **Come si leggono le uscite.**
 
 - Un comando riuscito senza niente da dire stampa solo la riga finale, con «codice di uscita: 0». Succede per le modifiche di D e per il versioning di un bucket mai versionato.
-- Un errore stampa una riga vuota, poi `aws: [ERROR]: An error occurred (<codice>) when calling the <operazione> operation: <testo>`, con il codice di uscita 254. Conta il codice tra parentesi: il testo dopo i due punti può essere `None`.
+- Un errore stampa una riga vuota, poi `aws: [ERROR]: An error occurred (<codice>) when calling the <operazione> operation: <testo>`, con il codice di uscita 254. Conta il codice tra parentesi. Dopo i due punti spesso non c'è niente: Hetzner non manda il testo, e il correttivo fa vedere il codice lo stesso.
+- Il codice `(None)` vuol dire che il fornitore non ha mandato nemmeno il codice: non è un esito, lo si dice a Claude.
 - Un errore di rete non ha il codice tra parentesi, per esempio `Could not connect to the endpoint URL`.
+- Non sono errori di rete, e nemmeno esiti, la riga `aws: [ERROR]: argument of type 'NoneType' is not a container or iterable` (codice di uscita 255) e la riga «correttivo del client alterato o non attivo: comando non mandato» (codice di uscita 3): il correttivo non è attivo. Ci si ferma e lo si dice a Claude (regola del correttivo).
 - Un comando scritto male non arriva al fornitore: il client risponde `aws: error: …` (per esempio `expected one argument`), con il codice di uscita 252. Non è un esito: lo si dice a Claude.
 
 ### 5. Configurazione (D0–D5) (utente)
@@ -1231,7 +1324,7 @@ use_key pgbackrest-prod
 put_policy_keys specchio-lettura
 ```
 
-`put_policy_keys` prima prova `specchio-lettura`: se è rifiutata (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o ha dei bucket, non manda niente e dice perché; con ogni altro errore, per esempio di rete o del fornitore, lo scrive («non riuscita (…); vado avanti») e manda lo stesso. Poi mostra la policy con i nomi al posto delle chiavi e la manda. Il testo che manda, con un segnaposto al posto della Access key (16852089 è l'id di `lettura-backup-prod`):
+`put_policy_keys` prima prova `specchio-lettura`: se è rifiutata (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o ha dei bucket, non manda niente e dice perché; con ogni altro errore, per esempio di rete o del fornitore, lo scrive («non riuscita (…); vado avanti») e manda lo stesso; se il correttivo non è attivo, non manda niente. Poi mostra la policy con i nomi al posto delle chiavi e la manda. Il testo che manda, con un segnaposto al posto della Access key (16852089 è l'id di `lettura-backup-prod`):
 
 ```json
 {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam:::user/p16852089:<Access key di specchio-lettura>"},"Action":["s3:ListBucket","s3:GetObject"],"Resource":["arn:aws:s3:::foondaco-backup","arn:aws:s3:::foondaco-backup/*"]}]}
@@ -1293,7 +1386,7 @@ Le versioni scritte nello specchio restano 45 giorni e nessuno può cancellarle:
 
 ### 10. Isolamento delle unità (I1–I2) (utente)
 
-**I1.** Lettura di `infra/scripts/check-bucket-isolation.sh`, prima di I2; poi lo si dice a Claude.
+**I1.** Lettura di `infra/scripts/check-bucket-isolation.sh` per intero, compreso il correttivo del client (le righe fra i segni `aws-cli-empty-message`, uguali a quelle del passo 4), prima di I2; poi lo si dice a Claude.
 
 **I2.** In un terminale delle chiavi **nuovo**, dopo il blocco del passo 4 e **senza** `load_key`:
 
@@ -1308,7 +1401,7 @@ if [[ $(git branch --show-current) = @(ops-t03|main) ]] && h=$(git rev-parse -q 
 echo "codice di uscita: $?"
 ```
 
-Il primo comando deve stampare `ops-t03` (dopo l'unione del compito, `main`). Lo script parte solo se il ramo è `ops-t03` o `main` (`@(ops-t03|main)` vuol dire «l'uno o l'altro») e se il file dello script è uguale, byte per byte, a quello salvato nell'ultimo commit: si confrontano due impronte, quella dello script nell'ultimo commit (`git rev-parse`) e quella del file nella cartella (`git hash-object`). Su `ops-t03` lo script è fermo dalla fase test, quindi è quello letto in I1; può cambiare solo tornando alla fase test (`TORNA AI TEST`, oppure `TORNA AL PIANO` e poi `APPROVO`), e allora lo si rilegge prima di lanciarlo. Su `main`, dopo l'unione, può averlo cambiato un compito successivo: prima di lanciarlo Claude controlla se è cambiato dopo I1 (`git log --oneline -- infra/scripts/check-bucket-isolation.sh`), e se sì lo si rilegge (regola della lettura). Se manca una delle due condizioni, il blocco scrive «Script NON lanciato…» e non chiede niente, e a Claude si incolla solo quella riga. Lo script parte senza file di avvio (`BASH_ENV=`), con una cartella di casa nuova e vuota (`HOME=$(mktemp -d)`) e con le sole cartelle di sistema (`PATH=/usr/local/bin:/usr/bin:/bin`): il suo client non legge e non scrive niente in `~/.aws`, e nessun programma delle cartelle della cartella di casa (come `~/.nvm/…/bin`) riceve le chiavi. Oltre al client, a ogni chiamata le ricevono solo `lsb_release` e `uname` di `/usr/bin` (e `getopt`, `cut` e `tr`, che `lsb_release` lancia), per pochi millesimi di secondo (riga 733). Lo script chiede dodici parti, Access key e poi Secret key per ogni chiave, e dopo ognuna scrive «ricevuta»:
+Il primo comando deve stampare `ops-t03` (dopo l'unione del compito, `main`). Lo script parte solo se il ramo è `ops-t03` o `main` (`@(ops-t03|main)` vuol dire «l'uno o l'altro») e se il file dello script è uguale, byte per byte, a quello salvato nell'ultimo commit: si confrontano due impronte, quella dello script nell'ultimo commit (`git rev-parse`) e quella del file nella cartella (`git hash-object`). Su `ops-t03` lo script è fermo dalla fase test, quindi è quello letto in I1; può cambiare solo tornando alla fase test (`TORNA AI TEST`, oppure `TORNA AL PIANO` e poi `APPROVO`), e allora lo si rilegge prima di lanciarlo. Su `main`, dopo l'unione, può averlo cambiato un compito successivo: prima di lanciarlo Claude controlla se è cambiato dopo I1 (`git log --oneline -- infra/scripts/check-bucket-isolation.sh`), e se sì lo si rilegge (regola della lettura). Se manca una delle due condizioni, il blocco scrive «Script NON lanciato…» e non chiede niente, e a Claude si incolla solo quella riga. Lo script parte senza file di avvio (`BASH_ENV=`), con una cartella di casa nuova e vuota (`HOME=$(mktemp -d)`) e con le sole cartelle di sistema (`PATH=/usr/local/bin:/usr/bin:/bin`): il suo client non legge e non scrive niente in `~/.aws`, e nessun programma delle cartelle della cartella di casa (come `~/.nvm/…/bin`) riceve le chiavi. Oltre al client, a ogni chiamata le ricevono solo `lsb_release` e `uname` di `/usr/bin` (e `getopt`, `cut` e `tr`, che `lsb_release` lancia), per pochi millesimi di secondo (riga 749); dentro il client gira anche il correttivo, che lo script scrive nella sua cartella temporanea, in sola lettura, e ricontrolla prima di ogni chiamata. Prima delle domande lo script controlla, senza chiavi e senza rete, che il client carichi il correttivo e sia il 2.39.4, e scrive «Correttivo del client: caricato (aws/aws-cli#10161)»; se non riesce, si ferma con «ERRORE DI CONFIGURAZIONE: il correttivo del client non risulta caricato…» e una riga «risposta del client: …», senza chiedere niente (regola del correttivo). Lo script chiede dodici parti, Access key e poi Secret key per ogni chiave, e dopo ognuna scrive «ricevuta»:
 
 | Lo script chiede | Voce del gestore di password |
 |---|---|
@@ -1442,7 +1535,7 @@ Per la prova mensile (OPS-004) la chiave temporanea si crea e si cancella nello 
 ### 14. Valori letti
 
 - Id dei progetti (B3): nella tabella in alto.
-- Client: AWS CLI 2.39.4, installato il 18/11/2026. Chiave di firma di AWS `FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C`, con scadenza 01/07/2027.
+- Client: AWS CLI 2.39.4, installato il 18/11/2026, con il correttivo dei messaggi d'errore vuoti dal 21/11/2026 (aws/aws-cli#10161; regole, «Il correttivo del client»). Chiave di firma di AWS `FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C`, con scadenza 01/07/2027.
 - Bucket creati il _(C1)_; specchio creato alle _(C4)_.
 - Forma della policy di `foondaco-backup` in uso: _(F)_.
 - Tempo della revoca di una chiave cancellata: _(J4)_.
