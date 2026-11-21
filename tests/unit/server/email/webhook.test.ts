@@ -50,6 +50,20 @@ afterEach(() => {
 });
 
 describe('webhook dei rimbalzi', () => {
+  // Dalla revisione di FON-T10: un EMAIL_WEBHOOK_TOKEN ancora segnaposto (`placeholder…`, che lo schema ammette) non
+  // protegge nulla, perché sta negli esempi: il webhook rifiuta ogni chiamata, anche quella che presenta proprio quel
+  // valore, come l'adattatore Brevo rifiuta la sua chiave segnaposto.
+  it('FON-011: con EMAIL_WEBHOOK_TOKEN ancora segnaposto risponde 403 a ogni chiamata, anche con quel token, e non scrive nulla', async () => {
+    const placeholder = 'placeholder-email-webhook-token-0123456789';
+    const d = { ...deps(), token: placeholder };
+    for (const k of [placeholder, TOKEN, null]) {
+      const response = await handleEmailWebhook(request(event('hard_bounce', 'x@example.com'), k), d);
+      expect(response.status, String(k)).toBe(403);
+    }
+    expect(d.record).not.toHaveBeenCalled();
+    expect(d.alert).not.toHaveBeenCalled();
+  });
+
   it('FON-011: senza token risponde 403 e non scrive nulla', async () => {
     const d = deps();
     const response = await handleEmailWebhook(request(event('hard_bounce', 'x@example.com'), null), d);

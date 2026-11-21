@@ -7,12 +7,13 @@
 // l'avviso si perde e il log lo dice senza l'indirizzo (nota (5)). Se la registrazione fallisce risponde 500, così
 // Brevo riprova.
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { isPlaceholder } from '@/config/env';
 import { errorMessage } from '@/lib/errors';
 
 export type SuppressionReason = 'bounce' | 'complaint';
 
 export interface EmailWebhookDeps {
-  /** EMAIL_WEBHOOK_TOKEN; vuoto, ogni chiamata è rifiutata. */
+  /** EMAIL_WEBHOOK_TOKEN; vuoto o ancora segnaposto (`placeholder…`), ogni chiamata è rifiutata. */
   token: string;
   /** Registra l'esclusione (e la riga di registro, nella stessa transazione); vero se la riga è nuova. */
   record(email: string, reason: SuppressionReason): Promise<boolean>;
@@ -26,9 +27,12 @@ const REASONS: Readonly<Record<string, SuppressionReason>> = {
   blocked: 'bounce',
 };
 
-/** Confronto a tempo costante: si confrontano le impronte, che hanno sempre la stessa lunghezza. */
+/**
+ * Confronto a tempo costante: si confrontano le impronte, che hanno sempre la stessa lunghezza. Un token atteso vuoto o
+ * ancora segnaposto non protegge nulla (il segnaposto sta negli esempi): ogni chiamata è rifiutata (nota (16) di 01).
+ */
 function tokenMatches(given: string | null, expected: string): boolean {
-  if (given === null || given === '' || expected === '') return false;
+  if (given === null || given === '' || expected === '' || isPlaceholder(expected)) return false;
   const digest = (value: string) => createHash('sha256').update(value, 'utf8').digest();
   return timingSafeEqual(digest(given), digest(expected));
 }

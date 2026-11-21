@@ -106,4 +106,24 @@ describe('lavori del worker', () => {
       await boss.offWork('email.send');
     }
   });
+
+  // Dalla revisione di FON-T10: l'esito `suppressed` si prova anche passando dalla coda, come lo salva pg-boss.
+  it('FON-011: email.send verso un indirizzo escluso, passando dalla coda, termina con esito suppressed senza invio', async () => {
+    const email = address('escluso-coda');
+    await rolePool('owner').query("INSERT INTO public.email_suppressions (email, reason) VALUES ($1, 'complaint')", [
+      email,
+    ]);
+    const sender = new FakeEmailSender();
+    await registerJobs(boss, { sender, isSuppressed: isEmailSuppressed });
+    try {
+      const id = await enqueueEmail(boss, { to: email.toUpperCase(), template: 'prova', data: {} });
+      expect(id).toBeTruthy();
+      const job = await settled('email.send', id!);
+      expect(job.state).toBe('completed');
+      expect(job.output).toEqual({ status: 'suppressed' });
+      expect(sender.sent.filter((sent) => sent.to.toLowerCase() === email)).toEqual([]);
+    } finally {
+      await boss.offWork('email.send');
+    }
+  });
 });
