@@ -223,8 +223,10 @@ if len(starts) != 1:
 end = next(i for i in range(starts[0], len(lines)) if lines[i].startswith("```"))
 open(sys.argv[2], "w", encoding="utf-8").write("\n".join(lines[starts[0]:end]) + "\n")
 PY
-  mkdir -p -- "$work/home-block"
-  out=$(cd -- "$work/home-block" && env -i HOME="$work/home-block" PATH=/usr/bin:/bin \
+  # The block's own temporary folder ($WORK, from mktemp) goes under $work, so cleanup removes it
+  # and the test does not need a writable /tmp.
+  mkdir -p -- "$work/home-block" "$work/tmp-block"
+  out=$(cd -- "$work/home-block" && env -i HOME="$work/home-block" PATH=/usr/bin:/bin TMPDIR="$work/tmp-block" \
     HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 bash -c '
     source "$1"
     [ "$AWS_CONFIG_FILE" = "${AWS_CLI_CONFIG-}" ] && echo "configurazione esportata: sì"
