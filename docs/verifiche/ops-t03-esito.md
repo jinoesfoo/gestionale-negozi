@@ -41,6 +41,26 @@ Lista: `docs/verifiche/ops-t03.md`. Eseguita dal 18/11/2026. Fornitore: Hetzner 
 | D4 | Riuscito (21/11/2026), terminale 1, righe 1149–1150, comandi uguali alle righe del README nell'eco del terminale (confronto di Claude sull'uscita incollata dall'utente): `[nbg1 · chiave «specchio-scrittura» · 21/11/2026 10:40:23] codice di uscita: 0`. |
 | D5 | Riuscito (21/11/2026), terminale 1, righe 1156–1157 (forma per progetto, principale `arn:aws:iam:::user/p16852089`), comandi uguali alle righe del README nell'eco del terminale (confronto di Claude sull'uscita incollata dall'utente): `[fsn1 · chiave «pgbackrest-prod» · 21/11/2026 10:40:46] codice di uscita: 0`. Ultima ora di D: 10:40:46, quindi E non prima delle 10:56. |
 
+## E. Riletture
+
+Primo giro (21/11/2026, 13:44:12–13:44:34, terminale 1, righe 1174–1183 del README, più di 15 minuti dopo l'ultima ora di D, 10:40:46). Uscita incollata dall'utente, dalla prima riga «== E1».
+
+| # | Esito |
+|---|---|
+| E1 | In corso. `foondaco-file` e `foondaco-file-test`: `"Status": "Enabled"`, `"MFADelete": "Disabled"`. `foondaco-backup` e `foondaco-backup-test`: nessuna uscita, solo la riga finale con il codice 0. `foondaco-specchio` non riletto: `show_config specchio` ha risposto «La chiave «specchio-scrittura» non è caricata in questo terminale», perché il suo `load_key` nel blocco non è andato a buon fine (motivo da chiedere all'utente). |
+| E2 | Riuscito (21/11/2026). `foondaco-file` e `foondaco-file-test`: due regole, `delete-marker-scaduti` (`"Expiration": {"ExpiredObjectDeleteMarker": true}`, `"Prefix": ""`, `"Status": "Enabled"`) e `versioni-precedenti` (`"NoncurrentVersionExpiration": {"NoncurrentDays": 30}`, `"AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}`, `"Prefix": ""`, `"Status": "Enabled"`); nessun `Expiration` con `Days` o `Date`. |
+| E3 | Da fare: lo specchio non è stato riletto (E1). |
+| E4 | In sospeso. `foondaco-backup` e `foondaco-backup-test`: `aws: [ERROR]: argument of type 'NoneType' is not a container or iterable`, codice di uscita 255, al posto del codice atteso (difetto del client, vedi la nota sotto la tabella). La risposta è un errore con il messaggio vuoto, ma il codice (atteso `NoSuchLifecycleConfiguration`) non si vede. |
+| E5 | Da fare: lo specchio non è stato riletto (E1). |
+| E6 | In sospeso. `foondaco-file`, `foondaco-file-test`, `foondaco-backup` e `foondaco-backup-test`: `aws: [ERROR]: argument of type 'NoneType' is not a container or iterable`, codice di uscita 255, al posto del codice atteso (difetto del client, vedi la nota sotto la tabella). Codice atteso `ObjectLockConfigurationNotFoundError`, che non si vede. |
+| E7 | Riuscito (21/11/2026, 13:44:29). `foondaco-backup`: il testo di D5, nella forma per progetto: `"Version": "2012-10-17"`, una sola istruzione `"Effect": "Allow"`, principale `"AWS": "arn:aws:iam:::user/p16852089"` (`lettura-backup-prod`), azioni `s3:ListBucket` e `s3:GetObject`, risorse `arn:aws:s3:::foondaco-backup` e `arn:aws:s3:::foondaco-backup/*`; nessun `Deny`, `NotAction`, `NotPrincipal` né `Condition`. Dopo `p16852089` nessun `:`. |
+| E8 | In corso. `foondaco-file`, `foondaco-file-test` e `foondaco-backup-test`: `NoSuchBucketPolicy` («The bucket policy does not exist»), codice di uscita 254. `foondaco-specchio` non riletto (E1). |
+
+**Difetto del client (21/11/2026, analisi di Claude).** AWS CLI 2.39.4 si ferma con `TypeError` (`argument of type 'NoneType' is not a container or iterable`, codice di uscita 255) quando una risposta di errore S3 ha l'elemento `<Message></Message>` vuoto: il parser di botocore lo legge come `None` e la personalizzazione `awscli/customizations/s3errormsg.py` (`_is_sigv4_error_message`) ci cerca dentro una frase. È il difetto aperto aws/aws-cli#10161 (segnalato anche per Hetzner, Ceph, IONOS; correzioni proposte, non ancora rilasciate: aws/aws-cli#10355, boto/botocore#3878). Prove:
+- riproduzione con il client vero, chiavi finte e un finto endpoint locale (nessuna chiave vera, nessuna richiesta a Hetzner): con `<Message></Message>` il client si ferma con codice 255, con qualunque `--cli-error-format`; con il messaggio pieno, senza `Message` o con il corpo vuoto risponde con l'errore normale e il codice 254. La traccia (presa con `--debug`, solo con le chiavi finte sull'endpoint locale) finisce in `s3errormsg.py`, riga 55;
+- richieste senza firma di Claude a Hetzner (`curl`, nessuna chiave): `foondaco-file?object-lock`, `foondaco-backup?lifecycle`, `foondaco-backup-test?policy`, `foondaco-specchio?object-lock` (a `nbg1`) e un oggetto inesistente di `foondaco-file` rispondono `403` con `<Code>AccessDenied</Code><Message></Message>`. Quindi anche ogni `AccessDenied` di Hetzner ferma il client: H3, H4, I2 (lo script riconosce il rifiuto solo da `An error occurred (AccessDenied)`) e forse J4 non possono riuscire con il client così com'è;
+- un plugin del client di poche righe (registrato con `register_first` su `after-call.s3`, mette `""` al posto di `None`), caricato da un file di configurazione, nella stessa riproduzione locale fa tornare l'errore normale con il codice (`ObjectLockConfigurationNotFoundError`, codice di uscita 254).
+
 ## I. Isolamento delle unità (OPS-007, OPS-008)
 
 | # | Esito |
