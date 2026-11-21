@@ -3,10 +3,10 @@
 // (DATABASE_OWNER_URL, app_owner). In sviluppo `pnpm db:migrate`; sui server `dist/migrate.js` (FON-T06), con la
 // cartella drizzle/ accanto a dist/. Valida l'ambiente e migra solo quando è il programma lanciato: importato (il test
 // di FON-004 chiama runMigrations) non fa nulla.
-import { realpathSync } from 'node:fs';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { EnvError, parseMigrateEnv } from '@/config/env';
+import { isEntryPoint } from '@/lib/entry-point';
 import { createOwnerConnection } from '@/server/db/owner-client';
 
 /** drizzle/ nella radice del progetto: da src/migrate.ts e da dist/migrate.js è la cartella sopra. */
@@ -40,18 +40,7 @@ async function main(): Promise<void> {
   console.log('Migrazioni applicate.');
 }
 
-/** Vero se questo file è il programma lanciato (node … src/migrate.ts, node dist/migrate.js), anche da un collegamento. */
-function isEntryPoint(): boolean {
-  const entry = process.argv[1];
-  if (entry === undefined) return false;
-  try {
-    return pathToFileURL(realpathSync(entry)).href === import.meta.url;
-  } catch {
-    return false;
-  }
-}
-
-if (isEntryPoint()) {
+if (isEntryPoint(import.meta.url, 'migrate')) {
   main().catch((error: unknown) => {
     console.error('Migrazioni non riuscite.', error);
     process.exit(1);

@@ -1,0 +1,93 @@
+# Configurazione Compose dei server, base comune a test e produzione (01 §Servizi Docker Compose, FON-T06).
+#
+# Sui server si usa sempre attraverso /srv/app/dc (infra/scripts/dc), che aggiunge il file dell'ambiente
+# (compose.test.yml o compose.prod.yml) e imposta il progetto `app`, la cartella /srv/app e /srv/app/.env, da cui
+# Compose legge APP_TAG, CADDY_TAG e POSTGRES_TAG (scritti da deploy.sh; prima di FON-T08 a mano, DOM-T02). Sono
+# obbligatori tutti e tre (`${X_TAG:?…}`): se uno manca o è vuoto, ogni comando di /srv/app/dc si ferma subito con un
+# messaggio che lo nomina, anche per un servizio che non usa quell'immagine. I percorsi relativi partono dalla cartella
+# del progetto, /srv/app: ./infra/… è la cartella infra/ del commit rilasciato.
+#
+# Ogni servizio ha il suo file di ambiente in /srv/app/env/, che scrive l'utente; ENV_DIR serve solo a
+# infra/check-ports.sh, che usa gli esempi di infra/env.example/. Compose controlla che esistano i file di tutti i
+# servizi anche quando ne avvia uno solo (DOM-T02 li crea vuoti).
+#
+# Solo caddy pubblica porte, 80 e 443 solo TCP (FON-008); app, worker e PostgreSQL stanno sulla rete internal, una
+# rete bridge normale (non `internal: true`: devono raggiungere Stripe, l'email, l'archivio S3 e gli altri servizi
+# esterni). Ogni servizio ruota i log (FON-010). Lo controlla infra/check-ports.sh.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
+services:
+  caddy:
+    image: ghcr.io/jinoesfoo/gestionale-negozi-caddy:${CADDY_TAG:?manca CADDY_TAG in /srv/app/.env}
+    # Nessun depends_on: nel bootstrap di DOM-T02 caddy si avvia da solo.
+    env_file: ${ENV_DIR:-/srv/app/env}/caddy.env
+    ports:
+      - '80:80/tcp'
+      - '443:443/tcp'
+    networks: [edge, internal]
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    logging: *logging
+
+  app:
+    image: ghcr.io/jinoesfoo/gestionale-negozi-app:${APP_TAG:?manca APP_TAG in /srv/app/.env}
+    command: ['node', 'server.js']
+    env_file: ${ENV_DIR:-/srv/app/env}/app.env
+    networks: [internal]
+    # Fino a OPS-T01a, che aggiunge l'attesa di pgbackrest-init.
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
+  worker:
+    image: ghcr.io/jinoesfoo/gestionale-negozi-app:${APP_TAG:?manca APP_TAG in /srv/app/.env}
+    command: ['node', 'dist/worker.js']
+    env_file: ${ENV_DIR:-/srv/app/env}/worker.env
+    networks: [internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
+  # Una tantum: `/srv/app/dc run --rm migrate` (migrazioni) e `/srv/app/dc run --rm migrate node dist/cli.js
+  # <comando>` (CLI). Nel profilo tools, così `up -d` non lo avvia. L'unico servizio con DATABASE_OWNER_URL.
+  migrate:
+    image: ghcr.io/jinoesfoo/gestionale-negozi-app:${APP_TAG:?manca APP_TAG in /srv/app/.env}
+    command: ['node', 'dist/migrate.js']
+    env_file: ${ENV_DIR:-/srv/app/env}/migrate.env
+    networks: [internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: [tools]
+    restart: 'no'
+    logging: *logging
+
+  postgres:
+    image: ghcr.io/jinoesfoo/gestionale-negozi-postgres:${POSTGRES_TAG:?manca POSTGRES_TAG in /srv/app/.env}
+    env_file: ${ENV_DIR:-/srv/app/env}/postgres.env
+    networks: [internal]
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+    logging: *logging
+
+networks:
+  edge:
+  internal:
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
