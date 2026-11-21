@@ -27,22 +27,22 @@ Lista: `docs/verifiche/fon-t06.md`. Postazione joo. Esiti dei passi **C** riport
 
 | # | Data | Esito |
 |---|---|---|
-| C1 | | Da fare (utente). |
+| C1 | 21/11/2026 | Superato (utente). `bash infra/check-ports.sh`: `OK: configurazione Compose (test) senza problemi.`, `OK: configurazione Compose (prod) senza problemi.`, `OK: solo caddy pubblica porte, log a rotazione, DATABASE_OWNER_URL solo in migrate (test e prod).` |
 | C2 | 21/11/2026 | Superato. Cinque `env_file` nella forma `${ENV_DIR:-/srv/app/env}/<servizio>.env` (`caddy`, `app`, `worker`, `migrate`, `postgres`); immagini `ghcr.io/jinoesfoo/gestionale-negozi-caddy:${CADDY_TAG}`, `…-app:${APP_TAG}` per `app`, `worker` e `migrate`, `…-postgres:${POSTGRES_TAG}`; comandi `['node', 'server.js']`, `['node', 'dist/worker.js']`, `['node', 'dist/migrate.js']`. |
 
 ## D. L'immagine con il database di sviluppo
 
 | # | Data | Esito |
 |---|---|---|
-| D1 | | Da fare (utente). |
-| D2 | | Da fare (utente). |
+| D1 | 21/11/2026 | Superato (utente). `curl` subito dopo il `run`: `{"status":"ok","version":"dev","db":"ok","placeholders":true} 200`. La versione `dev` è quella di `.env.app` (lo stesso valore di `.env.app.example`) e non quella dell'immagine (`fon-t06-prova`): il file di ambiente prevale. Container tolto con `docker rm -f fon-t06-app`. |
+| D2 | 21/11/2026 | Superato alla seconda prova (utente). Con `sleep 35` dopo il `run`: `docker logs` mostra `Worker avviato (versione dev).`; `docker ps` mostra il container creato 40 secondi prima e `Up 36 seconds`; `time docker stop fon-t06-worker`: `real 0m2.984s`, quindi il worker si è fermato da sé con SIGTERM. La prima prova, con i comandi lanciati uno dopo l'altro senza attesa, non valeva: `docker logs` vuoto, `docker ps` a 5 secondi dalla creazione (`Up 2 seconds`), `docker stop` in 3,046 s. |
 
 ## E. Controlli statici e pulizia
 
 | # | Data | Esito |
 |---|---|---|
-| E1 | | Da rifare dopo l'allineamento a `main`. |
-| E2 | | Da fare dopo D1 e D2. |
+| E1 | 21/11/2026 | Superato, dopo il controllo di allineamento (`origin/main` = `1bb4377`, già base del ramo). `pnpm lint` verde (ESLint e Prettier); `pnpm typecheck` verde; `pnpm test`: 14 file, 553 test superati. In più, nella gabbia, `test:int`: 5 file, 14 test superati. |
+| E2 | 21/11/2026 | Superato. `docker image rm gestionale-negozi-app:fon-t06-prova`: `Untagged` e `Deleted`; `docker image ls gestionale-negozi-app` non elenca nessuna immagine. |
 
 ## Note
 
