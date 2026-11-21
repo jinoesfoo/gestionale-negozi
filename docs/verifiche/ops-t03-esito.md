@@ -71,6 +71,17 @@ Primo giro (21/11/2026, 13:44:12–13:44:34, terminale 1, righe 1174–1183 del 
 - La domanda di E1 (perché `load_key specchio-scrittura` non è riuscito) resta senza risposta: l'utente non lo ricorda, e la chiave è stata rifatta per precauzione (nota sotto la tabella C). Per la voce nuova vale la risposta scritta «si» alla domanda «nella voce del gestore di password ci sono la Access key e la Secret key nuove» (come B4). La riga rimasta in `specchio` ha «Description» `specchio-scrittura` (come B2).
 - I numeri di riga del README citati sopra (A4, D1–D5, primo giro di E) sono quelli del commit 479c7e5: il correttivo aggiunge righe al blocco del passo 4, e i numeri nuovi li dà Claude dal README finale.
 
+## F. Prima prova della policy
+
+Terminale 2, righe 1294–1301 del README (eco uguale alle righe 1295–1301), subito dopo E, con `specchio-lettura` (voce `Hetzner S3 · lettura-backup-prod · specchio-lettura`). Uscita incollata dall'utente, dalle domande in poi: tre «ricevuta»/domande senza eco, «confronto con la chiave in uso («specchio-lettura»): uguale», «fsn1: nessun bucket», «nbg1: nessun bucket» (`[chiave «specchio-lettura» · 21/11/2026 17:29:21]`).
+
+| # | Esito |
+|---|---|
+| F1 | Riuscito (21/11/2026, 17:29:22): `list-objects-v2` di `foondaco-backup` con `specchio-lettura` → `{"RequestCharged": null, "Prefix": ""}` (bucket ancora vuoto), codice di uscita 0. La policy nella forma per progetto (D5) dà la lista alla chiave di `lettura-backup-prod`. |
+| F2 | Riuscito (21/11/2026, 17:29:24): `put-object` di `prova-sola-lettura.txt` in `foondaco-backup` con `specchio-lettura` → `An error occurred (AccessDenied) when calling the PutObject operation:` (testo vuoto), codice di uscita 254. Niente da cancellare. Anche il rifiuto di una richiesta firmata ha il testo vuoto: il correttivo serve anche lì (specifica 08, «Difetto del client S3»). |
+
+Esito: la forma per progetto della policy funziona; la forma per chiave non serve (README, «Valori letti»; J6 «non serve»). Restano I2 e J2 a confermarlo (regola della policy: nessuna modifica della policy dopo E7).
+
 ## I. Isolamento delle unità (OPS-007, OPS-008)
 
 | # | Esito |

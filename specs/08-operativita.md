@@ -151,7 +151,7 @@ Nessun jolly sui sottodomini: ogni modulo HTML si invia all'host che l'ha servit
   - Difetto del client S3 (piano rifatto, 21/11/2026).
     - **Il difetto.** AWS CLI 2.39.4, il client del README, si ferma con `TypeError` («argument of type 'NoneType' is not a container or iterable», codice di uscita 255) quando una risposta di errore ha l'elemento `<Message>` vuoto, e non mostra il codice dell'errore. Il parser legge il messaggio vuoto come `None`, e la personalizzazione `awscli/customizations/s3errormsg.py` ci cerca dentro una frase. È il difetto aperto aws/aws-cli#10161; le correzioni proposte (aws/aws-cli#10355, boto/botocore#3878) non sono in nessuna versione fino alla 2.42.1 (registro delle modifiche e sorgente del ramo `v2` letti il 21/11/2026).
     - **Dove ci tocca.** Hetzner risponde con il messaggio vuoto:
-      - a ogni `AccessDenied` provato, cioè alle richieste senza firma del 21/11/2026; per quelle firmate non è provato, e il correttivo copre i due casi;
+      - a ogni `AccessDenied` provato: alle richieste senza firma (21/11/2026) e a quelle firmate (F2, 21/11/2026);
       - a `get-bucket-lifecycle-configuration` e `get-object-lock-configuration` su un bucket senza quella configurazione (primo giro di E, 21/11/2026).
 
       Senza rimedio non mostrano il codice atteso E4, E6, F1, F2, H3, H4, J2 e I2 (le righe di rifiuto), e forse J4, H6 e il ramo di D3 per uno specchio senza Object Lock. Inoltre `put_policy_keys`, `check_bucket_list` e `watch_revocation` del README andrebbero avanti su un errore senza codice.
