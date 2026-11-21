@@ -6,7 +6,12 @@ output and error formats of AWS CLI v2, on a world described by a JSON file, and
 script's hygiene on every call:
 - no key on its command line, and no unit key variable or key value in its environment;
 - among the AWS_* variables only the ones the script sets, plus the key pair of the call;
-- no configuration or credentials file, no pager;
+- no credentials file, no pager; the only configuration file is the client remedy's
+  (aws/aws-cli#10161), at every call, aws --version included: in a folder of the script's own
+  temporary folder under TMPDIR, exactly the three lines of [plugins], next to a read-only folder
+  that holds only foondaco_empty_message.py, whose text is the script's AWS_CLI_PLUGIN text;
+- aws --version with FOONDACO_AWS_CLI_PLUGIN_CHECK=1 answers like the real client with the remedy
+  loaded (the line "foondaco_empty_message: loaded" on stderr); that variable reaches no request;
 - the endpoint and region of the bucket's own location;
 - no key in any file under the script's TMPDIR, HOME and working folder ($FAKE_AWS_CWD), and the
   script still works in that folder;
@@ -29,6 +34,13 @@ World ($FAKE_AWS_WORLD, JSON):
   stderr_key_on: {unit, op}                 that call fails with an error line holding its keys
   hang: {unit, op, bucket}                  that call writes FAKE-AWS-IN-ATTESA on the terminal and
                                             waits for Ctrl-C, then exits with 130 like the CLI
+  client_version: version printed by aws --version (default 2.39.4)
+  plugin_not_loaded: true                   aws --version does not confirm the remedy, as a client
+                                            that silently ignores the configuration
+  tamper_plugin_on: {unit, op, file}        that call (which succeeds) changes the remedy's module
+                                            (file "module") or its configuration (file "config",
+                                            one more plugin line) afterwards, as another program
+                                            of the user could; the modes stay read-only
 A public bucket (public_read) lets anyone read objects but not list them, as on Hetzner.
 A put without Content-MD5 into an Object Lock bucket is refused before the permission check
 (pessimistic emulation of the provider).
@@ -120,8 +132,8 @@ for name, value in env.items():
         violation("unit key variable exported to the client: " + name)
     if has_key(value):
         violation("key value in the environment variable " + name)
-if env.get("AWS_CONFIG_FILE") != "/dev/null" or env.get("AWS_SHARED_CREDENTIALS_FILE") != "/dev/null":
-    violation("configuration or credentials file not disabled")
+if env.get("AWS_SHARED_CREDENTIALS_FILE") != "/dev/null":
+    violation("credentials file not disabled")
 if env.get("AWS_PAGER") != "":
     violation("AWS_PAGER not empty")
 cwd_expected = env.get("FAKE_AWS_CWD")
@@ -132,6 +144,45 @@ try:
         violation("the script works in another folder than the one the harness gave it")
 except OSError:
     violation("the script's working folder is gone")
+
+
+def plugin_text():
+    """The AWS_CLI_PLUGIN text of the script the harness copied into the working folder."""
+    path = os.path.join(cwd_expected, "infra", "scripts", "check-bucket-isolation.sh")
+    lines = open(path, encoding="utf-8").read().split("\n")
+    starts = [i for i, line in enumerate(lines) if line.endswith("<<'AWS_CLI_PLUGIN'")]
+    ends = [i for i, line in enumerate(lines) if line == "AWS_CLI_PLUGIN"]
+    if len(starts) != 1 or len(ends) != 1 or ends[0] <= starts[0]:
+        violation("the script does not hold exactly one AWS_CLI_PLUGIN text")
+    return "\n".join(lines[starts[0] + 1:ends[0]]) + "\n"
+
+
+# The client remedy, at every call: configuration, folder, module text and modes.
+config = env.get("AWS_CONFIG_FILE", "")
+remedy_base = os.path.dirname(config)
+plugin_dir = os.path.join(remedy_base, "aws-cli-plugin")
+module_path = os.path.join(plugin_dir, "foondaco_empty_message.py")
+if not (os.path.isabs(config) and os.path.basename(config) == "aws-config"
+        and os.path.basename(remedy_base).startswith("check-bucket-isolation.")
+        and os.path.dirname(os.path.realpath(remedy_base)) == os.path.realpath(env.get("TMPDIR") or "/tmp")):
+    violation("AWS_CONFIG_FILE is not the remedy's configuration in the script's temporary folder")
+if ":" in plugin_dir or "\n" in plugin_dir:
+    violation("the remedy's folder holds ':' or a newline (the client splits the path on ':')")
+try:
+    config_text = open(config).read()
+    entries = sorted(os.listdir(plugin_dir))
+    module_text = open(module_path).read()
+    modes = tuple(stat.S_IMODE(os.stat(p).st_mode) for p in (plugin_dir, module_path, config))
+except OSError:
+    violation("the remedy's files are missing")
+if config_text != "[plugins]\ncli_legacy_plugin_path = %s\nfoondaco_empty_message = foondaco_empty_message\n" % plugin_dir:
+    violation("the remedy's configuration is not exactly its three lines")
+if entries != ["foondaco_empty_message.py"]:
+    violation("the remedy's folder holds something else than the module: " + " ".join(entries))
+if module_text != plugin_text():
+    violation("the remedy's module differs from the script's AWS_CLI_PLUGIN text")
+if modes != (0o500, 0o400, 0o400):
+    violation("the remedy's folder or files can be changed (modes %s)" % " ".join("%o" % m for m in modes))
 for top in (env.get("TMPDIR"), env.get("HOME"), cwd_expected):
     if not top or not os.path.isdir(top):
         continue
@@ -161,8 +212,13 @@ if env.get("FAKE_AWS_TTY") == "1":
         violation("echo on during the run")
 
 if ARGV == ["--version"]:
-    print("aws-cli/2.99.0 Python/3.13.0 Linux/6.0.0 exe/x86_64.fake")
+    if env.get("FOONDACO_AWS_CLI_PLUGIN_CHECK") == "1" and not WORLD.get("plugin_not_loaded"):
+        sys.stderr.write("foondaco_empty_message: loaded\n")
+        sys.stderr.flush()
+    print("aws-cli/%s Python/3.14.8 Linux/7.0.0 exe/x86_64.fake" % WORLD.get("client_version", "2.39.4"))
     sys.exit(0)
+if "FOONDACO_AWS_CLI_PLUGIN_CHECK" in env:
+    violation("the remedy's check variable reaches a request")
 
 if env.get("FAKE_AWS_TTY") == "1":
     pending_file = os.path.join(STATE, "pending-input")
@@ -221,6 +277,23 @@ else:
     if principal["secret"] != secret:
         die("SignatureDoesNotMatch", op, "The request signature we calculated does not match the signature you provided.")
 unit = principal["unit"] if principal else "ANONYMOUS"
+
+tamper = WORLD.get("tamper_plugin_on")
+if tamper and tamper.get("unit") == unit and tamper.get("op") == op:
+    # A file changes, its modes stay: only a check of the content can see it.
+    log({"unit": unit, "op": op, "result": "remedy %s changed after this call" % tamper["file"]})
+    if tamper["file"] == "module":
+        os.chmod(plugin_dir, 0o700)
+        os.chmod(module_path, 0o600)
+        with open(module_path, "a") as f:
+            f.write("# changed by another program\n")
+        os.chmod(module_path, 0o400)
+        os.chmod(plugin_dir, 0o500)
+    else:
+        os.chmod(config, 0o600)
+        with open(config, "a") as f:
+            f.write("other_plugin = other_plugin\n")
+        os.chmod(config, 0o400)
 
 trap = WORLD.get("stderr_key_on")
 if trap and trap.get("unit") == unit and trap.get("op") == op:

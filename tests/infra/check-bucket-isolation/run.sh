@@ -13,6 +13,11 @@
 #   every call, and run.sh after the run);
 # - not on the screen during a terminal run, and not in the input left pending on the terminal
 #   when the script ends (pty-run scenarios, with a job-control shell like the user's).
+# The client remedy for empty error messages (aws/aws-cli#10161, specs/08 OPS-T03): the fake client
+# checks it at every call; the scenarios after «client-assente» check that the script stops before
+# the keys when the remedy is not loaded, the client is not 2.39.4 or the temporary folder cannot
+# hold it, and refuses every call once its module or configuration has changed. The remedy itself,
+# with the real client: tests/infra/aws-cli-empty-message/run.sh.
 #
 # Usage: bash tests/infra/check-bucket-isolation/run.sh [--show <scenario>] [--only <scenario,...>]
 #   --show prints the whole output of one scenario (for example: oggi, corretto);
@@ -41,12 +46,12 @@ BASH_BIN=$(command -v bash)
 PY_BIN=$(command -v python3)
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/check-bucket-isolation-dryrun.XXXXXX") || exit 1
-trap 'rm -rf -- "$work"' EXIT
+trap 'chmod -R u+w -- "$work" 2>/dev/null; rm -rf -- "$work"' EXIT # the remedy's files are read-only
 spylog="$work/spie.log"
 
 # Spies and traps: the script's PATH holds only these. The log path is written into them, so a
 # program started with an emptied environment still reports.
-ALLOWED=(openssl cmp mktemp paste date grep sed head tail tr sort rm stty cat env python3)
+ALLOWED=(openssl cmp mktemp paste date grep sed head tail tr sort rm stty cat env python3 mkdir chmod)
 mkdir -p "$work/shims" "$work/real"
 {
   printf '#!%s\nlog=%q\n' "$BASH_BIN" "$spylog"
@@ -173,6 +178,16 @@ elif scenario == "attesa-nella-prova":
     world["hang"] = {"unit": "FILE_PROD", "op": "list-objects-v2", "bucket": "foondaco-backup"}
 elif scenario == "attesa-nella-policy":
     world["hang"] = {"unit": "MIRROR_SRC", "op": "put-bucket-policy", "bucket": "foondaco-backup"}
+elif scenario == "correttivo-non-caricato":
+    world["plugin_not_loaded"] = True
+elif scenario == "client-di-altra-versione":
+    world["client_version"] = "2.40.0"
+elif scenario == "correttivo-alterato":
+    world["tamper_plugin_on"] = {"unit": "FILE_TEST", "op": "list-buckets", "file": "module"}
+elif scenario == "correttivo-configurazione-alterata":
+    world["tamper_plugin_on"] = {"unit": "FILE_TEST", "op": "list-buckets", "file": "config"}
+elif scenario == "client-2.39.40":
+    world["client_version"] = "2.39.40"
 else:
     sys.exit("unknown scenario " + scenario)
 json.dump(world, open(out, "w"), indent=1)
@@ -353,6 +368,8 @@ run_case oggi oggi 1 -- -- \
 
 # Isolation as planned.
 run_case corretto corretto 0 -- -- \
+  "Client: aws-cli/2.39.4 Python/3.14.8 Linux/7.0.0 exe/x86_64.fake" \
+  "Correttivo del client: caricato (aws/aws-cli#10161)" \
   "«file di produzione»: l'elenco dei bucket del suo progetto, chiesto a fsn1, contiene solo foondaco-file" \
   "«sola lettura dello specchio»: l'elenco dei bucket del suo progetto, chiesto a fsn1, è vuoto" \
   "«sola lettura dello specchio»: l'elenco dei bucket del suo progetto, chiesto a hel1, è vuoto" \
@@ -455,6 +472,36 @@ run_case chiave-come-argomento corretto 2 -- "${KEY_SECRET[FILE_PROD]}" -- \
   "argomento non previsto: lo script accetta solo --aws <client> e --help"
 run_case client-assente corretto 2 -- --aws "$work/non-esiste" -- "client S3 non trovato"
 
+# The client remedy (aws/aws-cli#10161): not loaded, or another client version, stops the script
+# before any key; a temporary folder whose path holds ':' too (the client would split it); once the
+# remedy changes during the run, no call is made any more.
+run_case correttivo-non-caricato correttivo-non-caricato 2 -- -- \
+  "il correttivo del client non risulta caricato, oppure il client non è aws-cli 2.39.4"
+run_case client-di-altra-versione client-di-altra-versione 2 -- -- \
+  "il correttivo del client non risulta caricato, oppure il client non è aws-cli 2.39.4" \
+  "risposta del client: foondaco_empty_message: loaded aws-cli/2.40.0 Python/3.14.8"
+run_case client-2.39.40 client-2.39.40 2 -- -- \
+  "il correttivo del client non risulta caricato, oppure il client non è aws-cli 2.39.4"
+mkdir -p -- "$work/due:punti"
+run_case cartella-temporanea-con-due-punti corretto 2 "TMPDIR=$work/due:punti" -- -- \
+  "non riesco a scrivere il correttivo del client in"
+if selected cartella-temporanea-con-due-punti-vuota; then
+  if [ -z "$(cd -- "$work/due:punti" && shopt -s nullglob dotglob && printf '%s' *)" ]; then
+    ok cartella-temporanea-con-due-punti-vuota
+  else
+    no cartella-temporanea-con-due-punti-vuota "lo script ha lasciato file nella cartella temporanea con «:»" /dev/null
+  fi
+fi
+run_case cartella-temporanea-relativa corretto 2 "TMPDIR=." -- -- \
+  "non riesco a scrivere il correttivo del client in ./check-bucket-isolation."
+run_case correttivo-alterato-durante-la-prova correttivo-alterato 1 -- -- \
+  "Correttivo del client: caricato (aws/aws-cli#10161)" \
+  "«file di test» → foondaco-file-test: scrittura non riuscita: codice di uscita 3: correttivo del client alterato: chiamata non fatta" \
+  "le prove fra le unità non partono"
+run_case configurazione-del-correttivo-alterata correttivo-configurazione-alterata 1 -- -- \
+  "«file di test» → foondaco-file-test: scrittura non riuscita: codice di uscita 3: correttivo del client alterato: chiamata non fatta" \
+  "le prove fra le unità non partono"
+
 # The keys pasted at the prompts, in a terminal, as the user will do (I2). Each part asked gets
 # exactly one «ricevuta» line; a part asked again gets none.
 run_pty_case chiavi-dal-terminale corretto 0 '{"pad": true}' \
@@ -481,6 +528,8 @@ run_pty_case incolla-durante-la-prova corretto 0 '{"strays": [
     {"after": "3. Richieste senza chiave", "text": "FAKEIDSTRAYTHREEJX8Z\r"},
     {"after": "4. Pulizia degli oggetti di prova", "text": "fakeSecretStrayWithoutEnterFourWV8Q"}]}' \
   "=12:  ricevuta" "RIUSCITO: 148 controlli, nessuno fallito."
+NO_CALLS=1 run_pty_case correttivo-non-caricato-al-terminale correttivo-non-caricato 2 '{}' \
+  "il correttivo del client non risulta caricato" "=0:Incolla ogni parte dal gestore di password" "=0:  ricevuta"
 NO_CALLS=1 run_pty_case ctrl-d-alle-chiavi corretto 2 '{"abort_at": {"var": "BACKUP_PROD_ACCESS_KEY_ID", "char": "\u0004"}}' \
   "lettura di BACKUP_PROD_ACCESS_KEY_ID interrotta" "=2:  ricevuta" \
   "Non incollare altre chiavi in questo terminale: chiudilo e aprine uno nuovo"

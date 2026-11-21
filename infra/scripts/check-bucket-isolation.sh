@@ -27,8 +27,18 @@
 # 130 interrupted.
 #
 # Keys are never printed, written to a file or put on a command line: each AWS CLI call gets one
-# key pair through its own environment, with no configuration or credentials file. The bucket
-# policy read for the policy probe stays in memory (with the per-key form it holds an Access key).
+# key pair through its own environment, with no credentials file. The only configuration file is the
+# one of the client remedy below, which holds no key. The bucket policy read for the policy probe
+# stays in memory (with the per-key form it holds an Access key).
+#
+# Client remedy (specs/08-operativita.md, OPS-T03, «Difetto del client S3»): AWS CLI 2.39.4 stops
+# with a TypeError (exit status 255) instead of showing the error code when an S3 error response has
+# an empty <Message>, as Hetzner sends for AccessDenied (aws/aws-cli#10161). Before any key is asked,
+# the script writes a small client plugin into its own temporary folder (read-only), checks without
+# keys and without network that the client loads it and is 2.39.4, and checks the two files again
+# before every client call. The plugin turns the empty message into "" and changes nothing else.
+# The same text is in the key terminal block of infra/README.md; tests/infra/aws-cli-empty-message
+# compares the two and runs the plugin with the real client against a local fake endpoint.
 # Test objects live under check-bucket-isolation/<run>/ and are deleted at the end. In the
 # versioned buckets the deletion leaves hidden versions, which the lifecycle rules remove after
 # 30 days (file buckets) or 45 days (mirror, where Object Lock keeps them until then).
@@ -97,7 +107,10 @@ warn_stop() {
 on_exit() {
   trap '' INT TERM HUP
   restore_tty
-  [ -z "$TMP_DIR" ] || rm -rf -- "$TMP_DIR"
+  if [ -n "$TMP_DIR" ]; then
+    chmod -R u+w -- "$TMP_DIR" 2>/dev/null # the remedy's folder and files are read-only
+    rm -rf -- "$TMP_DIR"
+  fi
 }
 on_interrupt() {
   trap '' INT TERM HUP
@@ -159,7 +172,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-for tool in openssl cmp mktemp paste; do
+for tool in openssl cmp mktemp paste mkdir chmod; do
   command -v "$tool" >/dev/null 2>&1 || config_error "manca il programma $tool"
 done
 command -v "$CLIENT_BIN" >/dev/null 2>&1 ||
@@ -175,6 +188,75 @@ export AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_PAGER
   AWS_DEFAULT_OUTPUT=json AWS_CLI_AUTO_PROMPT=off AWS_EC2_METADATA_DISABLED=true \
   AWS_RETRY_MODE=standard AWS_MAX_ATTEMPTS=4 \
   AWS_REQUEST_CHECKSUM_CALCULATION=when_required AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+
+# The client remedy (see the header) lives in the run's temporary folder, created here, before the
+# configuration checks and the keys; on_exit removes it on every way out. The lines between the
+# two «aws-cli-empty-message» markers are the same, byte for byte, in infra/README.md.
+TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/check-bucket-isolation.XXXXXX") ||
+  config_error "non riesco a creare una cartella temporanea"
+AWS_CLI_BASE=$TMP_DIR
+# >>> aws-cli-empty-message (aws/aws-cli#10161; infra/README.md, «Archivi S3 (OPS-T03)»)
+IFS= read -r -d '' AWS_CLI_PLUGIN_TEXT <<'AWS_CLI_PLUGIN'
+"""AWS CLI v2 plugin written by infra/README.md ("Archivi S3 (OPS-T03)") and check-bucket-isolation.sh.
+
+An S3 error response with an empty <Message> is parsed as None, and the CLI's own check in
+awscli/customizations/s3errormsg.py then stops with a TypeError (exit status 255) instead of
+showing the error code (aws/aws-cli#10161). Hetzner answers AccessDenied and missing settings
+that way. Here the None becomes "" before that check runs. Nothing else is read or changed.
+"""
+import os
+import sys
+
+
+def _empty_message(parsed, **kwargs):
+    error = parsed.get('Error') if isinstance(parsed, dict) else None
+    if isinstance(error, dict) and 'Message' in error and error['Message'] is None:
+        error['Message'] = ''
+
+
+def awscli_initialize(event_hooks):
+    event_hooks.register_first('after-call.s3', _empty_message)
+    if os.environ.get('FOONDACO_AWS_CLI_PLUGIN_CHECK') == '1':
+        sys.stderr.write('foondaco_empty_message: loaded\n')
+AWS_CLI_PLUGIN
+AWS_CLI_PLUGIN_DIR=$AWS_CLI_BASE/aws-cli-plugin
+AWS_CLI_CONFIG=$AWS_CLI_BASE/aws-config
+AWS_CLI_CONFIG_TEXT="[plugins]
+cli_legacy_plugin_path = $AWS_CLI_PLUGIN_DIR
+foondaco_empty_message = foondaco_empty_message"
+aws_cli_plugin_write() {
+  case $AWS_CLI_BASE in /*) ;; *) return 1 ;; esac
+  case $AWS_CLI_BASE in *:* | *$'\n'*) return 1 ;; esac
+  mkdir -m 700 -- "$AWS_CLI_PLUGIN_DIR" &&
+    printf '%s' "$AWS_CLI_PLUGIN_TEXT" >"$AWS_CLI_PLUGIN_DIR/foondaco_empty_message.py" &&
+    printf '%s\n' "$AWS_CLI_CONFIG_TEXT" >"$AWS_CLI_CONFIG" &&
+    chmod 400 -- "$AWS_CLI_PLUGIN_DIR/foondaco_empty_message.py" "$AWS_CLI_CONFIG" &&
+    chmod 500 -- "$AWS_CLI_PLUGIN_DIR"
+}
+aws_cli_plugin_intact() {
+  local entries
+  [ "${AWS_CONFIG_FILE-}" = "$AWS_CLI_CONFIG" ] || return 1
+  entries=$(cd -- "$AWS_CLI_PLUGIN_DIR" 2>/dev/null && shopt -s nullglob dotglob && printf '%s\n' *) || return 1
+  [ "$entries" = foondaco_empty_message.py ] &&
+    [ "$(<"$AWS_CLI_PLUGIN_DIR/foondaco_empty_message.py")" = "$(printf '%s' "$AWS_CLI_PLUGIN_TEXT")" ] &&
+    [ "$(<"$AWS_CLI_CONFIG")" = "$AWS_CLI_CONFIG_TEXT" ]
+}
+aws_cli_plugin_check() {
+  local out
+  aws_cli_plugin_intact || return 1
+  if out=$(FOONDACO_AWS_CLI_PLUGIN_CHECK=1 "$@" --version 2>&1 </dev/null); then
+    case $out in
+      $'foondaco_empty_message: loaded\naws-cli/2.39.4 '*) printf '%s\n' "${out#*$'\n'}"; return 0 ;;
+    esac
+  fi
+  out=${out//[[:cntrl:]]/ }
+  printf 'risposta del client: %s\n' "${out:0:300}" >&2
+  return 1
+}
+# <<< aws-cli-empty-message
+aws_cli_plugin_write ||
+  config_error "non riesco a scrivere il correttivo del client in $TMP_DIR (serve un percorso assoluto, senza «:»)"
+export AWS_CONFIG_FILE=$AWS_CLI_CONFIG # aws_cli_plugin_intact and aws_cli_plugin_check require it
 
 # --- Configuration (not secret) ---------------------------------------------------------------
 
@@ -212,7 +294,10 @@ region_of() { local v="${1}_REGION"; printf '%s' "${!v}"; }
 
 say ""
 say "check-bucket-isolation.sh: isolamento delle unità di archivio S3 (OPS-007, OPS-008)"
-say "Client: $("$CLIENT_BIN" --version 2>&1 </dev/null | head -n 1)"
+client_version=$(aws_cli_plugin_check "$CLIENT_BIN") ||
+  config_error "il correttivo del client non risulta caricato, oppure il client non è aws-cli 2.39.4 (infra/README.md, «Archivi S3 (OPS-T03)»)"
+say "Client: $client_version"
+say "Correttivo del client: caricato (aws/aws-cli#10161)"
 say "Unità:"
 for u in "${BUCKET_UNITS[@]}"; do
   e="${u}_ENDPOINT"
@@ -290,8 +375,6 @@ KEY_PHASE=
 # --- Run setup --------------------------------------------------------------------------------
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/check-bucket-isolation.XXXXXX") ||
-  config_error "non riesco a creare una cartella temporanea"
 PREFIX="check-bucket-isolation/$RUN_ID/"
 SENTINEL="${PREFIX}sentinella.txt"
 
@@ -322,11 +405,17 @@ error_line() {
 # through the environment of this call. The caller puts input and output redirections on a
 # subshell around the call, never on the function call itself: a trap (Ctrl-C during the call)
 # then runs with the script's own input and output, the terminal, and can restore it.
+# If the client remedy has changed since it was written, the call is not made (exit status 3):
+# no key reaches a client that would load other code.
 aws_run() {
   local key_unit=$1 bucket_unit=$2
   shift 2
   local endpoint_var="${bucket_unit}_ENDPOINT" region_var="${bucket_unit}_REGION"
   (
+    if ! aws_cli_plugin_intact; then
+      printf '%s\n' "correttivo del client alterato: chiamata non fatta" >&2
+      exit 3
+    fi
     if [ "$key_unit" = ANONYMOUS ]; then
       exec "$CLIENT_BIN" --no-sign-request --endpoint-url "${!endpoint_var}" --region "${!region_var}" \
         --cli-connect-timeout 15 --cli-read-timeout 60 "$@"
