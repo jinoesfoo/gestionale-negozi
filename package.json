@@ -13,6 +13,7 @@
     "build:dist": "tsup",
     "worker": "node --env-file=.env.worker --import tsx src/worker.ts",
     "cli": "node --env-file=.env.migrate --import tsx src/cli.ts",
+    "email:prova": "node --env-file=.env.worker --import tsx src/server/email/probe.ts",
     "start": "next start",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",

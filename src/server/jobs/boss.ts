@@ -11,9 +11,12 @@ export function appBossOptions(connectionString: string): ConstructorOptions {
   return { connectionString, schema: SCHEMA, supervise: false, schedule: false };
 }
 
-/** Opzioni dell'istanza del worker: manutenzione e pianificazione comprese. */
+/**
+ * Opzioni dell'istanza del worker: manutenzione e pianificazione comprese. Il passaggio di monitoraggio aggiorna ogni
+ * 60 secondi i conteggi delle code che la pagina Sistema legge con getQueues() (ADM-009, 05 §Lavori periodici).
+ */
 export function workerBossOptions(connectionString: string): ConstructorOptions {
-  return { connectionString, schema: SCHEMA, supervise: true, schedule: true };
+  return { connectionString, schema: SCHEMA, supervise: true, schedule: true, monitorIntervalSeconds: 60 };
 }
 
 function jobsUrl(): string {

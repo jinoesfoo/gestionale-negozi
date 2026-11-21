@@ -48,6 +48,7 @@ const workerEnv = (): Env => ({
   SDI_PROVIDER: 'fake',
   EMAIL_API_KEY: 'VALORE-PROVA-EMAIL-API-KEY',
   EMAIL_FROM: 'noreply@example.com',
+  EMAIL_PROVIDER: 'fake',
   SENTRY_DSN: 'placeholder-sentry-dsn',
   ADMIN_ALERT_EMAIL: 'avvisi@example.com',
 });
@@ -270,6 +271,46 @@ describe('schema del worker', () => {
         SDI_API_URL: 'https://sdi.example.com',
       }),
     ).not.toThrow();
+  });
+
+  // EMAIL_PROVIDER (FON-T10, 01 §Variabili d'ambiente): sceglie l'implementazione di EmailSender di `email.send`;
+  // `fake` non invia nulla ed è ammesso solo fuori da prod.
+  it('FON-002: senza EMAIL_PROVIDER il worker rifiuta l’avvio con il nome della variabile', () => {
+    const env = workerEnv();
+    delete env.EMAIL_PROVIDER;
+    const error = envError(parseWorkerEnv, env);
+    expect(error.variables).toEqual(['EMAIL_PROVIDER']);
+    expect(error.details.EMAIL_PROVIDER).toBe('mancante');
+  });
+
+  it('FON-002: EMAIL_PROVIDER=fake è accettata con APP_ENV=test e dev', () => {
+    for (const APP_ENV of ['test', 'dev']) {
+      expect(parseWorkerEnv({ ...workerEnv(), APP_ENV, EMAIL_PROVIDER: 'fake' }).EMAIL_PROVIDER).toBe('fake');
+    }
+  });
+
+  it('FON-002: EMAIL_PROVIDER=fake è rifiutata con APP_ENV=prod, con il nome della variabile e senza valori', () => {
+    const env = { ...workerEnv(), APP_ENV: 'prod', APP_VERSION: 'a'.repeat(40), EMAIL_PROVIDER: 'fake' };
+    const error = envError(parseWorkerEnv, env);
+    expect(error.variables).toEqual(['EMAIL_PROVIDER']);
+    expect(error.details.EMAIL_PROVIDER).toBe('non valida');
+    expect(error.message).toContain('EMAIL_PROVIDER');
+    expectNoValues(error.message, env);
+  });
+
+  it('FON-002: EMAIL_PROVIDER=brevo è accettata in ogni ambiente, prod compreso', () => {
+    for (const APP_ENV of ['dev', 'test', 'prod']) {
+      const env = { ...workerEnv(), APP_ENV, APP_VERSION: 'a'.repeat(40), EMAIL_PROVIDER: 'brevo' };
+      expect(parseWorkerEnv(env).EMAIL_PROVIDER).toBe('brevo');
+    }
+  });
+
+  it('FON-002: un EMAIL_PROVIDER diverso da brevo e fake è rifiutato', () => {
+    for (const value of ['smtp', 'Brevo', 'FAKE', 'placeholder-email-provider']) {
+      const error = envError(parseWorkerEnv, { ...workerEnv(), EMAIL_PROVIDER: value });
+      expect(error.variables, value).toEqual(['EMAIL_PROVIDER']);
+      expect(error.details.EMAIL_PROVIDER, value).toBe('non valida');
+    }
   });
 
   it('FON-002: EMAIL_FROM deve essere un indirizzo email', () => {

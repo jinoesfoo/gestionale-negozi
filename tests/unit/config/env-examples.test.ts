@@ -359,6 +359,34 @@ describe('esempi delle variabili dei server (infra/env.example/)', () => {
   });
 });
 
+// EMAIL_PROVIDER la aggiunge FON-T10 allo schema del worker e ai tre esempi (01 §Variabili d'ambiente): `fake` negli
+// esempi di sviluppo e di test, `brevo` nell'esempio del server, da cui l'utente scrive i worker.env dei due server in
+// FON-T07b (anche il server di test invia email vere). Non è facoltativa, e app e migrate non la ricevono.
+describe('EMAIL_PROVIDER negli esempi', () => {
+  it('FON-002: EMAIL_PROVIDER=fake in .env.worker.example e in .env.test.example', () => {
+    for (const file of ['.env.worker.example', '.env.test.example']) {
+      expect(readExample(file).get('EMAIL_PROVIDER')?.value, file).toBe('fake');
+    }
+  });
+
+  it('FON-002: EMAIL_PROVIDER=brevo in infra/env.example/worker.env, non facoltativa', () => {
+    const entry = readExample('infra/env.example/worker.env').get('EMAIL_PROVIDER');
+    expect(entry?.value).toBe('brevo');
+    expect(entry?.optional).toBe(false);
+  });
+
+  it('FON-002: EMAIL_PROVIDER non sta negli esempi di app e migrate', () => {
+    for (const file of [
+      '.env.app.example',
+      '.env.migrate.example',
+      'infra/env.example/app.env',
+      'infra/env.example/migrate.env',
+    ]) {
+      expect(readExample(file).has('EMAIL_PROVIDER'), file).toBe(false);
+    }
+  });
+});
+
 describe('STRIPE_LIVE_SECRET_KEY', () => {
   it('FON-002: non compare in nessun esempio, nemmeno in un commento', () => {
     for (const file of [...DEV_EXAMPLES, ...SERVER_EXAMPLES]) {

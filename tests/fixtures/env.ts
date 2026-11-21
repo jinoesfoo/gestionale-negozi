@@ -33,6 +33,7 @@ export function validWorkerEnv(): TestEnv {
     SDI_PROVIDER: 'fake',
     EMAIL_API_KEY: 'VALORE-PROVA-EMAIL-API-KEY',
     EMAIL_FROM: 'noreply@example.com',
+    EMAIL_PROVIDER: 'fake',
     SENTRY_DSN: 'placeholder-sentry-dsn',
     ADMIN_ALERT_EMAIL: 'avvisi@example.com',
   };
