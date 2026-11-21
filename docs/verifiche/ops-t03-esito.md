@@ -96,6 +96,21 @@ Terminale 2, righe 1348–1351 del README (`load_key file-prod`, `load_key file-
 
 **Osservazione (21/11/2026): l'intestazione `Expiration` di Hetzner.** Le risposte di `put-object` e `get-object` nei due bucket dei file riportano `"Expiration": "expiry-date=\"Tue, 22 Dec 2026 00:00:00 GMT\", rule-id=\"versioni-precedenti\""` anche per la versione corrente. Non vuol dire che le versioni correnti scadano: nel codice di Ceph RGW (il sistema di Hetzner, «ceph5» negli identificativi delle richieste), nelle versioni reef e quincy `s3_expiration_header` calcola questa intestazione dalla regola `NoncurrentVersionExpiration` quando la richiesta riguarda una versione precisa (`rule_expiration = obj_key.instance.empty() ? expiration : noncur_expiration`); nelle versioni squid e main è corretto, con il commento «It must never be derived from a NoncurrentVersionExpiration rule» (sorgente letto da Claude su GitHub il 21/11/2026). Le regole rilette in E2 non hanno nessun `Expiration` con `Days` o `Date`, quindi nessuna regola fa scadere le versioni correnti. La prova dal vivo che una versione corrente resta oltre i 30 giorni non fa parte di questa lista di controllo: Claude la propone come controllo da fare dopo il 22/12/2026.
 
+## H. Specchio: le versioni bloccate
+
+Terminale 2, righe 1371–1372 del README (`load_key specchio-scrittura`, `test_lock && test_h6`), 21/11/2026 17:35:21–17:35:37, dopo E5 (17:26). Uscita incollata dall'utente, da «== H1».
+
+| # | Esito |
+|---|---|
+| H1 | Riuscito (17:35:21): `prova-blocco.txt` scritto con `Content-MD5` «CiOmKNyKQPPmnXaGNA/sXg==», `VersionId` «6lQ9oRgwpQIImQFigdJWRwMKzi9jSGp», codice di uscita 0. |
+| H2 | Riuscito (17:35:22): `"Mode": "COMPLIANCE"`, `"RetainUntilDate": "2027-01-05T16:35:20.988274+00:00"`; «scadenza 2027-01-05 16:35 UTC; attesa circa 2027-01-05 16:35 UTC (scrittura + 45 giorni): va bene». |
+| H3 | Riuscito (17:35:24): `delete-object --version-id` della versione di H1 → `An error occurred (AccessDenied) when calling the DeleteObject operation: forbidden by object lock`, codice di uscita 254; poi `list-object-versions` mostra ancora lo stesso `VersionId`: «c'è ancora: sì». |
+| H4 | Riuscito (17:35:27): data mandata 2027-01-04 (il giorno prima di quella di H2, nel futuro) → `An error occurred (AccessDenied) when calling the PutObjectRetention operation: proposed retain-until date shortens an existing retention period and governance bypass check failed`, codice di uscita 254; la rilettura dà ancora `2027-01-05T16:35:20.988274+00:00`: «è ancora quella di H2: sì». |
+| H5 | Riuscito (17:35:30–17:35:32): la cancellazione senza `--version-id` lascia un delete marker («VJ67nVHzgMk-NH2RlpMaeM4udxtoROO»), che è la versione più recente («sì»); la versione di H1 si legge ancora con il suo `VersionId` e contiene «prova del blocco, 2026-11-21T16:35:19Z» (`ObjectLockMode: COMPLIANCE`). |
+| H6 | Esito annotato (17:35:34–17:35:37): **accettata**, e la nuova versione («78SxP5yiyIBFjrciYbXVqY5AyiaGcQV») ha `COMPLIANCE` fino a `2027-01-05T16:35:34.407788+00:00`: «modo COMPLIANCE … (scrittura + 45 giorni): va bene»; poi nascosta da un delete marker. È il primo dei tre esiti: per OPS-T01b `--s3-upload-cutoff 0` non serve (annotato nella specifica 08, «Per OPS-T01b»). |
+
+Nello specchio restano, bloccate fino al 05/01/2027 e nascoste da un delete marker, le versioni di `prova-blocco.txt` e `prova-senza-md5.txt`: il ciclo di vita le toglie dopo. Le risposte riportano anche qui l'intestazione `Expiration` («06 Jan 2027», regola `versioni-precedenti»), con lo stesso difetto di Ceph descritto sotto G.
+
 ## I. Isolamento delle unità (OPS-007, OPS-008)
 
 | # | Esito |
