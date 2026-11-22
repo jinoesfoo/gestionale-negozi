@@ -2,3 +2,5 @@
 // migrazioni da qui. RLS, policy, permessi e funzioni stanno nelle migrazioni scritte a mano (00 §6).
 export * from './audit-log';
 export * from './email-suppressions';
+export * from './platform-config';
+export * from './shops';
