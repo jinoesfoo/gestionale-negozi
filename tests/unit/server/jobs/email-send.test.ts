@@ -110,4 +110,49 @@ describe('lavoro email.send', () => {
     ]);
     expect(d.sender.sent.map((message) => message.to)).toEqual(['destinatario@example.com']);
   });
+
+  // Dalla terza revisione di FON-T10 (00 §4.2, §4.3): il messaggio d'errore di JSON.parse riporta l'inizio del testo che
+  // non riesce a leggere; con i segreti decifrati quel testo è in chiaro, e finirebbe nel log e nell'esito del lavoro
+  // salvato in pgboss.job. L'errore dei segreti non leggibili è generico e non riporta il loro contenuto.
+  it('00§4.3: segreti decifrati che non sono JSON fanno fallire il lavoro senza inviare, senza il testo in chiaro nel log né nell’esito', async () => {
+    const d = deps();
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      logged.push(args.map(String).join(' '));
+    });
+    try {
+      const results = await createEmailSendHandler(d)([
+        {
+          id: 'x',
+          data: { to: 'destinatario@example.com', template: 'prova', data: {}, secrets: sealJobSecret(LINK, key) },
+        },
+      ]);
+      expect(results).toEqual([{ id: 'x', status: 'failed', output: { message: expect.stringMatching(/segreti/i) } }]);
+      const visible = [JSON.stringify(results), ...logged].join('\n');
+      for (const fragment of ['https', 'app.localhost', 'VALORE-PROVA']) expect(visible).not.toContain(fragment);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(d.sender.sent).toEqual([]);
+  });
+
+  it('00§4.3: segreti decifrati che sono JSON ma non un oggetto fanno fallire il lavoro senza inviare e senza il loro testo nel messaggio', async () => {
+    for (const plaintext of ['42', 'null', '["https://app.localhost/invito/x"]', '"https://app.localhost/invito/x"']) {
+      const d = deps();
+      const data: EmailJobData = {
+        to: 'destinatario@example.com',
+        template: 'prova',
+        data: {},
+        secrets: sealJobSecret(plaintext, key),
+      };
+      const error = await sendEmailJob(data, d).then(
+        () => undefined,
+        (reason: unknown) => reason as Error,
+      );
+      expect(error, plaintext).toBeInstanceOf(Error);
+      expect(error?.message, plaintext).toMatch(/segreti/i);
+      expect(error?.message, plaintext).not.toContain('https');
+      expect(d.sender.sent, plaintext).toEqual([]);
+    }
+  });
 });

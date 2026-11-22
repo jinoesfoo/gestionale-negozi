@@ -19,15 +19,30 @@ export interface EmailSendDeps {
   key?: string;
 }
 
+/**
+ * I segreti decifrati del lavoro, che devono essere un oggetto JSON. L'errore è generico e non riporta il messaggio di
+ * JSON.parse, che cita l'inizio del testo in chiaro e finirebbe nel log e nell'esito in pgboss.job (00 §4.2, §4.3;
+ * nota (20) di 01).
+ */
+function parseSecrets(plaintext: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(plaintext);
+  } catch {
+    throw new Error('Segreti del lavoro non leggibili: non sono JSON.');
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Segreti del lavoro non leggibili: non sono un oggetto JSON.');
+  }
+  return parsed as Record<string, unknown>;
+}
+
 /** Elabora un lavoro `email.send`. */
 export async function sendEmailJob(data: EmailJobData, deps: EmailSendDeps): Promise<EmailSendResult> {
   const to = data.to.trim();
   if (await deps.isSuppressed(to.toLowerCase())) return { status: 'suppressed' };
   if (!isTemplateName(data.template)) throw new Error(`Modello email sconosciuto: ${String(data.template)}.`);
-  const secrets =
-    data.secrets === undefined
-      ? undefined
-      : (JSON.parse(openJobSecret(data.secrets, deps.key)) as Record<string, unknown>);
+  const secrets = data.secrets === undefined ? undefined : parseSecrets(openJobSecret(data.secrets, deps.key));
   const input = { data: data.data, secrets } as unknown as TemplateInputs[typeof data.template];
   const message = renderEmail(data.template, input);
   const result = await deps.sender.send({ to, ...message });
