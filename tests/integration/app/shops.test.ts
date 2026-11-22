@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { PoolClient } from 'pg';
+import { Client, type PoolClient, type QueryResultRow } from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
 import { platform } from '@/config/platform';
 import { runMigrations } from '@/migrate';
@@ -12,11 +12,15 @@ import { closeRolePools, rolePool, testDatabaseUrl, type TestRole } from '../../
 // negozio; app_worker: solo SELECT); la chiave esterna audit_log.shop_id → shops(id) ON DELETE CASCADE; la tabella di
 // piattaforma platform_config, senza permessi ai ruoli di runtime, scritta da src/migrate.ts con i valori di
 // src/config/platform.ts e letta con platform_config_get() (U, W). I negozi di questo file li crea e li cancella il
-// proprietario; le prove di comportamento girano con il ruolo vero (app_user, app_worker).
+// proprietario; le prove di comportamento girano con il ruolo vero (app_user, app_worker). I file di integrazione
+// girano in parallelo sullo stesso database, che è anche quello di sviluppo: le prove dei vincoli inseriscono in
+// transazioni annullate, e la prova di runMigrations, che cambia a mano un valore di platform_config, gira su un
+// database usa e getta (app_neg_t01, diverso da app_fresh di pgboss-fresh.test.ts).
 
 const owner = () => rolePool('owner');
 const created: string[] = [];
 const TEST_ACTION = 'test_neg_t01';
+const FRESH_DB = 'app_neg_t01';
 
 /** Un sottodominio valido e unico per questo file. */
 const sub = (tag: string) => `${tag}-${randomUUID().slice(0, 8)}`;
@@ -53,28 +57,78 @@ async function createShop(subdomain = sub('neg-t01'), name = 'Negozio di prova N
   return id;
 }
 
-/** Il codice d'errore di PostgreSQL della promessa, oppure undefined se riesce. */
-async function errorCode(promise: Promise<unknown>): Promise<string | undefined> {
+/** Codice e messaggio dell'errore di PostgreSQL della promessa, oppure undefined se riesce. */
+async function errorOf(promise: Promise<unknown>): Promise<{ code: string; message: string } | undefined> {
   try {
     await promise;
   } catch (error) {
-    return (error as { code?: string }).code ?? 'senza codice';
+    const { code, message } = error as { code?: string; message?: string };
+    return { code: code ?? 'senza codice', message: message ?? '' };
   }
   return undefined;
 }
 
-/** Inserisce un negozio con il proprietario, con le colonne date; il codice d'errore, oppure undefined se riesce. */
+/** Il codice d'errore di PostgreSQL della promessa, oppure undefined se riesce. */
+async function errorCode(promise: Promise<unknown>): Promise<string | undefined> {
+  return (await errorOf(promise))?.code;
+}
+
+/**
+ * Il rifiuto per mancanza di permesso. Il solo codice 42501 non basta: PostgreSQL lo usa anche quando una riga viola
+ * la policy (`new row violates row-level security policy`, come avverte 02 NEG-T05), quindi si guarda anche il
+ * messaggio.
+ */
+const permissionDenied = () => ({ code: '42501', message: expect.stringMatching(/^permission denied for /) });
+
+/**
+ * Prova a inserire un negozio con il proprietario, con le colonne date, in una transazione sempre annullata: le prove
+ * dei vincoli non lasciano righe (né negozi in stati diversi da `trial`, né sottodomini che un'esecuzione successiva
+ * ritroverebbe). Il codice d'errore, oppure undefined se l'inserimento riesce.
+ */
 async function insertShop(columns: Record<string, unknown>): Promise<string | undefined> {
   const names = Object.keys(columns);
   const placeholders = names.map((name, i) => (name === 'address' ? `$${i + 1}::jsonb` : `$${i + 1}`));
-  return errorCode(
-    owner()
-      .query<{ id: string }>(
-        `INSERT INTO public.shops (${names.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING id::text AS id`,
+  const client = await owner().connect();
+  try {
+    await client.query('BEGIN');
+    return await errorCode(
+      client.query(
+        `INSERT INTO public.shops (${names.join(', ')}) VALUES (${placeholders.join(', ')})`,
         Object.values(columns),
-      )
-      .then((result) => created.push(result.rows[0]!.id)),
-  );
+      ),
+    );
+  } finally {
+    await client.query('ROLLBACK').catch(() => undefined);
+    client.release();
+  }
+}
+
+/**
+ * Un sottodominio di 3 caratteri che nessun negozio usa: `x` più due caratteri fra [a-z0-9] (nessun riservato inizia
+ * con x); senza il controllo, con soli 1.296 valori, un negozio rimasto nel database di sviluppo lo farebbe fallire a
+ * caso.
+ */
+async function freeThreeCharSubdomain(): Promise<string> {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const pick = () => chars[Math.floor(Math.random() * chars.length)]!;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const candidate = `x${pick()}${pick()}`;
+    const used = await owner().query('SELECT 1 FROM public.shops WHERE subdomain = $1', [candidate]);
+    if (used.rowCount === 0) return candidate;
+  }
+  throw new Error('nessun sottodominio libero di 3 caratteri dopo 100 tentativi');
+}
+
+/** Una query sul database usa e getta, con una connessione del proprietario chiusa subito dopo. */
+async function onFreshDb<R extends QueryResultRow>(text: string, values: unknown[] = []): Promise<R[]> {
+  const client = new Client({ connectionString: testDatabaseUrl('owner', FRESH_DB) });
+  client.on('error', () => {});
+  await client.connect();
+  try {
+    return (await client.query<R>(text, values)).rows;
+  } finally {
+    await client.end();
+  }
 }
 
 /** Esegue fn in una transazione con il ruolo dato e, se shopId non è null, con il contesto del negozio. */
@@ -102,7 +156,8 @@ async function tablePrivileges(role: string, table: string) {
             has_table_privilege($1, $2, 'DELETE') AS delete,
             has_table_privilege($1, $2, 'TRUNCATE') AS truncate,
             has_table_privilege($1, $2, 'REFERENCES') AS references,
-            has_table_privilege($1, $2, 'TRIGGER') AS trigger`,
+            has_table_privilege($1, $2, 'TRIGGER') AS trigger,
+            has_table_privilege($1, $2, 'MAINTAIN') AS maintain`,
     [role, table],
   );
   return result.rows[0];
@@ -116,7 +171,51 @@ const NO_PRIVILEGES = {
   truncate: false,
   references: false,
   trigger: false,
+  maintain: false,
 };
+
+/**
+ * I permessi effettivi del ruolo anche per colonna: veri se concessi sulla tabella o su almeno una colonna
+ * (has_any_column_privilege). has_table_privilege guarda solo la tabella intera, e un GRANT su alcune colonne gli sfugge.
+ */
+async function anyColumnPrivileges(role: string, table: string) {
+  const result = await owner().query<Record<string, boolean>>(
+    `SELECT has_any_column_privilege($1, $2, 'SELECT') AS select,
+            has_any_column_privilege($1, $2, 'INSERT') AS insert,
+            has_any_column_privilege($1, $2, 'UPDATE') AS update,
+            has_any_column_privilege($1, $2, 'REFERENCES') AS references`,
+    [role, table],
+  );
+  return result.rows[0];
+}
+
+const NO_COLUMN_PRIVILEGES = { select: false, insert: false, update: false, references: false };
+
+/**
+ * I permessi concessi direttamente sulla tabella e sulle sue colonne ai ruoli di runtime e a PUBLIC, letti da
+ * pg_class.relacl e pg_attribute.attacl con aclexplode (come chiede 02 NEG-012), nella forma `ruolo PERMESSO (colonna)`
+ * e in ordine.
+ */
+async function runtimeGrants(table: string): Promise<string[]> {
+  const result = await owner().query<{ grantee: string; privilege: string; column_name: string | null }>(
+    `SELECT grantee, privilege, column_name FROM (
+       SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee)::text END AS grantee,
+              a.privilege_type AS privilege, NULL::text AS column_name
+         FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+        WHERE c.oid = $1::regclass
+       UNION ALL
+       SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee)::text END,
+              a.privilege_type, att.attname::text
+         FROM pg_attribute att CROSS JOIN LATERAL aclexplode(att.attacl) a
+        WHERE att.attrelid = $1::regclass AND att.attnum > 0 AND NOT att.attisdropped
+     ) AS grants
+     WHERE grantee IN ('app_user', 'app_worker', 'app_jobs', 'PUBLIC')`,
+    [table],
+  );
+  return result.rows
+    .map((row) => `${row.grantee} ${row.privilege}${row.column_name === null ? '' : ` (${row.column_name})`}`)
+    .sort();
+}
 
 describe('shops: colonne e vincoli', () => {
   it('NEG-001: shops ha le colonne di 02 §Tabella shops (suspended_at e failure_reminder_sent_at arrivano in BIL-T02)', async () => {
@@ -188,7 +287,7 @@ describe('shops: colonne e vincoli', () => {
   it('NEG-001: il sottodominio accetta solo [a-z0-9-]{3,40}, senza "-" iniziale o finale', async () => {
     const hex = () => randomUUID().replace(/-/g, '');
     const valid = [
-      `x${hex().slice(0, 2)}`, // 3 caratteri
+      await freeThreeCharSubdomain(), // 3 caratteri
       `n${hex()}${'a'.repeat(6)}9`, // 40 caratteri
       `neg-t01-${hex().slice(0, 8)}`,
       String(100_000_000 + Math.floor(Math.random() * 900_000_000)),
@@ -247,6 +346,10 @@ describe('shops: colonne e vincoli', () => {
     expect(await insertShop({ ...base(), tax_code: '12345678901', sdi_code: 'M5UXCR1' })).toBeUndefined();
     expect(await insertShop({ ...base(), name: 'AB' })).toBeUndefined();
     expect(await insertShop({ ...base(), name: 'x'.repeat(120) })).toBeUndefined();
+    // I sei stati di §Tabella shops (le righe si annullano: nessun negozio fuori da `trial` resta nel database).
+    for (const status of ['trial', 'active', 'payment_processing', 'payment_failed', 'suspended', 'closed']) {
+      expect(await insertShop({ ...base(), status }), status).toBeUndefined();
+    }
 
     const invalid: Array<[string, unknown]> = [
       ['vat_number', '1234567890'],
@@ -257,6 +360,8 @@ describe('shops: colonne e vincoli', () => {
       ['tax_code', 'RSSMRA80A01H501'],
       ['tax_code', 'RSSMRA80A01H501UX'],
       ['tax_code', '1234567890'],
+      ['tax_code', 'RSSMRA80A01'], // 11 caratteri, ma non tutte cifre
+
       ['sdi_code', 'm5uxcr1'],
       ['sdi_code', 'M5UXCR'],
       ['sdi_code', 'M5UXCR12'],
@@ -320,6 +425,18 @@ describe('shops: separazione e permessi', () => {
       expect(await tablePrivileges(role, 'public.shops'), role).toEqual({ ...NO_PRIVILEGES, select: true });
     }
     expect(await tablePrivileges('app_jobs', 'public.shops')).toEqual(NO_PRIVILEGES);
+    // Anche i permessi per colonna: un INSERT concesso su alcune colonne has_table_privilege non lo vede.
+    expect(await anyColumnPrivileges('app_user', 'public.shops')).toEqual({
+      ...NO_COLUMN_PRIVILEGES,
+      select: true,
+      update: true,
+    });
+    expect(await anyColumnPrivileges('app_worker', 'public.shops')).toEqual({ ...NO_COLUMN_PRIVILEGES, select: true });
+    expect(await anyColumnPrivileges('app_jobs', 'public.shops')).toEqual(NO_COLUMN_PRIVILEGES);
+    // I permessi concessi, tutti: SELECT ai due ruoli e UPDATE delle colonne dei dati al solo app_user.
+    expect(await runtimeGrants('public.shops')).toEqual(
+      ['app_user SELECT', 'app_worker SELECT', ...DATA_COLUMNS.map((column) => `app_user UPDATE (${column})`)].sort(),
+    );
 
     const columns = await owner().query<{ column_name: string; app_user: boolean; app_worker: boolean }>(
       `SELECT column_name,
@@ -335,19 +452,23 @@ describe('shops: separazione e permessi', () => {
 
   it('NEG-009: con il contesto del negozio, app_user non può inserire né cancellare negozi', async () => {
     const a = await createShop();
+    // La riga ha l'id del contesto, così la policy la accetterebbe: a rifiutarla può essere solo la mancanza di
+    // permesso. Se un giorno l'inserimento riuscisse, la pulizia finale toglie la riga.
+    const fresh = randomUUID();
+    created.push(fresh);
     expect(
-      await errorCode(
-        asRole('app', a, (c) =>
+      await errorOf(
+        asRole('app', fresh, (c) =>
           c.query('INSERT INTO public.shops (id, name, subdomain) VALUES ($1, $2, $3)', [
-            randomUUID(),
+            fresh,
             'Negozio abusivo',
             sub('abusivo'),
           ]),
         ),
       ),
-    ).toBe('42501');
-    expect(await errorCode(asRole('app', a, (c) => c.query('DELETE FROM public.shops WHERE id = $1', [a])))).toBe(
-      '42501',
+    ).toEqual(permissionDenied());
+    expect(await errorOf(asRole('app', a, (c) => c.query('DELETE FROM public.shops WHERE id = $1', [a])))).toEqual(
+      permissionDenied(),
     );
   });
 
@@ -370,9 +491,9 @@ describe('shops: separazione e permessi', () => {
     ];
     for (const assignment of forbidden) {
       expect(
-        await errorCode(asRole('app', a, (c) => c.query(`UPDATE public.shops SET ${assignment} WHERE id = $1`, [a]))),
+        await errorOf(asRole('app', a, (c) => c.query(`UPDATE public.shops SET ${assignment} WHERE id = $1`, [a]))),
         assignment,
-      ).toBe('42501');
+      ).toEqual(permissionDenied());
     }
   });
 
@@ -416,13 +537,27 @@ describe('shops: separazione e permessi', () => {
     const a = await createShop();
     const seen = await asRole('worker', a, (c) => c.query<{ id: string }>('SELECT id::text AS id FROM public.shops'));
     expect(seen.rows).toEqual([{ id: a }]);
+    // Come per app_user: la riga ha l'id del contesto, così solo la mancanza di permesso la può rifiutare.
+    const fresh = randomUUID();
+    created.push(fresh);
+    expect(
+      await errorOf(
+        asRole('worker', fresh, (c) =>
+          c.query('INSERT INTO public.shops (id, name, subdomain) VALUES ($1, $2, $3)', [
+            fresh,
+            'Negozio dal worker',
+            sub('worker'),
+          ]),
+        ),
+      ),
+      'INSERT',
+    ).toEqual(permissionDenied());
     const statements: Array<[string, unknown[]]> = [
-      ['INSERT INTO public.shops (name, subdomain) VALUES ($1, $2)', ['Negozio dal worker', sub('worker')]],
       ['UPDATE public.shops SET name = $2 WHERE id = $1', [a, 'Nome dal worker']],
       ['DELETE FROM public.shops WHERE id = $1', [a]],
     ];
     for (const [text, values] of statements) {
-      expect(await errorCode(asRole('worker', a, (c) => c.query(text, values))), text).toBe('42501');
+      expect(await errorOf(asRole('worker', a, (c) => c.query(text, values))), text).toEqual(permissionDenied());
     }
   });
 });
@@ -431,7 +566,7 @@ describe('audit_log → shops', () => {
   it('NEG-013: audit_log.shop_id fa riferimento a shops(id) con ON DELETE CASCADE', async () => {
     const result = await owner().query(
       `SELECT confrelid::regclass::text AS target, confdeltype AS on_delete,
-              (SELECT array_agg(attname ORDER BY attname) FROM pg_attribute
+              (SELECT array_agg(attname::text ORDER BY attname) FROM pg_attribute
                 WHERE attrelid = conrelid AND attnum = ANY(conkey)) AS columns
          FROM pg_constraint WHERE conrelid = 'public.audit_log'::regclass AND contype = 'f'`,
     );
@@ -468,12 +603,16 @@ describe('audit_log → shops', () => {
 });
 
 describe('platform_config', () => {
-  it('NEG-012: app_user, app_worker e app_jobs non hanno permessi su platform_config', async () => {
+  it('NEG-012: app_user, app_worker e app_jobs non hanno permessi su platform_config, né sulla tabella né sulle colonne', async () => {
     for (const role of ['app_user', 'app_worker', 'app_jobs']) {
       expect(await tablePrivileges(role, 'public.platform_config'), role).toEqual(NO_PRIVILEGES);
+      expect(await anyColumnPrivileges(role, 'public.platform_config'), role).toEqual(NO_COLUMN_PRIVILEGES);
     }
+    expect(await runtimeGrants('public.platform_config')).toEqual([]);
     for (const role of ['app', 'worker'] as const) {
-      expect(await errorCode(rolePool(role).query('SELECT key FROM public.platform_config')), role).toBe('42501');
+      expect(await errorOf(rolePool(role).query('SELECT key, value FROM public.platform_config')), role).toEqual(
+        permissionDenied(),
+      );
     }
   });
 
@@ -507,6 +646,14 @@ describe('platform_config', () => {
   });
 
   it('NEG-006: platform_config_get(), eseguita da app_user e da app_worker, restituisce i valori di src/config/platform.ts', async () => {
+    // La precondizione la crea il test: senza, l'esito dipenderebbe da quale file ha sincronizzato per primo la tabella
+    // (i valori scritti sono quelli del file, gli stessi che scrive db:migrate).
+    const connection = createOwnerConnection(testDatabaseUrl('owner'));
+    try {
+      await syncPlatformConfig(connection.db);
+    } finally {
+      await connection.close();
+    }
     for (const role of ['app', 'worker'] as const) {
       const result = await rolePool(role).query<{ key: string; value: unknown }>(
         'SELECT key, value FROM public.platform_config_get()',
@@ -538,18 +685,25 @@ describe('platform_config', () => {
     expect(kept.rows[0]?.n).toBe(Object.keys(EXPECTED_CONFIG).length);
   });
 
-  it('NEG-006: runMigrations riscrive platform_config dal file: un valore cambiato a mano torna quello di platform.ts', async () => {
+  it('NEG-006: su un database nuovo runMigrations scrive platform_config dopo le migrazioni, e a ogni esecuzione riporta al valore del file uno cambiato a mano', async () => {
+    // Database usa e getta: il valore cambiato a mano non lo deve vedere nessun altro test, perché i file girano in
+    // parallelo sullo stesso database, che è anche quello di sviluppo. DROP anche prima, per i resti di un'esecuzione
+    // interrotta.
+    await owner().query(`DROP DATABASE IF EXISTS ${FRESH_DB} WITH (FORCE)`);
+    await owner().query(`CREATE DATABASE ${FRESH_DB}`);
     try {
-      await owner().query("UPDATE public.platform_config SET value = '1'::jsonb WHERE key = 'graceDays'");
-      await runMigrations(testDatabaseUrl('owner'));
-      const result = await owner().query<{ value: unknown }>(
-        "SELECT value FROM public.platform_config WHERE key = 'graceDays'",
-      );
-      expect(result.rows).toEqual([{ value: platform.graceDays }]);
-    } finally {
-      await owner().query("UPDATE public.platform_config SET value = $1::jsonb WHERE key = 'graceDays'", [
-        JSON.stringify(platform.graceDays),
+      const url = testDatabaseUrl('owner', FRESH_DB);
+      await runMigrations(url);
+      const rows = await onFreshDb<{ key: string; value: unknown }>('SELECT key, value FROM public.platform_config');
+      expect(Object.fromEntries(rows.map((row) => [row.key, row.value]))).toEqual(EXPECTED_CONFIG);
+
+      await onFreshDb("UPDATE public.platform_config SET value = '1'::jsonb WHERE key = 'graceDays'");
+      await runMigrations(url);
+      expect(await onFreshDb("SELECT value FROM public.platform_config WHERE key = 'graceDays'")).toEqual([
+        { value: platform.graceDays },
       ]);
+    } finally {
+      await owner().query(`DROP DATABASE IF EXISTS ${FRESH_DB} WITH (FORCE)`);
     }
   });
 });
