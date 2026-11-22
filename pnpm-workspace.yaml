@@ -1,0 +1,6 @@
+# Impostazioni di pnpm 12 (non legge più save-exact ed engine-strict da .npmrc).
+saveExact: true
+engineStrict: true
+# Script di installazione permessi: esbuild (usato da tsup e da Vitest).
+allowBuilds:
+  esbuild: true

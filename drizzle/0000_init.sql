@@ -1,0 +1,1 @@
+-- Prima migrazione, vuota (FON-T03): le tabelle arrivano con i compiti successivi.

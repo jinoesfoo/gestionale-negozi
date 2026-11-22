@@ -1,0 +1,24 @@
+# Contesto della build dell'immagine dell'app (01 §Contenuto dell'immagine dell'app, FON-T06). Elenco chiuso: tutto
+# fuori, poi si riammette solo ciò che serve alla build. La build manda il contesto al demone di Docker, che in locale
+# lo legge fuori dalla sandbox: niente file di ambiente veri, niente .git, .claude/, registro/, né i file che la
+# sandbox monta nella radice. Una cartella nuova che serve alla build (per esempio public/) va riammessa qui e copiata
+# nel Dockerfile.
+*
+
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!next.config.ts
+!tsconfig.json
+!tsup.config.ts
+!src
+!drizzle
+!infra
+
+# Dentro le cartelle riammesse, a ogni profondità: mai i file di ambiente veri (gli esempi di infra/env.example/ si
+# chiamano <servizio>.env e restano), né dipendenze, output di Next.js o credenziali dei test.
+**/.env
+**/.env.*
+**/node_modules
+**/.next
+**/playwright/.auth
