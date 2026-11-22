@@ -27,7 +27,15 @@ export function getAppBoss(): Promise<PgBoss> {
       boss.on('error', (error: Error) => {
         console.error(`Errore della coda dei lavori (app): ${error.message}`);
       });
-      await boss.start();
+      try {
+        await boss.start();
+      } catch (error) {
+        // L'istanza scartata va fermata: senza, il suo pool resterebbe aperto e ogni chiamata successiva durante un
+        // guasto del database ne lascerebbe un'altra. pg-boss 12 prevede stop() dopo un avvio fallito, per chiudere il
+        // pool e le parti già avviate.
+        await boss.stop({ graceful: false }).catch(() => undefined);
+        throw error;
+      }
       return boss;
     })();
     state.starting = starting;

@@ -16,7 +16,7 @@ import { renderEmail } from './templates';
 const USAGE = [
   'Uso: pnpm email:prova <destinatario> <mittente>',
   '  destinatario: una tua casella, dove leggere le intestazioni (Authentication-Results);',
-  '  mittente: un mittente creato su Brevo, su foondaco.com oppure su foondaco.it.',
+  `  mittente: un mittente creato su Brevo, su ${platform.domain} oppure sul dominio del server di test.`,
   '  .env.worker deve avere EMAIL_PROVIDER=brevo e la chiave vera in EMAIL_API_KEY.',
 ].join('\n');
 
