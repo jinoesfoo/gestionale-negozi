@@ -643,6 +643,20 @@ describe('platform_config', () => {
       { role: 'app_user', allowed: true },
       { role: 'app_worker', allowed: true },
     ]);
+    // has_function_privilege prova solo i ruoli che nomina. I destinatari espliciti di proacl, come nel test generico di
+    // NEG-006 (esclusi il proprietario e i superuser, che hanno sempre EXECUTE), devono essere esattamente i ruoli della
+    // colonna "Ruoli" (U, W), senza la facoltà di concedere il permesso ad altri (WITH GRANT OPTION).
+    const grants = await owner().query<{ grantee: string; privilege: string; grantable: boolean }>(
+      `SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee)::text END AS grantee,
+              a.privilege_type AS privilege, a.is_grantable AS grantable
+         FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+         LEFT JOIN pg_roles r ON r.oid = a.grantee
+        WHERE p.oid = 'public.platform_config_get()'::regprocedure
+          AND a.grantee <> p.proowner AND NOT coalesce(r.rolsuper, false)`,
+    );
+    expect(
+      grants.rows.map((row) => `${row.grantee} ${row.privilege}${row.grantable ? ' WITH GRANT OPTION' : ''}`).sort(),
+    ).toEqual(['app_user EXECUTE', 'app_worker EXECUTE']);
   });
 
   it('NEG-006: platform_config_get(), eseguita da app_user e da app_worker, restituisce i valori di src/config/platform.ts', async () => {
