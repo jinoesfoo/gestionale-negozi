@@ -1,0 +1,396 @@
+{
+  "id": "4711fa2d-9822-4d4d-beaf-25569a72d2c8",
+  "prevId": "4e140419-5747-40ec-9e0e-c7a41facffa3",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.audit_log": {
+      "name": "audit_log",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "shop_id": {
+          "name": "shop_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_type": {
+          "name": "actor_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_user_id": {
+          "name": "actor_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "object_type": {
+          "name": "object_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "object_id": {
+          "name": "object_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "before": {
+          "name": "before",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "after": {
+          "name": "after",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ip": {
+          "name": "ip",
+          "type": "inet",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_agent": {
+          "name": "user_agent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "audit_log_shop_created_idx": {
+          "name": "audit_log_shop_created_idx",
+          "columns": [
+            {
+              "expression": "shop_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "audit_log_shop_id_shops_id_fk": {
+          "name": "audit_log_shop_id_shops_id_fk",
+          "tableFrom": "audit_log",
+          "columnsFrom": [
+            "shop_id"
+          ],
+          "tableTo": "shops",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "audit_log_actor_type_check": {
+          "name": "audit_log_actor_type_check",
+          "value": "actor_type IN ('user', 'admin', 'system')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.email_suppressions": {
+      "name": "email_suppressions",
+      "schema": "",
+      "columns": {
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "email_suppressions_email_lower_check": {
+          "name": "email_suppressions_email_lower_check",
+          "value": "email = lower(email)"
+        },
+        "email_suppressions_reason_check": {
+          "name": "email_suppressions_reason_check",
+          "value": "reason IN ('bounce', 'complaint')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.platform_config": {
+      "name": "platform_config",
+      "schema": "",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.shops": {
+      "name": "shops",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "legal_name": {
+          "name": "legal_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "vat_number": {
+          "name": "vat_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tax_code": {
+          "name": "tax_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sdi_code": {
+          "name": "sdi_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pec": {
+          "name": "pec",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "address": {
+          "name": "address",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subdomain": {
+          "name": "subdomain",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'trial'"
+        },
+        "status_changed_at": {
+          "name": "status_changed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "grace_started_at": {
+          "name": "grace_started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "closed_at": {
+          "name": "closed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reopened_at": {
+          "name": "reopened_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "trial_inactivity_warned_at": {
+          "name": "trial_inactivity_warned_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_test": {
+          "name": "is_test",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "purge_requested_at": {
+          "name": "purge_requested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "purge_notice_sent_at": {
+          "name": "purge_notice_sent_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_activity_at": {
+          "name": "last_activity_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "shops_subdomain_unique": {
+          "name": "shops_subdomain_unique",
+          "columns": [
+            "subdomain"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "shops_name_length_check": {
+          "name": "shops_name_length_check",
+          "value": "char_length(name) BETWEEN 2 AND 120"
+        },
+        "shops_vat_number_check": {
+          "name": "shops_vat_number_check",
+          "value": "vat_number ~ '^[0-9]{11}$'"
+        },
+        "shops_tax_code_check": {
+          "name": "shops_tax_code_check",
+          "value": "tax_code ~ '^[A-Z0-9]{16}$' OR tax_code ~ '^[0-9]{11}$'"
+        },
+        "shops_sdi_code_check": {
+          "name": "shops_sdi_code_check",
+          "value": "sdi_code ~ '^[A-Z0-9]{7}$'"
+        },
+        "shops_pec_check": {
+          "name": "shops_pec_check",
+          "value": "pec = lower(pec) AND pec ~ '^[^@[:space:]]+@[^@[:space:]]+$'"
+        },
+        "shops_address_check": {
+          "name": "shops_address_check",
+          "value": "jsonb_typeof(address) = 'object'"
+        },
+        "shops_subdomain_format_check": {
+          "name": "shops_subdomain_format_check",
+          "value": "subdomain ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'"
+        },
+        "shops_subdomain_reserved_check": {
+          "name": "shops_subdomain_reserved_check",
+          "value": "subdomain NOT IN ('admin', 'app', 'clienti', 'www', 'api', 'mail', 'status', 'test', 'static', 'cdn', 'n')"
+        },
+        "shops_status_check": {
+          "name": "shops_status_check",
+          "value": "status IN ('trial', 'active', 'payment_processing', 'payment_failed', 'suspended', 'closed')"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "views": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

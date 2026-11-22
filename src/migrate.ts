@@ -1,18 +1,23 @@
 // Migrazioni del database (01 §Contenuto dell'immagine, FON-004): il migratore di drizzle-orm applica i file di
 // drizzle/ non ancora registrati in drizzle.__drizzle_migrations, con le credenziali del proprietario
 // (DATABASE_OWNER_URL, app_owner). In sviluppo `pnpm db:migrate`; sui server `dist/migrate.js` (FON-T06), con la
-// cartella drizzle/ accanto a dist/. Valida l'ambiente e migra solo quando è il programma lanciato: importato (il test
-// di FON-004 chiama runMigrations) non fa nulla.
+// cartella drizzle/ accanto a dist/. Dopo le migrazioni scrive in platform_config i valori di src/config/platform.ts
+// (02 NEG-T01), così il database si aggiorna a ogni rilascio. Valida l'ambiente e migra solo quando è il programma
+// lanciato: importato (il test di FON-004 chiama runMigrations) non fa nulla.
 import { fileURLToPath } from 'node:url';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { EnvError, parseMigrateEnv } from '@/config/env';
 import { isEntryPoint } from '@/lib/entry-point';
 import { createOwnerConnection } from '@/server/db/owner-client';
+import { syncPlatformConfig } from '@/server/db/platform-config';
 
 /** drizzle/ nella radice del progetto: da src/migrate.ts e da dist/migrate.js è la cartella sopra. */
 const MIGRATIONS_FOLDER = fileURLToPath(new URL('../drizzle', import.meta.url));
 
-/** Applica le migrazioni mancanti come il ruolo dell'indirizzo dato; su un database aggiornato non cambia nulla. */
+/**
+ * Applica le migrazioni mancanti come il ruolo dell'indirizzo dato, poi riscrive platform_config dai valori del file;
+ * su un database aggiornato lo schema non cambia.
+ */
 export async function runMigrations(url: string): Promise<void> {
   const owner = createOwnerConnection(url);
   try {
@@ -21,6 +26,7 @@ export async function runMigrations(url: string): Promise<void> {
       migrationsSchema: 'drizzle',
       migrationsTable: '__drizzle_migrations',
     });
+    await syncPlatformConfig(owner.db);
   } finally {
     await owner.close();
   }

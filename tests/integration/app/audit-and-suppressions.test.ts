@@ -17,13 +17,29 @@ const DOMAIN = 'fon-t10-registro.example.com';
 const TEST_ACTION = 'test_fon_t10';
 
 const owner = () => rolePool('owner');
+const createdShops: string[] = [];
 
 afterAll(async () => {
   await owner().query('DELETE FROM public.audit_log WHERE action = $1', [TEST_ACTION]);
+  await owner().query('DELETE FROM public.shops WHERE id = ANY($1::uuid[])', [createdShops]);
   await owner().query('DELETE FROM public.email_suppressions WHERE email LIKE $1', [`%@${DOMAIN}`]);
   await closeDb();
   await closeRolePools();
 });
+
+/**
+ * Un negozio vero, creato dal proprietario e cancellato alla fine: da NEG-T01 audit_log.shop_id fa riferimento a
+ * shops(id), e una riga di un negozio inesistente è rifiutata (02 NEG-T01, nota (6) del piano).
+ */
+async function createShop(): Promise<string> {
+  const result = await owner().query<{ id: string }>(
+    'INSERT INTO public.shops (name, subdomain) VALUES ($1, $2) RETURNING id::text AS id',
+    ['Negozio di prova FON-T10', `fon-t10-${randomUUID().slice(0, 8)}`],
+  );
+  const id = result.rows[0]!.id;
+  createdShops.push(id);
+  return id;
+}
 
 async function tablePrivileges(role: string, table: string) {
   const result = await owner().query<Record<string, boolean>>(
@@ -104,7 +120,7 @@ describe('audit_log', () => {
   });
 
   it('NEG-013: audit(tx, …) scrive la riga del negozio nella transazione ricevuta, e sparisce se la transazione si annulla', async () => {
-    const shopId = randomUUID();
+    const shopId = await createShop();
     const kept = `tenuta-${randomUUID()}`;
     const dropped = `annullata-${randomUUID()}`;
 
