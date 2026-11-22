@@ -176,6 +176,8 @@ const workerShape = {
   SDI_API_URL: orPlaceholder(httpUrl()).optional(),
   EMAIL_API_KEY: text,
   EMAIL_FROM: orPlaceholder(email),
+  // L'implementazione di EmailSender usata da `email.send` (FON-T10): `fake` non invia nulla, solo fuori da prod.
+  EMAIL_PROVIDER: z.enum(['brevo', 'fake']),
   SENTRY_DSN: sentryDsn,
   ADMIN_ALERT_EMAIL: email,
 };
@@ -310,7 +312,10 @@ export function parseAppEnv(env: Env): AppEnv {
   return { ...parsed, APP_VERSION };
 }
 
-/** Ambiente del worker. Rifiuta DATABASE_OWNER_URL; con un fornitore SDI vero servono chiave e indirizzo. */
+/**
+ * Ambiente del worker. Rifiuta DATABASE_OWNER_URL; con un fornitore SDI vero servono chiave e indirizzo; il fornitore
+ * email finto (`EMAIL_PROVIDER=fake`, che non invia nulla) non è ammesso in prod (FON-T10).
+ */
 export function parseWorkerEnv(env: Env): WorkerEnv {
   const problems = new Problems();
   forbidOwner(env, problems);
@@ -321,6 +326,9 @@ export function parseWorkerEnv(env: Env): WorkerEnv {
   if (provider !== undefined && provider !== 'fake') {
     if (read(env, 'SDI_API_KEY') === undefined) problems.add('SDI_API_KEY', 'mancante');
     if (read(env, 'SDI_API_URL') === undefined) problems.add('SDI_API_URL', 'mancante');
+  }
+  if (read(env, 'EMAIL_PROVIDER') === 'fake' && read(env, 'APP_ENV') === 'prod') {
+    problems.add('EMAIL_PROVIDER', 'non valida');
   }
   problems.throwIfAny();
   return { ...parsed, APP_VERSION };

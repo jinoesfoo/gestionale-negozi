@@ -23,4 +23,11 @@ describe('opzioni di pg-boss', () => {
     expect(options.supervise ?? true).toBe(true);
     expect(options.schedule ?? true).toBe(true);
   });
+
+  // ADM-009 e 05 §Lavori periodici: i conteggi delle code della pagina Sistema (`getQueues()`) li aggiorna il passaggio
+  // di monitoraggio del worker ogni `monitorIntervalSeconds`; il valore, 60 secondi, è scritto per esteso (nota (8)
+  // del piano di FON-T10). L'istanza dell'app non fa monitoraggio (supervise: false).
+  it('ADM-009: il worker aggiorna i conteggi delle code ogni 60 secondi (monitorIntervalSeconds)', () => {
+    expect(workerBossOptions(url).monitorIntervalSeconds).toBe(60);
+  });
 });
