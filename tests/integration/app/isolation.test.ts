@@ -15,8 +15,11 @@ import { closeRolePools, rolePool, testDatabaseUrl } from '../../fixtures/db';
 // fallire. Con il contesto di A (createDbContext su una sola connessione di app_user) app_user non legge, non modifica,
 // non cancella e non inserisce righe di B; senza contesto, sulla stessa connessione riusata, non legge nulla e non
 // inserisce. Le istruzioni usano solo le colonne su cui app_user ha il permesso, lette dal catalogo; dove non ha il
-// permesso per l'operazione l'istruzione fallisce con «permission denied». I controlli sul catalogo sono funzioni che
-// ricevono un client, provate anche sul caso che deve fallire in una transazione del proprietario annullata.
+// permesso per l'operazione l'istruzione fallisce con «permission denied». Nello schema public ogni vista ha
+// security_invoker, e non ci sono viste materializzate né tabelle esterne (nota (10)(c)): leggerebbero le tabelle senza
+// la RLS di chi le interroga. I controlli sul catalogo sono funzioni che ricevono un client, provate anche sul caso che
+// deve fallire in una transazione del proprietario annullata. La riga da copiare e il caso NEG-003 usano testo SQL con
+// pg, nomi quotati dal catalogo e valori come parametri (nota (10)(d)).
 
 const owner = () => rolePool('owner');
 const SUBDOMAINS = ['negozio-a', 'negozio-b'];
@@ -86,6 +89,26 @@ async function rlsViolations(client: CatalogClient): Promise<string[]> {
     if (row.policies === 0) violations.push(`${row.table}: nessuna policy`);
   }
   return violations;
+}
+
+/**
+ * Le relazioni di public che non sono tabelle e leggono senza la RLS di chi le interroga: viste senza security_invoker
+ * (leggono con i permessi del proprietario), viste materializzate (non hanno RLS) e tabelle esterne.
+ */
+async function nonTableViolations(client: CatalogClient): Promise<string[]> {
+  const result = await client.query<{ relation: string; kind: string; invoker: boolean }>(
+    `SELECT c.relname::text AS relation, c.relkind::text AS kind,
+            coalesce((SELECT o.option_value::boolean FROM pg_options_to_table(c.reloptions) o
+                       WHERE o.option_name = 'security_invoker'), false) AS invoker
+       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('v', 'm', 'f')
+      ORDER BY 1`,
+  );
+  return result.rows.flatMap((row) => {
+    if (row.kind === 'v') return row.invoker ? [] : [`${row.relation}: vista senza security_invoker`];
+    if (row.kind === 'm') return [`${row.relation}: vista materializzata`];
+    return [`${row.relation}: tabella esterna`];
+  });
 }
 
 /** Ogni tabella di negozio diversa da shops ha la sua fixture, e ogni fixture è una tabella di negozio. */
@@ -208,6 +231,35 @@ describe('tabelle di negozio e fixture', () => {
           'neg_t05_senza_force: RLS non forzata',
         ]),
       );
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
+  it('NEG-002: nello schema public ogni vista ha security_invoker e non ci sono viste materializzate né tabelle esterne', async () => {
+    expect(await nonTableViolations(owner())).toEqual([]);
+  });
+
+  it('NEG-002: il controllo segnala una vista senza security_invoker e una vista materializzata, non una vista con security_invoker', async () => {
+    const client = await owner().connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('CREATE VIEW public.neg_t05_vista AS SELECT name FROM public.shops');
+      await client.query(
+        'CREATE VIEW public.neg_t05_vista_invoker WITH (security_invoker = true) AS SELECT name FROM public.shops',
+      );
+      await client.query(
+        'CREATE MATERIALIZED VIEW public.neg_t05_vista_materializzata AS SELECT name FROM public.shops',
+      );
+      const violations = await nonTableViolations(client);
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          'neg_t05_vista: vista senza security_invoker',
+          'neg_t05_vista_materializzata: vista materializzata',
+        ]),
+      );
+      expect(violations.filter((violation) => violation.startsWith('neg_t05_vista_invoker'))).toEqual([]);
     } finally {
       await client.query('ROLLBACK');
       client.release();

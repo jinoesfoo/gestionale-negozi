@@ -2,7 +2,9 @@
 // effettivi dei ruoli di runtime su tabelle, colonne e schemi, e le colonne delle tabelle. I permessi si leggono da
 // pg_class.relacl, pg_attribute.attacl e pg_namespace.nspacl con aclexplode (le viste di information_schema mostrano
 // solo gli oggetti su cui il ruolo corrente ha permessi), contando le voci concesse al ruolo, a PUBLIC e ai ruoli di cui
-// il ruolo è membro; le voci del proprietario dell'oggetto non contano, perché il proprietario ha comunque ogni permesso.
+// il ruolo è membro; le voci dei ruoli che sono il proprietario dell'oggetto, o ne ereditano i permessi, non contano: il
+// proprietario ha comunque ogni permesso, e quei ruoli li segnala il controllo dei proprietari, che legge ownedObjects
+// (nota (10)(a)). Ogni permesso riporta anche se è concedibile (WITH GRANT OPTION, nota (10)(b)).
 import type { Pool, PoolClient } from 'pg';
 
 /** Il client del proprietario dei test: il pool, oppure una connessione presa dal pool per una transazione. */
@@ -27,6 +29,8 @@ export interface TableGrant {
   role: string;
   privilege: string;
   column: string | null;
+  /** Vero se il ruolo può concederlo ad altri (WITH GRANT OPTION). */
+  grantable: boolean;
 }
 
 /** Le tabelle dello schema, per nome. */
@@ -47,14 +51,15 @@ export async function effectiveTableGrants(
 ): Promise<TableGrant[]> {
   const result = await client.query<TableGrant>(
     `WITH roles(role) AS (SELECT unnest($2::text[]))
-     SELECT DISTINCT c.relname::text AS "table", r.role, a.privilege_type AS privilege, NULL::text AS "column"
+     SELECT DISTINCT c.relname::text AS "table", r.role, a.privilege_type AS privilege, NULL::text AS "column",
+            a.is_grantable AS grantable
        FROM pg_class c
        JOIN pg_namespace n ON n.oid = c.relnamespace
       CROSS JOIN LATERAL aclexplode(c.relacl) a
        JOIN roles r ON ${GRANTED_TO_ROLE}
       WHERE n.nspname = $1 AND c.relkind IN ${TABLE_KINDS} AND NOT pg_has_role(r.role, c.relowner, 'USAGE')
      UNION
-     SELECT DISTINCT c.relname::text, r.role, a.privilege_type, att.attname::text
+     SELECT DISTINCT c.relname::text, r.role, a.privilege_type, att.attname::text, a.is_grantable
        FROM pg_class c
        JOIN pg_namespace n ON n.oid = c.relnamespace
        JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0 AND NOT att.attisdropped
@@ -67,20 +72,64 @@ export async function effectiveTableGrants(
   return result.rows;
 }
 
+/** Un permesso effettivo su uno schema. */
+export interface SchemaGrant {
+  schema: string;
+  role: string;
+  privilege: string;
+  /** Vero se il ruolo può concederlo ad altri (WITH GRANT OPTION). */
+  grantable: boolean;
+}
+
 /** I permessi effettivi dei ruoli indicati sugli schemi indicati (solo gli schemi che esistono). */
 export async function effectiveSchemaGrants(
   client: CatalogClient,
   schemas: readonly string[],
   roles: readonly string[] = RUNTIME_ROLES,
-): Promise<{ schema: string; role: string; privilege: string }[]> {
-  const result = await client.query<{ schema: string; role: string; privilege: string }>(
+): Promise<SchemaGrant[]> {
+  const result = await client.query<SchemaGrant>(
     `WITH roles(role) AS (SELECT unnest($2::text[]))
-     SELECT DISTINCT n.nspname::text AS schema, r.role, a.privilege_type AS privilege
+     SELECT DISTINCT n.nspname::text AS schema, r.role, a.privilege_type AS privilege, a.is_grantable AS grantable
        FROM pg_namespace n
       CROSS JOIN LATERAL aclexplode(n.nspacl) a
        JOIN roles r ON ${GRANTED_TO_ROLE}
       WHERE n.nspname = ANY($1::text[]) AND NOT pg_has_role(r.role, n.nspowner, 'USAGE')
       ORDER BY 1, 2, 3`,
+    [schemas, roles],
+  );
+  return result.rows;
+}
+
+/** Un oggetto di cui il ruolo è il proprietario, o membro del proprietario: lo schema (`relation` null) o una relazione. */
+export interface OwnedObject {
+  schema: string;
+  relation: string | null;
+  role: string;
+  owner: string;
+}
+
+/**
+ * Gli schemi indicati, e le loro relazioni di qualunque tipo, di cui un ruolo indicato è il proprietario o un membro del
+ * proprietario (`MEMBER`: ne eredita i permessi o può diventarlo con SET ROLE).
+ */
+export async function ownedObjects(
+  client: CatalogClient,
+  schemas: readonly string[],
+  roles: readonly string[] = RUNTIME_ROLES,
+): Promise<OwnedObject[]> {
+  const result = await client.query<OwnedObject>(
+    `WITH roles(role) AS (SELECT unnest($2::text[]))
+     SELECT n.nspname::text AS schema, NULL::text AS relation, r.role, pg_get_userbyid(n.nspowner)::text AS owner
+       FROM pg_namespace n
+       JOIN roles r ON pg_has_role(r.role, n.nspowner, 'MEMBER')
+      WHERE n.nspname = ANY($1::text[])
+     UNION ALL
+     SELECT n.nspname::text, c.relname::text, r.role, pg_get_userbyid(c.relowner)::text
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN roles r ON pg_has_role(r.role, c.relowner, 'MEMBER')
+      WHERE n.nspname = ANY($1::text[])
+     ORDER BY 1, 2 NULLS FIRST, 3`,
     [schemas, roles],
   );
   return result.rows;
