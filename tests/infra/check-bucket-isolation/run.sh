@@ -19,9 +19,14 @@
 # hold it, and refuses every call once its module or configuration has changed. The remedy itself,
 # with the real client: tests/infra/aws-cli-empty-message/run.sh.
 #
+# Every scenario name starts with the requirement it protects: OPS-007 for all of them (the script
+# is the acceptance test of OPS-007), and also OPS-008 where the scenario's own expected messages
+# check the mirror rule of OPS-008 (the production keys refused on the mirror). The rest of the
+# name, its last word, is the scenario's key: for --show, --only and its folders.
+#
 # Usage: bash tests/infra/check-bucket-isolation/run.sh [--show <scenario>] [--only <scenario,...>]
-#   --show prints the whole output of one scenario (for example: oggi, corretto);
-#   --only runs only the listed scenarios.
+#   --show prints the whole output of one scenario, given by its key (for example: oggi, corretto);
+#   --only runs only the listed scenarios, given by their keys.
 # CHECK_SCRIPT=<path> runs the scenarios against another copy of the script (mutation tests).
 # Needs bash, python3 and openssl. Exit status: 0 every scenario as expected, 1 otherwise.
 set -u -o pipefail
@@ -203,7 +208,7 @@ no() {
   [ ! -s "$3" ] || tr -d '\r' <"$3" | sed 's/^/      | /' | tail -n 25
 }
 
-# prepare <name> <world scenario>: the scenario's folders and world; sets the d_* variables.
+# prepare <key> <world scenario>: the scenario's folders and world; sets the d_* variables.
 prepare() {
   d_out="$work/$1.out" d_log="$work/$1.log" d_state="$work/$1.state" d_world="$work/$1.world.json"
   d_home="$work/$1.home" d_tmp="$work/$1.tmp" d_cwd="$work/$1.cwd"
@@ -220,7 +225,7 @@ prepare() {
 verify() {
   local name=$1 want=$2 rc=$3 a t
   shift 3
-  [ "$show" != "$name" ] || tr -d '\r' <"$d_out"
+  [ "$show" != "${name##* }" ] || tr -d '\r' <"$d_out"
   if grep -F violation -- "$d_log" "$spylog" >/dev/null; then
     no "$name" "violazione: $(grep -h -F violation -- "$d_log" "$spylog" | head -n 1)" "$d_out"; return
   fi
@@ -255,8 +260,8 @@ verify() {
 # run_case <name> <world scenario> <expected status> <env changes ...> -- <script arguments ...>
 #   -- <expected messages ...>. The keys come from the environment; stdin is not a terminal.
 run_case() {
-  local name=$1 scenario=$2 want=$3
-  selected "$name" || return 0
+  local name=$1 key=${1##* } scenario=$2 want=$3
+  selected "$key" || return 0
   shift 3
   local envs=() args=() expects=() section=env a rc
   for a in "$@"; do
@@ -266,7 +271,7 @@ run_case() {
     fi
     case $section in env) envs+=("$a") ;; args) args+=("$a") ;; expects) expects+=("$a") ;; esac
   done
-  prepare "$name" "$scenario" || { no "$name" "mondo finto non creato" /dev/null; return; }
+  prepare "$key" "$scenario" || { no "$name" "mondo finto non creato" /dev/null; return; }
   (
     cd -- "$d_cwd" &&
       exec env -i PATH="$work/shims" HOME="$d_home" TMPDIR="$d_tmp" LANG=C.UTF-8 \
@@ -294,10 +299,11 @@ exit "$rc"'
 # run_pty_case <name> <world scenario> <expected status> <plan additions (JSON)> <expected messages ...>
 #   The keys are pasted at the prompts by pty-run, as by the user; no key is in the environment.
 run_pty_case() {
-  local name=$1 scenario=$2 want=$3 extra=$4 answers=() u rc plan="$work/$1.plan.json" result="$work/$1.result.json"
-  selected "$name" || return 0
+  local name=$1 key=${1##* } scenario=$2 want=$3 extra=$4 answers=() u rc plan result
+  plan="$work/$key.plan.json" result="$work/$key.result.json"
+  selected "$key" || return 0
   shift 4
-  prepare "$name" "$scenario" || { no "$name" "mondo finto non creato" /dev/null; return; }
+  prepare "$key" "$scenario" || { no "$name" "mondo finto non creato" /dev/null; return; }
   for u in "${UNITS[@]}"; do
     answers+=("${u}_ACCESS_KEY_ID" "${KEY_ID[$u]}" "${u}_SECRET_ACCESS_KEY" "${KEY_SECRET[$u]}")
   done
@@ -340,7 +346,7 @@ else:
 # excluded, must not match. Line numbers in the message are the script's own.
 static_check() {
   local name=$1 message=$2 hits
-  selected "$name" || return 0
+  selected "${name##* }" || return 0
   hits=$(grep -n -E -- "$3" "$script" | grep -v -E '^1:|^[0-9]+:[[:space:]]*#')
   if [ -n "$hits" ]; then
     no "$name" "$message: $(head -n 1 <<<"$hits")" /dev/null
@@ -353,21 +359,21 @@ echo "Prove a secco di infra/scripts/check-bucket-isolation.sh (OPS-007, OPS-008
 
 # Static checks: every program through the PATH, so the spies see it; every client call with its
 # redirections on a subshell, so a Ctrl-C trap runs with the terminal; no fixed temporary path.
-static_check programmi-solo-dal-path "lo script avvia programmi fuori dal PATH" \
+static_check "OPS-007 programmi-solo-dal-path" "lo script avvia programmi fuori dal PATH" \
   '/(usr|bin|sbin|opt|snap|nix|lib|lib64)/|(^|[^[:alnum:]_])PATH\+?=|hash[[:space:]]+-p|exec[[:space:]]+-[[:alnum:]]|command[[:space:]]+-[[:alnum:]]*p|"\$BASH"|\$\{?BASH\}?[[:space:]]+-c'
-static_check chiamate-al-client-in-una-subshell "una chiamata ad aws_run non è dentro ( … ) o \$( … )" \
+static_check "OPS-007 chiamate-al-client-in-una-subshell" "una chiamata ad aws_run non è dentro ( … ) o \$( … )" \
   '(^|[^(])aws_run([[:space:]]|$)'
-static_check nessun-percorso-temporaneo-fisso "lo script scrive in un percorso temporaneo fisso" \
+static_check "OPS-007 nessun-percorso-temporaneo-fisso" "lo script scrive in un percorso temporaneo fisso" \
   '/var/tmp|/dev/shm|[^-]/tmp/'
 
 # Units that do not exist yet: the state before the user creates them.
-run_case oggi oggi 1 -- -- \
+run_case "OPS-007 oggi" oggi 1 -- -- \
   "«file di produzione»: elenco dei bucket del suo progetto, chiesto a fsn1, non riuscito: InvalidAccessKeyId" \
   "«sola lettura dello specchio»: elenco dei bucket del suo progetto, chiesto a hel1, non riuscito: InvalidAccessKeyId" \
   "le prove fra le unità non partono" "Nessun oggetto di prova da cancellare." "FALLITO: 7 controlli, 7 falliti"
 
 # Isolation as planned.
-run_case corretto corretto 0 -- -- \
+run_case "OPS-007 OPS-008 corretto" corretto 0 -- -- \
   "Client: aws-cli/2.39.4 Python/3.14.8 Linux/7.0.0 exe/x86_64.fake" \
   "Correttivo del client: caricato (aws/aws-cli#10161)" \
   "«file di produzione»: l'elenco dei bucket del suo progetto, chiesto a fsn1, contiene solo foondaco-file" \
@@ -385,10 +391,10 @@ run_case corretto corretto 0 -- -- \
   "«nessuna chiave» → foondaco-backup: cancellazione rifiutata (l'oggetto di prova c'è ancora)" \
   "«specchio» → foondaco-specchio: oggetti di prova cancellati (1)" \
   "RIUSCITO: 148 controlli, nessuno fallito."
-run_case corretto-formato-vecchio corretto-formato-vecchio 0 -- -- "RIUSCITO: 148 controlli, nessuno fallito."
-run_case corretto-policy-per-progetto corretto-policy-per-progetto 0 -- -- "RIUSCITO: 148 controlli, nessuno fallito."
-BASH_FLAGS=-x run_case lanciato-con-bash-x corretto 0 -- -- "RIUSCITO: 148 controlli, nessuno fallito."
-run_case terminale-con-variabili-aws corretto 0 \
+run_case "OPS-007 corretto-formato-vecchio" corretto-formato-vecchio 0 -- -- "RIUSCITO: 148 controlli, nessuno fallito."
+run_case "OPS-007 corretto-policy-per-progetto" corretto-policy-per-progetto 0 -- -- "RIUSCITO: 148 controlli, nessuno fallito."
+BASH_FLAGS=-x run_case "OPS-007 lanciato-con-bash-x" corretto 0 -- -- "RIUSCITO: 148 controlli, nessuno fallito."
+run_case "OPS-007 terminale-con-variabili-aws" corretto 0 \
   "AWS_ACCESS_KEY_ID=${KEY_ID[FILE_PROD]}" "AWS_SECRET_ACCESS_KEY=${KEY_SECRET[FILE_PROD]}" \
   AWS_SESSION_TOKEN=x AWS_SECURITY_TOKEN=x AWS_PROFILE=x AWS_DEFAULT_PROFILE=x \
   AWS_ENDPOINT_URL=https://nbg1.your-objectstorage.com AWS_ENDPOINT_URL_S3=https://nbg1.your-objectstorage.com \
@@ -398,40 +404,40 @@ run_case terminale-con-variabili-aws corretto 0 \
   -- -- "RIUSCITO: 148 controlli, nessuno fallito."
 
 # Wrong setups: each one must make the script fail, naming the leak.
-run_case policy-larga policy-larga 1 -- -- \
+run_case "OPS-007 policy-larga" policy-larga 1 -- -- \
   "«sola lettura dello specchio» → foondaco-backup: scrittura PERMESSA, doveva essere rifiutata" \
   "«sola lettura dello specchio» → foondaco-backup: cancellazione PERMESSA, doveva essere rifiutata" \
   "«sola lettura dello specchio» → foondaco-backup: modifica della policy PERMESSA, doveva essere rifiutata" \
   "FALLITO: 148 controlli, 3 falliti"
-run_case policy-assente policy-assente 1 -- -- \
+run_case "OPS-007 policy-assente" policy-assente 1 -- -- \
   "«sola lettura dello specchio» → foondaco-backup: lista degli oggetti non riuscita: AccessDenied" \
   "«sola lettura dello specchio» → foondaco-backup: lettura non riuscita: AccessDenied" \
   "modifica della policy non provata, perché il proprietario non riesce a leggerla: NoSuchBucketPolicy" \
   "FALLITO: 148 controlli, 3 falliti"
-run_case progetto-condiviso progetto-condiviso 1 -- -- \
+run_case "OPS-007 progetto-condiviso" progetto-condiviso 1 -- -- \
   "«file di produzione»: l'elenco dei bucket del suo progetto, chiesto a fsn1, contiene «foondaco-file foondaco-file-test», atteso solo foondaco-file" \
   "le prove fra le unità non partono"
-run_case sola-lettura-nel-progetto-dei-backup sola-lettura-nel-progetto-dei-backup 1 -- -- \
+run_case "OPS-007 sola-lettura-nel-progetto-dei-backup" sola-lettura-nel-progetto-dei-backup 1 -- -- \
   "«sola lettura dello specchio»: l'elenco dei bucket del suo progetto, chiesto a fsn1, contiene «foondaco-backup», atteso vuoto" \
   "le prove fra le unità non partono"
-run_case lettura-incrociata lettura-incrociata 1 -- -- \
+run_case "OPS-007 lettura-incrociata" lettura-incrociata 1 -- -- \
   "«file di test» → foondaco-file: lista degli oggetti PERMESSA, doveva essere rifiutata" \
   "«file di test» → foondaco-file: lettura PERMESSA, doveva essere rifiutata" \
   "FALLITO: 148 controlli, 2 falliti"
-run_case produzione-scrive-nello-specchio produzione-scrive-nello-specchio 1 -- -- \
+run_case "OPS-007 OPS-008 produzione-scrive-nello-specchio" produzione-scrive-nello-specchio 1 -- -- \
   "«backup di produzione» → foondaco-specchio: scrittura PERMESSA, doveva essere rifiutata" \
   "«specchio» → foondaco-specchio: oggetti di prova cancellati (2)" \
   "FALLITO: 148 controlli, 1 fallito:"
-run_case bucket-pubblico bucket-pubblico 1 -- -- \
+run_case "OPS-007 bucket-pubblico" bucket-pubblico 1 -- -- \
   "«nessuna chiave» → foondaco-file: lista degli oggetti rifiutata" \
   "«nessuna chiave» → foondaco-file: lettura PERMESSA, doveva essere rifiutata" \
   "FALLITO: 148 controlli, 1 fallito:"
-run_case scrittura-anonima scrittura-anonima 1 -- -- \
+run_case "OPS-007 scrittura-anonima" scrittura-anonima 1 -- -- \
   "«nessuna chiave» → foondaco-backup-test: scrittura PERMESSA, doveva essere rifiutata" \
   "«nessuna chiave» → foondaco-backup-test: cancellazione PERMESSA, doveva essere rifiutata (l'oggetto di prova è sparito)" \
   "«backup di test» → foondaco-backup-test: oggetti di prova cancellati (2)" \
   "FALLITO: 148 controlli, 2 falliti"
-run_case codice-diverso codice-diverso 1 -- -- \
+run_case "OPS-007 OPS-008 codice-diverso" codice-diverso 1 -- -- \
   "«file di produzione» → foondaco-backup: lettura, risposta inattesa NoSuchBucket (attesa AccessDenied)" \
   "«backup di produzione» → foondaco-specchio: lista degli oggetti, risposta inattesa NoSuchBucket (attesa AccessDenied)" \
   "«backup di produzione» → foondaco-specchio: scrittura, risposta inattesa NoSuchBucket (attesa AccessDenied)" \
@@ -440,108 +446,108 @@ run_case codice-diverso codice-diverso 1 -- -- \
   "«nessuna chiave» → foondaco-file: scrittura, risposta inattesa NoSuchBucket (attesa AccessDenied)" \
   "«sola lettura dello specchio» → foondaco-backup: lettura riuscita" \
   "FALLITO: 148 controlli, 119 falliti"
-run_case cancellazione-che-mente cancellazione-che-mente 1 -- -- \
+run_case "OPS-007 cancellazione-che-mente" cancellazione-che-mente 1 -- -- \
   "«file di test» → foondaco-file: cancellazione con risposta AccessDenied, ma l'oggetto di prova è sparito" \
   "«sola lettura dello specchio» → foondaco-file: lettura rifiutata" "FALLITO: 148 controlli, 1 fallito:"
-run_case cancellazione-finta cancellazione-finta 1 -- -- \
+run_case "OPS-007 cancellazione-finta" cancellazione-finta 1 -- -- \
   "«sola lettura dello specchio» → foondaco-backup: cancellazione PERMESSA, doveva essere rifiutata" \
   "FALLITO: 148 controlli, 1 fallito:"
-run_case scrittura-che-mente scrittura-che-mente 1 -- -- \
+run_case "OPS-007 scrittura-che-mente" scrittura-che-mente 1 -- -- \
   "«file di test» → foondaco-file: scrittura rifiutata" \
   "«file di produzione» → foondaco-file: c'erano oggetti che una scrittura rifiutata non doveva lasciare: scrittura-FILE_TEST.txt" \
   "FALLITO: 149 controlli, 1 fallito:"
-run_case errore-con-chiave errore-con-chiave 1 -- -- \
+run_case "OPS-007 errore-con-chiave" errore-con-chiave 1 -- -- \
   "«file di test»: elenco dei bucket del suo progetto, chiesto a fsn1, non riuscito: codice di uscita 255: Could not connect to the endpoint URL" \
   "id=[chiave]&secret=[chiave]" "le prove fra le unità non partono"
 
 # Configuration errors: exit status 2, before any call with a key.
-run_case manca-una-variabile corretto 2 FILE_TEST_REGION= -- -- "manca la variabile FILE_TEST_REGION"
-run_case mancano-due-variabili corretto 2 FILE_TEST_REGION= MIRROR_DST_BUCKET= -- -- \
+run_case "OPS-007 manca-una-variabile" corretto 2 FILE_TEST_REGION= -- -- "manca la variabile FILE_TEST_REGION"
+run_case "OPS-007 mancano-due-variabili" corretto 2 FILE_TEST_REGION= MIRROR_DST_BUCKET= -- -- \
   "mancano le variabili FILE_TEST_REGION MIRROR_DST_BUCKET"
-run_case bucket-ripetuto corretto 2 MIRROR_DST_BUCKET=foondaco-file -- -- \
+run_case "OPS-007 bucket-ripetuto" corretto 2 MIRROR_DST_BUCKET=foondaco-file -- -- \
   "FILE_PROD_BUCKET e MIRROR_DST_BUCKET indicano lo stesso bucket"
-run_case access-key-ripetuta corretto 2 "MIRROR_SRC_ACCESS_KEY_ID=${KEY_ID[FILE_PROD]}" -- -- \
+run_case "OPS-007 access-key-ripetuta" corretto 2 "MIRROR_SRC_ACCESS_KEY_ID=${KEY_ID[FILE_PROD]}" -- -- \
   "MIRROR_SRC_ACCESS_KEY_ID è uguale a FILE_PROD_ACCESS_KEY_ID"
-run_case chiave-con-spazi corretto 2 "FILE_PROD_ACCESS_KEY_ID=${KEY_ID[FILE_PROD]} x" -- -- \
+run_case "OPS-007 chiave-con-spazi" corretto 2 "FILE_PROD_ACCESS_KEY_ID=${KEY_ID[FILE_PROD]} x" -- -- \
   "FILE_PROD_ACCESS_KEY_ID contiene spazi"
-run_case indirizzo-http corretto 2 FILE_PROD_ENDPOINT=http://fsn1.your-objectstorage.com -- -- \
+run_case "OPS-007 indirizzo-http" corretto 2 FILE_PROD_ENDPOINT=http://fsn1.your-objectstorage.com -- -- \
   "FILE_PROD_ENDPOINT deve essere un indirizzo https:// senza percorso"
-run_case chiave-mancante-senza-terminale corretto 2 BACKUP_TEST_SECRET_ACCESS_KEY= -- -- \
+run_case "OPS-007 chiave-mancante-senza-terminale" corretto 2 BACKUP_TEST_SECRET_ACCESS_KEY= -- -- \
   "manca BACKUP_TEST_SECRET_ACCESS_KEY e il terminale non è interattivo"
-run_case chiave-come-argomento corretto 2 -- "${KEY_SECRET[FILE_PROD]}" -- \
+run_case "OPS-007 chiave-come-argomento" corretto 2 -- "${KEY_SECRET[FILE_PROD]}" -- \
   "argomento non previsto: lo script accetta solo --aws <client> e --help"
-run_case client-assente corretto 2 -- --aws "$work/non-esiste" -- "client S3 non trovato"
+run_case "OPS-007 client-assente" corretto 2 -- --aws "$work/non-esiste" -- "client S3 non trovato"
 
 # The client remedy (aws/aws-cli#10161): not loaded, or another client version, stops the script
 # before any key; a temporary folder whose path holds ':' too (the client would split it); once the
 # remedy changes during the run, no call is made any more.
-run_case correttivo-non-caricato correttivo-non-caricato 2 -- -- \
+run_case "OPS-007 correttivo-non-caricato" correttivo-non-caricato 2 -- -- \
   "il correttivo del client non risulta caricato, oppure il client non è aws-cli 2.39.4"
-run_case client-di-altra-versione client-di-altra-versione 2 -- -- \
+run_case "OPS-007 client-di-altra-versione" client-di-altra-versione 2 -- -- \
   "il correttivo del client non risulta caricato, oppure il client non è aws-cli 2.39.4" \
   "risposta del client: foondaco_empty_message: loaded aws-cli/2.40.0 Python/3.14.8"
-run_case client-2.39.40 client-2.39.40 2 -- -- \
+run_case "OPS-007 client-2.39.40" client-2.39.40 2 -- -- \
   "il correttivo del client non risulta caricato, oppure il client non è aws-cli 2.39.4"
 mkdir -p -- "$work/due:punti"
-run_case cartella-temporanea-con-due-punti corretto 2 "TMPDIR=$work/due:punti" -- -- \
+run_case "OPS-007 cartella-temporanea-con-due-punti" corretto 2 "TMPDIR=$work/due:punti" -- -- \
   "non riesco a scrivere il correttivo del client in"
 if selected cartella-temporanea-con-due-punti-vuota; then
   if [ -z "$(cd -- "$work/due:punti" && shopt -s nullglob dotglob && printf '%s' *)" ]; then
-    ok cartella-temporanea-con-due-punti-vuota
+    ok "OPS-007 cartella-temporanea-con-due-punti-vuota"
   else
-    no cartella-temporanea-con-due-punti-vuota "lo script ha lasciato file nella cartella temporanea con «:»" /dev/null
+    no "OPS-007 cartella-temporanea-con-due-punti-vuota" "lo script ha lasciato file nella cartella temporanea con «:»" /dev/null
   fi
 fi
-run_case cartella-temporanea-relativa corretto 2 "TMPDIR=." -- -- \
+run_case "OPS-007 cartella-temporanea-relativa" corretto 2 "TMPDIR=." -- -- \
   "non riesco a scrivere il correttivo del client in ./check-bucket-isolation."
-run_case correttivo-alterato-durante-la-prova correttivo-alterato 1 -- -- \
+run_case "OPS-007 correttivo-alterato-durante-la-prova" correttivo-alterato 1 -- -- \
   "Correttivo del client: caricato (aws/aws-cli#10161)" \
   "«file di test» → foondaco-file-test: scrittura non riuscita: codice di uscita 3: correttivo del client alterato: chiamata non fatta" \
   "le prove fra le unità non partono"
-run_case configurazione-del-correttivo-alterata correttivo-configurazione-alterata 1 -- -- \
+run_case "OPS-007 configurazione-del-correttivo-alterata" correttivo-configurazione-alterata 1 -- -- \
   "«file di test» → foondaco-file-test: scrittura non riuscita: codice di uscita 3: correttivo del client alterato: chiamata non fatta" \
   "le prove fra le unità non partono"
 
 # The keys pasted at the prompts, in a terminal, as the user will do (I2). Each part asked gets
 # exactly one «ricevuta» line; a part asked again gets none.
-run_pty_case chiavi-dal-terminale corretto 0 '{"pad": true}' \
+run_pty_case "OPS-007 chiavi-dal-terminale" corretto 0 '{"pad": true}' \
   "Incolla ogni parte dal gestore di password" "=12:  ricevuta" \
   "Chiavi ricevute: non incollare altro in questo terminale fino alla fine della prova." \
   "RIUSCITO: 148 controlli, nessuno fallito."
-run_pty_case incolla-prima-della-domanda corretto 0 \
+run_pty_case "OPS-007 incolla-prima-della-domanda" corretto 0 \
   '{"strays": [{"after": "check-bucket-isolation.sh: isolamento delle unità di archivio S3", "text": "FAKEIDEARLYPASTEJX9Z\r"}]}' \
   "=12:  ricevuta" "RIUSCITO: 148 controlli, nessuno fallito."
-run_pty_case invio-in-piu corretto 0 '{"extra_enter_after": "FILE_PROD_ACCESS_KEY_ID"}' \
+run_pty_case "OPS-007 invio-in-piu" corretto 0 '{"extra_enter_after": "FILE_PROD_ACCESS_KEY_ID"}' \
   "=1:è vuota: incollala di nuovo dal gestore di password" "=12:  ricevuta" "RIUSCITO: 148 controlli, nessuno fallito."
-run_pty_case incollata-due-volte corretto 0 '{"duplicate_at": "FILE_PROD_SECRET_ACCESS_KEY"}' \
+run_pty_case "OPS-007 incollata-due-volte" corretto 0 '{"duplicate_at": "FILE_PROD_SECRET_ACCESS_KEY"}' \
   "=1:è uguale a FILE_PROD_ACCESS_KEY_ID: incollala di nuovo dal gestore di password" \
   "=12:  ricevuta" "RIUSCITO: 148 controlli, nessuno fallito."
-run_pty_case incollata-con-spazi corretto 0 \
+run_pty_case "OPS-007 incollata-con-spazi" corretto 0 \
   '{"bad_paste_at": "FILE_PROD_ACCESS_KEY_ID", "bad": "FAKEIDWRONGPAIRJX7Z fakeSecretWrongPairPastedWV7Q"}' \
   "=1:contiene spazi: incollala di nuovo dal gestore di password" "=12:  ricevuta" \
   "RIUSCITO: 148 controlli, nessuno fallito."
-run_pty_case ctrl-z-alle-chiavi corretto 0 '{"suspend_at": "FILE_PROD_ACCESS_KEY_ID"}' \
+run_pty_case "OPS-007 ctrl-z-alle-chiavi" corretto 0 '{"suspend_at": "FILE_PROD_ACCESS_KEY_ID"}' \
   "=12:  ricevuta" "RIUSCITO: 148 controlli, nessuno fallito."
-run_pty_case incolla-durante-la-prova corretto 0 '{"strays": [
+run_pty_case "OPS-007 incolla-durante-la-prova" corretto 0 '{"strays": [
     {"after": "1. Ogni chiave nel proprio bucket", "text": "FAKEIDSTRAYONEJX8Z\r"},
     {"after": "2. Ogni chiave nei bucket delle altre unità", "text": "fakeSecretStrayWithoutEnterTwoWV8Q"},
     {"after": "3. Richieste senza chiave", "text": "FAKEIDSTRAYTHREEJX8Z\r"},
     {"after": "4. Pulizia degli oggetti di prova", "text": "fakeSecretStrayWithoutEnterFourWV8Q"}]}' \
   "=12:  ricevuta" "RIUSCITO: 148 controlli, nessuno fallito."
-NO_CALLS=1 run_pty_case correttivo-non-caricato-al-terminale correttivo-non-caricato 2 '{}' \
+NO_CALLS=1 run_pty_case "OPS-007 correttivo-non-caricato-al-terminale" correttivo-non-caricato 2 '{}' \
   "il correttivo del client non risulta caricato" "=0:Incolla ogni parte dal gestore di password" "=0:  ricevuta"
-NO_CALLS=1 run_pty_case ctrl-d-alle-chiavi corretto 2 '{"abort_at": {"var": "BACKUP_PROD_ACCESS_KEY_ID", "char": "\u0004"}}' \
+NO_CALLS=1 run_pty_case "OPS-007 ctrl-d-alle-chiavi" corretto 2 '{"abort_at": {"var": "BACKUP_PROD_ACCESS_KEY_ID", "char": "\u0004"}}' \
   "lettura di BACKUP_PROD_ACCESS_KEY_ID interrotta" "=2:  ricevuta" \
   "Non incollare altre chiavi in questo terminale: chiudilo e aprine uno nuovo"
-NO_CALLS=1 run_pty_case ctrl-c-alle-chiavi corretto 130 '{"abort_at": {"var": "BACKUP_PROD_ACCESS_KEY_ID", "char": "\u0003"}}' \
+NO_CALLS=1 run_pty_case "OPS-007 ctrl-c-alle-chiavi" corretto 130 '{"abort_at": {"var": "BACKUP_PROD_ACCESS_KEY_ID", "char": "\u0003"}}' \
   "=1:ATTENZIONE: lo script si è fermato mentre chiedeva le chiavi." "=2:  ricevuta" "=1:Interrotto."
-NO_CALLS=1 run_pty_case doppio-ctrl-c-alle-chiavi corretto 130 \
+NO_CALLS=1 run_pty_case "OPS-007 doppio-ctrl-c-alle-chiavi" corretto 130 \
   '{"abort_at": {"var": "BACKUP_PROD_ACCESS_KEY_ID", "char": "\u0003", "again_after": "Interrotto."}}' \
   "=1:ATTENZIONE: lo script si è fermato mentre chiedeva le chiavi." "=2:  ricevuta" "=1:Interrotto."
-run_pty_case ctrl-c-durante-la-prova attesa-nella-prova 130 \
+run_pty_case "OPS-007 ctrl-c-durante-la-prova" attesa-nella-prova 130 \
   '{"strays": [{"after": "FAKE-AWS-IN-ATTESA", "text": "\u0003"}]}' \
   "=12:  ricevuta" "=1:Interrotto: gli oggetti di prova restano sotto check-bucket-isolation/"
-run_pty_case ctrl-c-durante-la-policy attesa-nella-policy 130 \
+run_pty_case "OPS-007 ctrl-c-durante-la-policy" attesa-nella-policy 130 \
   '{"strays": [{"after": "FAKE-AWS-IN-ATTESA", "text": "\u0003"}]}' \
   "=12:  ricevuta" "=1:Interrotto: gli oggetti di prova restano sotto check-bucket-isolation/"
 

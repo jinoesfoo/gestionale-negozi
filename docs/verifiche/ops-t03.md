@@ -175,7 +175,7 @@ Dopo un'interruzione, o se la pulizia non è riuscita, gli oggetti rimasti sotto
 
 - **OPS-005** (versioning dei bucket dei file, versioni precedenti per 30 giorni, sovrascrittura e recupero; i bucket dei backup senza versioni né ciclo di vita; il testimone del ciclo di vita): A5, E1, E2, E4, G1–G9.
 - **OPS-007** (unità separate senza accesso reciproco; l'unica eccezione è la chiave di sola lettura, che lista e legge il bucket dei backup di produzione e lì non scrive né cancella): A5, B1–B2, C1–C3, E7–E8, F1–F2, I0–I3, J6.
-- **OPS-008**, parte dell'archivio (specchio versionato e bloccato, ciclo di vita a 45 giorni, nessun accesso delle chiavi di produzione allo specchio): A5, C4, E1, E3, E5, H1–H5, I2–I3. La copia notturna e il delete marker dopo la sincronizzazione sono di OPS-T01b.
+- **OPS-008**, parte dell'archivio (specchio versionato e bloccato, ciclo di vita a 45 giorni, nessun accesso delle chiavi di produzione allo specchio): A5, C4, E1, E3, E5, H1–H5, I0, I2–I3. La copia notturna e il delete marker dopo la sincronizzazione sono di OPS-T01b.
 - **[VERIFICA] di OPS-T03** (chiave di sola lettura da un altro progetto con la policy del bucket): F1–F2, I2–I3, J2.
 - **[VERIFICA] di OPS-008** (Object Lock in modalità COMPLIANCE, conservazione riletta prima di scrivere nello specchio): E5–E6, H2–H4; la prova della nota «Per OPS-T01b»: H6.
 - **OPS-009**, parte delle chiavi: B4, K1.
