@@ -103,6 +103,12 @@ Terminale 2, righe 1348–1351 del README (`load_key file-prod`, `load_key file-
 - La verifica la fa, non prima di 38 giorni dall'ultima scrittura, la prima prova di ripristino mensile da quella data in poi (OPS-004, con la lista che scrive OPS-T01b), oppure COL-T01; comunque prima del passaggio alle chiavi reali (specifica 09).
 - Le altre righe della lista restano valide, tranne quelle che il testimone cambia: A4 (il terminale nuovo), A5 (il rilancio di chiusura sul README con il passo 14) e K2–K5, che hanno un secondo giro dopo G9. Il testimone è un oggetto nuovo, fuori dai prefissi delle altre prove.
 
+**Testimone del ciclo di vita (G6–G9).**
+
+| # | Esito |
+|---|---|
+| G6 | Riuscito (23/11/2026, Claude, fase codice, sul README del commit cd16d5c, con il passo 14): `bash tests/infra/testimone-ops-005/run.sh` → `Prove: 51, come attese: 51, diverse: 0`. Il passo 14 è la bozza provata in fase test, copiata senza cambiamenti: il README che ne risulta è uguale byte per byte alla copia provata. Prima, in fase test, sul README senza il passo 14: `Prove: 6, come attese: 3, diverse: 3`, con i tre «NO» dovuti al passo che mancava (il titolo, il blocco «Scrittura», il blocco «Verifica»). Lo stesso giorno, sullo stesso README, A5: `Prove: 44, come attese: 44, diverse: 0` (blocco del passo 4, righe 752–1177, invariato dal commit 4fe4882). Da rilanciare dopo ogni modifica dei due blocchi o del blocco del passo 4 e in chiusura. |
+
 ## H. Specchio: le versioni bloccate
 
 Terminale 2, righe 1371–1372 del README (`load_key specchio-scrittura`, `test_lock && test_h6`), 21/11/2026 17:35:21–17:35:37, dopo E5 (17:26). Uscita incollata dall'utente, da «== H1».
