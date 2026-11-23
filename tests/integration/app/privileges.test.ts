@@ -6,6 +6,7 @@ import {
   effectiveTableGrants,
   existingSchemas,
   ownedObjects,
+  roleStandings,
   RUNTIME_ROLES,
   type SchemaGrant,
   type TableGrant,
@@ -22,7 +23,9 @@ import { closeRolePools, rolePool } from '../../fixtures/db';
 // membro del proprietario, di public e delle sue relazioni, né (tranne app_jobs) di pgboss e delle sue relazioni. I
 // controlli sono funzioni che ricevono un client, provate anche sul caso che deve fallire: in una transazione del
 // proprietario annullata, oppure, per i proprietari, con app_owner al posto dei ruoli di runtime, perché app_owner non ha
-// CREATEROLE e non può dare un ruolo né cedere un oggetto.
+// CREATEROLE e non può dare un ruolo né cedere un oggetto. Nota (11)(a): nessun ruolo di runtime è superuser né membro di
+// un altro ruolo (compresi i ruoli predefiniti pg_*), perché quei permessi non hanno voci nel catalogo letto sopra; il
+// caso che deve fallire usa pg_monitor e il superuser che ha creato il database.
 
 const owner = () => rolePool('owner');
 
@@ -88,7 +91,19 @@ async function checkPrivileges(client: CatalogClient): Promise<string[]> {
   }
 
   violations.push(...(await ownershipViolations(client)));
+  violations.push(...(await membershipViolations(client)));
   return violations;
+}
+
+/** I ruoli indicati che sono superuser o membri di un altro ruolo. */
+async function membershipViolations(
+  client: CatalogClient,
+  roles: readonly string[] = RUNTIME_ROLES,
+): Promise<string[]> {
+  return (await roleStandings(client, roles)).flatMap((standing) => [
+    ...(standing.superuser ? [`ruolo ${standing.role}: superuser`] : []),
+    ...standing.memberOf.map((granted) => `ruolo ${standing.role}: membro di ${granted}`),
+  ]);
 }
 
 /**
@@ -167,5 +182,22 @@ describe('permessi dei ruoli di runtime', () => {
       ]),
     );
     expect(await ownershipViolations(owner(), ['app_jobs'])).toEqual([]);
+  });
+
+  it('NEG-012: il controllo delle appartenenze segnala un ruolo membro di un altro ruolo e un superuser, e legge tutti i ruoli di runtime', async () => {
+    const bootstrap = await owner().query<{ name: string }>(
+      'SELECT rolname::text AS name FROM pg_roles WHERE oid = 10',
+    );
+    const superuser = bootstrap.rows[0]?.name;
+    expect(superuser).toBeDefined();
+    expect(await membershipViolations(owner(), ['pg_monitor', superuser!])).toEqual(
+      expect.arrayContaining(['ruolo pg_monitor: membro di pg_read_all_stats', `ruolo ${superuser}: superuser`]),
+    );
+    // Controllo positivo: la lettura trova i tre ruoli di runtime (un ruolo assente non darebbe violazioni).
+    expect((await roleStandings(owner(), RUNTIME_ROLES)).map((standing) => standing.role)).toEqual([
+      'app_jobs',
+      'app_user',
+      'app_worker',
+    ]);
   });
 });

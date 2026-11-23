@@ -135,6 +135,33 @@ export async function ownedObjects(
   return result.rows;
 }
 
+/** Un ruolo: se è superuser e di quali ruoli è membro (pg_auth_members, con o senza INHERIT e SET). */
+export interface RoleStanding {
+  role: string;
+  superuser: boolean;
+  memberOf: string[];
+}
+
+/**
+ * Superuser e appartenenze dei ruoli indicati che esistono (nota (11)(a)): i permessi effettivi letti sopra non vedono
+ * un ruolo raggiunto con SET ROLE, i ruoli predefiniti come pg_read_all_data né i permessi di un superuser.
+ */
+export async function roleStandings(client: CatalogClient, roles: readonly string[]): Promise<RoleStanding[]> {
+  const result = await client.query<RoleStanding>(
+    `SELECT r.rolname::text AS role, r.rolsuper AS superuser,
+            coalesce(array_agg(DISTINCT g.rolname::text ORDER BY g.rolname::text) FILTER (WHERE g.rolname IS NOT NULL),
+                     '{}') AS "memberOf"
+       FROM pg_roles r
+       LEFT JOIN pg_auth_members m ON m.member = r.oid
+       LEFT JOIN pg_roles g ON g.oid = m.roleid
+      WHERE r.rolname = ANY($1::text[])
+      GROUP BY r.rolname, r.rolsuper
+      ORDER BY 1`,
+    [roles],
+  );
+  return result.rows;
+}
+
 /** Gli schemi indicati che esistono. */
 export async function existingSchemas(client: CatalogClient, schemas: readonly string[]): Promise<string[]> {
   const result = await client.query<{ name: string }>(

@@ -14,6 +14,8 @@ import {
 type Allowlist = Readonly<Record<string, TableAllowlist>>;
 const ROLES = ['app_user', 'app_worker', 'app_jobs'] as const;
 const WRITES = ['INSERT', 'UPDATE', 'DELETE'];
+/** Le colonne dei dati del negozio, le sole che app_user modifica (02 §Permessi su shops, NEG-009), in ordine. */
+const SHOPS_DATA_COLUMNS = ['address', 'legal_name', 'name', 'pec', 'sdi_code', 'tax_code', 'vat_number'];
 
 /** I permessi di un ruolo su una tabella: quelli sulla tabella e quelli per colonna, come elenchi ordinati. */
 function grantsOf(allowlist: Allowlist, table: string, role: (typeof ROLES)[number]) {
@@ -83,6 +85,9 @@ function allowlistViolations(allowlist: Allowlist): string[] {
   if (has('shops')) {
     without('shops', 'app_user', ['INSERT', 'DELETE']);
     without('shops', 'app_worker', ['INSERT', 'DELETE']);
+    // Nota (11)(b): regole esatte di §Permessi su shops.
+    exactly('shops', 'app_user', ['SELECT'], { UPDATE: SHOPS_DATA_COLUMNS });
+    exactly('shops', 'app_worker', ['SELECT']);
   }
   if (has('sdi_invoices')) {
     without('sdi_invoices', 'app_user', WRITES);
@@ -118,26 +123,32 @@ describe('elenco consentito', () => {
     expect(allowlistViolations(TABLE_PRIVILEGES)).toEqual([]);
   });
 
-  it('NEG-012: shops dà SELECT ai due ruoli e UPDATE delle sole colonne dei dati ad app_user', () => {
-    const DATA_COLUMNS = ['address', 'legal_name', 'name', 'pec', 'sdi_code', 'tax_code', 'vat_number'];
-    expect(grantsOf(TABLE_PRIVILEGES, 'shops', 'app_user')).toMatchObject({
-      onTable: ['SELECT'],
-      onColumns: { UPDATE: DATA_COLUMNS },
-    });
-    expect(grantsOf(TABLE_PRIVILEGES, 'shops', 'app_worker')).toMatchObject({ onTable: ['SELECT'], onColumns: {} });
+  it('NEG-012: shops dà SELECT ai due ruoli e UPDATE delle sole colonne dei dati ad app_user, e nient’altro', () => {
+    const exact = (role: (typeof ROLES)[number]) => {
+      const { onTable, onColumns } = grantsOf(TABLE_PRIVILEGES, 'shops', role);
+      return { onTable, onColumns };
+    };
+    expect(exact('app_user')).toEqual({ onTable: ['SELECT'], onColumns: { UPDATE: SHOPS_DATA_COLUMNS } });
+    expect(exact('app_worker')).toEqual({ onTable: ['SELECT'], onColumns: {} });
+    expect(exact('app_jobs')).toEqual({ onTable: [], onColumns: {} });
   });
 
   it('NEG-012: le regole segnalano un elenco che concede ciò che la specifica vieta', () => {
     const tampered: Allowlist = {
       ...TABLE_PRIVILEGES,
       audit_log: { app_user: { table: ['SELECT', 'INSERT', 'DELETE'] }, app_worker: { table: ['SELECT', 'INSERT'] } },
-      shops: { app_user: { table: ['SELECT'], columns: { INSERT: ['name'] } }, app_worker: { table: ['SELECT'] } },
+      shops: {
+        app_user: { table: ['SELECT'], columns: { INSERT: ['name'] } },
+        app_worker: { table: ['SELECT'], columns: { UPDATE: ['status'] } },
+      },
       platform_config: { app_jobs: { table: ['SELECT'] } },
     };
     expect(allowlistViolations(tampered)).toEqual(
       expect.arrayContaining([
         'audit_log app_user: permessi sulla tabella DELETE, INSERT, SELECT',
         'shops app_user: ha INSERT',
+        'shops app_user: permessi per colonna {"INSERT":["name"]}',
+        'shops app_worker: permessi per colonna {"UPDATE":["status"]}',
         'platform_config app_jobs: ha SELECT',
       ]),
     );

@@ -19,10 +19,16 @@ import { closeRolePools, rolePool, testDatabaseUrl } from '../../fixtures/db';
 // security_invoker, e non ci sono viste materializzate né tabelle esterne (nota (10)(c)): leggerebbero le tabelle senza
 // la RLS di chi le interroga. I controlli sul catalogo sono funzioni che ricevono un client, provate anche sul caso che
 // deve fallire in una transazione del proprietario annullata. La riga da copiare e il caso NEG-003 usano testo SQL con
-// pg, nomi quotati dal catalogo e valori come parametri (nota (10)(d)).
+// pg, nomi quotati dal catalogo e valori come parametri (nota (10)(d)). Il database dei test è anche quello di sviluppo
+// (nota (11)(c)): il test cancella solo i negozi delle fixture, cioè quelli rimasti da un'esecuzione interrotta (con il
+// sottodominio e il nome della fixture) e, alla fine, quelli che ha creato; si ferma se un sottodominio delle fixture è
+// di un altro negozio.
 
 const owner = () => rolePool('owner');
-const SUBDOMAINS = ['negozio-a', 'negozio-b'];
+const FIXTURE_SHOPS = [
+  { subdomain: 'negozio-a', name: 'Negozio A', userId: 'fixture-user-a' },
+  { subdomain: 'negozio-b', name: 'Negozio B', userId: 'fixture-user-b' },
+] as const;
 const POLICY_VIOLATION = /^new row violates row-level security policy/;
 const PERMISSION_DENIED = /^permission denied for table/;
 
@@ -30,12 +36,29 @@ let appPool: Pool;
 let context: DbContext;
 let shopA: FixtureShop;
 let shopB: FixtureShop;
+/** Gli id dei negozi creati da questo file, gli unici che afterAll cancella. */
+const createdShopIds: string[] = [];
 
 beforeAll(async () => {
   // Negozi rimasti da un'esecuzione interrotta: senza, la creazione fallirebbe sul sottodominio unico.
-  await owner().query('DELETE FROM public.shops WHERE subdomain = ANY($1::text[])', [SUBDOMAINS]);
-  shopA = await createFixtureShop(owner(), { subdomain: 'negozio-a', name: 'Negozio A', userId: 'fixture-user-a' });
-  shopB = await createFixtureShop(owner(), { subdomain: 'negozio-b', name: 'Negozio B', userId: 'fixture-user-b' });
+  for (const shop of FIXTURE_SHOPS) {
+    await owner().query('DELETE FROM public.shops WHERE subdomain = $1 AND name = $2', [shop.subdomain, shop.name]);
+  }
+  const taken = await owner().query<{ subdomain: string; name: string }>(
+    'SELECT subdomain, name FROM public.shops WHERE subdomain = ANY($1::text[]) ORDER BY subdomain',
+    [FIXTURE_SHOPS.map((shop) => shop.subdomain)],
+  );
+  if (taken.rows.length > 0) {
+    const list = taken.rows.map((row) => `${row.subdomain} («${row.name}»)`).join(', ');
+    throw new Error(
+      `Sottodomini delle fixture occupati da negozi che non sono delle fixture: ${list}. Il test di separazione non ` +
+        'li cancella: toglili dal database di sviluppo, o cambiane il sottodominio, e rilancia.',
+    );
+  }
+  shopA = await createFixtureShop(owner(), FIXTURE_SHOPS[0]);
+  createdShopIds.push(shopA.id);
+  shopB = await createFixtureShop(owner(), FIXTURE_SHOPS[1]);
+  createdShopIds.push(shopB.id);
   for (const fixture of Object.values(SHOP_DATA_FIXTURES)) {
     await fixture(owner(), shopA);
     await fixture(owner(), shopB);
@@ -47,7 +70,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Le righe delle altre tabelle seguono il negozio (ON DELETE CASCADE).
-  await owner().query('DELETE FROM public.shops WHERE subdomain = ANY($1::text[])', [SUBDOMAINS]);
+  if (createdShopIds.length > 0) {
+    await owner().query('DELETE FROM public.shops WHERE id = ANY($1::uuid[])', [createdShopIds]);
+  }
   await appPool?.end();
   await closeRolePools();
 });
