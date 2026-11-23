@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { type SQL, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDbContext, type DbContext } from '@/server/db/context';
@@ -22,7 +23,10 @@ import { closeRolePools, rolePool, testDatabaseUrl } from '../../fixtures/db';
 // pg, nomi quotati dal catalogo e valori come parametri (nota (10)(d)). Il database dei test è anche quello di sviluppo
 // (nota (11)(c)): il test cancella solo i negozi delle fixture, cioè quelli rimasti da un'esecuzione interrotta (con il
 // sottodominio e il nome della fixture) e, alla fine, quelli che ha creato; si ferma se un sottodominio delle fixture è
-// di un altro negozio.
+// di un altro negozio. Nota (12)(b): con il contesto di A, TRUNCATE (che non passa dalla RLS) e lo spostamento di una
+// riga di A nel negozio B sono rifiutati su ogni tabella di negozio; le due istruzioni girano in una transazione che si
+// annulla sempre, e il caso che deve fallire usa il proprietario al posto di app_user su una tabella creata nella
+// transazione annullata.
 
 const owner = () => rolePool('owner');
 const FIXTURE_SHOPS = [
@@ -157,10 +161,10 @@ interface AppUserAccess {
   updateColumns: string[];
 }
 
-/** I permessi effettivi di app_user sulla tabella, letti dal catalogo (relacl e attacl). */
-async function appUserAccess({ table, key }: ShopTable): Promise<AppUserAccess> {
-  const grants = (await effectiveTableGrants(owner(), 'public', ['app_user'])).filter((g) => g.table === table);
-  const columns = await columnsOf(owner(), table);
+/** I permessi effettivi di app_user sulla tabella, letti dal catalogo (relacl e attacl) visto dal client. */
+async function appUserAccess({ table, key }: ShopTable, client: CatalogClient = owner()): Promise<AppUserAccess> {
+  const grants = (await effectiveTableGrants(client, 'public', ['app_user'])).filter((g) => g.table === table);
+  const columns = await columnsOf(client, table);
   const onTable = (privilege: string) => grants.some((g) => g.privilege === privilege && g.column === null);
   const onColumns = (privilege: string) =>
     grants.filter((g) => g.privilege === privilege && g.column !== null).map((g) => g.column!);
@@ -216,6 +220,33 @@ async function inShop(shop: FixtureShop, statement: SQL): Promise<Outcome> {
   }
 }
 
+/** L'esito di un'istruzione riuscita, portato fuori da withShop con un errore che ne annulla la transazione. */
+class RolledBack extends Error {
+  readonly outcome: Outcome;
+
+  constructor(outcome: Outcome) {
+    super('Transazione annullata dal test di separazione.');
+    this.outcome = outcome;
+  }
+}
+
+/**
+ * L'istruzione con il contesto del negozio, in una transazione che si annulla sempre (nota (12)(b)): un permesso
+ * concesso per sbaglio non svuota e non sposta davvero le righe del database, che è anche quello di sviluppo.
+ */
+async function inShopRolledBack(shop: FixtureShop, statement: SQL): Promise<Outcome> {
+  try {
+    await context.withShop({ shopId: shop.id, userId: shop.userId, actor: 'user' }, async (tx) => {
+      const result = await tx.execute(statement);
+      throw new RolledBack({ ok: true, rowCount: result.rowCount ?? 0, rows: result.rows });
+    });
+  } catch (error) {
+    if (error instanceof RolledBack) return error.outcome;
+    return { ok: false, error };
+  }
+  throw new Error('withShop è terminata senza annullare la transazione.');
+}
+
 /** Vero se l'esito è il rifiuto con 42501 e il messaggio indicato (DbError conserva il messaggio della classe 42). */
 function refused(outcome: Outcome, message: RegExp): boolean {
   return (
@@ -232,6 +263,35 @@ const describeOutcome = (outcome: Outcome) =>
     : outcome.error instanceof Error
       ? outcome.error.message
       : String(outcome.error);
+
+/**
+ * NEG-004, nota (12)(b): con il contesto di A, su ogni tabella data, TRUNCATE (che non passa dalla RLS) è rifiutato con
+ * «permission denied», e lo spostamento di una riga di A nel negozio B (che creerebbe una riga di B) è rifiutato dalla
+ * policy se app_user ha UPDATE sulla colonna del negozio, altrimenti con «permission denied». I permessi di app_user
+ * si leggono dal catalogo visto dal client; `run` esegue ogni istruzione in una transazione che si annulla sempre.
+ */
+async function truncateAndMoveViolations(
+  client: CatalogClient,
+  tables: readonly ShopTable[],
+  run: (statement: SQL) => Promise<Outcome>,
+): Promise<string[]> {
+  const violations: string[] = [];
+  for (const entry of tables) {
+    const { table, key } = entry;
+    const access = await appUserAccess(entry, client);
+    const truncate = await run(sql`TRUNCATE ${tableRef(table)}`);
+    if (!refused(truncate, PERMISSION_DENIED)) {
+      violations.push(`${table}: TRUNCATE non rifiutato (${describeOutcome(truncate)})`);
+    }
+    const move = await run(
+      sql`UPDATE ${tableRef(table)} SET ${sql.identifier(key)} = ${shopB.id}::uuid WHERE ${matches(table, key, shopA)}`,
+    );
+    if (!refused(move, access.updateColumns.includes(key) ? POLICY_VIOLATION : PERMISSION_DENIED)) {
+      violations.push(`${table}: spostamento di una riga di A nel negozio B non rifiutato (${describeOutcome(move)})`);
+    }
+  }
+  return violations;
+}
 
 describe('tabelle di negozio e fixture', () => {
   it('NEG-002: ogni tabella di negozio (con shop_id, più shops) ha RLS abilitata e forzata e almeno una policy', async () => {
@@ -423,6 +483,60 @@ describe('separazione con il contesto di un negozio', () => {
       }
     }
     expect(violations).toEqual([]);
+  });
+
+  it('NEG-004: con il contesto di A, su ogni tabella di negozio TRUNCATE e lo spostamento di una riga di A nel negozio B sono rifiutati', async () => {
+    const tables = await shopTables(owner());
+    expect(tables.map((entry) => entry.table)).toEqual(expect.arrayContaining(['shops', 'audit_log']));
+    expect(await truncateAndMoveViolations(owner(), tables, (statement) => inShopRolledBack(shopA, statement))).toEqual(
+      [],
+    );
+
+    // Controllo positivo: un'istruzione permessa riesce, e la transazione si annulla comunque.
+    const rename = await inShopRolledBack(
+      shopA,
+      sql`UPDATE ${tableRef('shops')} SET name = 'Negozio A annullato' WHERE ${matches('shops', 'id', shopA)}`,
+    );
+    expect(rename).toMatchObject({ ok: true, rowCount: 1 });
+    const name = await owner().query<{ name: string }>('SELECT name FROM public.shops WHERE id = $1::uuid', [shopA.id]);
+    expect(name.rows).toEqual([{ name: FIXTURE_SHOPS[0].name }]);
+  });
+
+  it('NEG-004: il controllo segnala un TRUNCATE e uno spostamento di una riga in un altro negozio non rifiutati', async () => {
+    const client = await owner().connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('CREATE TABLE public.neg_t05_svuotabile (shop_id uuid)');
+      await client.query('INSERT INTO public.neg_t05_svuotabile (shop_id) VALUES ($1::uuid), ($2::uuid)', [
+        shopA.id,
+        shopB.id,
+      ]);
+      // Il proprietario al posto di app_user: le istruzioni riescono, ciascuna in un savepoint che si annulla sempre.
+      const db = drizzle({ client });
+      const asOwner = async (statement: SQL): Promise<Outcome> => {
+        await client.query('SAVEPOINT neg_t05');
+        try {
+          const result = await db.execute(statement);
+          return { ok: true, rowCount: result.rowCount ?? 0, rows: result.rows };
+        } catch (error) {
+          return { ok: false, error };
+        } finally {
+          await client.query('ROLLBACK TO SAVEPOINT neg_t05');
+        }
+      };
+      const violations = await truncateAndMoveViolations(
+        client,
+        [{ table: 'neg_t05_svuotabile', key: 'shop_id' }],
+        asOwner,
+      );
+      expect(violations).toEqual([
+        'neg_t05_svuotabile: TRUNCATE non rifiutato (0 righe)',
+        'neg_t05_svuotabile: spostamento di una riga di A nel negozio B non rifiutato (1 righe)',
+      ]);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 
   it('NEG-003: senza contesto, sulla stessa connessione riusata dopo una transazione con contesto, ogni tabella di negozio dà 0 righe senza errori e un inserimento è rifiutato dalla policy', async () => {

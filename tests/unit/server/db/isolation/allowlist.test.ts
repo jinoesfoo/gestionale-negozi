@@ -9,11 +9,14 @@ import {
 // L'elenco consentito (02 NEG-012 e NEG-T05, note (3) e (5) del piano) rispetta le regole dell'accettazione di NEG-012
 // per ogni tabella che contiene: il test di integrazione confronta il database con l'elenco, questo controlla che
 // l'elenco stesso non conceda ciò che la specifica vieta. Le regole per le tabelle che nasceranno in compiti successivi
-// valgono appena la tabella entra nell'elenco.
+// valgono appena la tabella entra nell'elenco. Nota (12)(a): su ogni tabella, app_user e app_worker hanno solo SELECT,
+// INSERT, UPDATE e DELETE.
 
 type Allowlist = Readonly<Record<string, TableAllowlist>>;
 const ROLES = ['app_user', 'app_worker', 'app_jobs'] as const;
 const WRITES = ['INSERT', 'UPDATE', 'DELETE'];
+/** I permessi che non riguardano i dati: nessun ruolo di runtime li ha (nota (12)(a)). */
+const NON_DATA_PRIVILEGES = ['TRUNCATE', 'TRIGGER', 'REFERENCES', 'MAINTAIN'];
 /** Le colonne dei dati del negozio, le sole che app_user modifica (02 §Permessi su shops, NEG-009), in ordine. */
 const SHOPS_DATA_COLUMNS = ['address', 'legal_name', 'name', 'pec', 'sdi_code', 'tax_code', 'vat_number'];
 
@@ -61,6 +64,11 @@ function allowlistViolations(allowlist: Allowlist): string[] {
       'TRIGGER',
       'MAINTAIN',
     ]);
+    // Nota (12)(a): agli altri ruoli di runtime solo permessi sui dati. TRUNCATE non passa dalla RLS, TRIGGER aggancia
+    // una funzione alle scritture di ogni negozio, MAINTAIN comprende LOCK TABLE; REFERENCES non serve a nessuna area.
+    for (const role of ['app_user', 'app_worker'] as const) {
+      without(table, role, NON_DATA_PRIVILEGES);
+    }
   }
   for (const table of [
     'platform_admins',
@@ -142,6 +150,11 @@ describe('elenco consentito', () => {
         app_worker: { table: ['SELECT'], columns: { UPDATE: ['status'] } },
       },
       platform_config: { app_jobs: { table: ['SELECT'] } },
+      // Nota (12)(a): una tabella senza regola esatta, con permessi che non riguardano i dati.
+      sdi_invoices: {
+        app_user: { table: ['SELECT', 'TRUNCATE'] },
+        app_worker: { table: ['SELECT'], columns: { REFERENCES: ['shop_id'] } },
+      },
     };
     expect(allowlistViolations(tampered)).toEqual(
       expect.arrayContaining([
@@ -150,6 +163,8 @@ describe('elenco consentito', () => {
         'shops app_user: permessi per colonna {"INSERT":["name"]}',
         'shops app_worker: permessi per colonna {"UPDATE":["status"]}',
         'platform_config app_jobs: ha SELECT',
+        'sdi_invoices app_user: ha TRUNCATE',
+        'sdi_invoices app_worker: ha REFERENCES',
       ]),
     );
   });
