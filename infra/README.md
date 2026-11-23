@@ -513,7 +513,1113 @@ _Da scrivere in FON-T07b:_ revisione dell'immagine Caddy con `reverse_proxy` e a
 
 ## Archivi S3 (OPS-T03)
 
-_Da scrivere in OPS-T03:_ fornitore scelto, progetti, bucket, chiavi, versioning, ciclo di vita, policy, client S3 da usare dal terminale dell'utente, `check-bucket-isolation.sh`.
+Specifica: 08 OPS-004 (la parte delle chiavi), OPS-005, OPS-007, OPS-008, OPS-009 e il compito OPS-T03. Lista di controllo: `docs/verifiche/ops-t03.md`, le cui righe (A1–K5) sono le sigle usate qui. Esiti: `docs/verifiche/ops-t03-esito.md`.
+
+Fornitore: **Hetzner Object Storage**, console https://console.hetzner.com. Una coppia di chiavi Hetzner vale per tutti i bucket del suo progetto. Per questo ogni unità ha un progetto suo, e le chiavi di sola lettura stanno in un progetto senza bucket (08 OPS-007). La sola lettura la dà la policy del bucket dei backup di produzione (08, [VERIFICA] di OPS-T03).
+
+Serve un account Hetzner dell'utente (`AVVIO.md`, «Fuori da GitHub»): si crea su https://accounts.hetzner.com/login → «Register Now», con la valuta EUR, e si protegge con l'autenticazione a due fattori («Settings» → «Two-factor authentication»), con numero cliente e recovery key nel gestore di password. Object Storage ha un prezzo base per account, non per progetto: 6,49 € al mese più IVA (0,0104 € l'ora, fino a quel tetto), con 1 TB di spazio e 1 TB di traffico in uscita compresi, per tutti i bucket insieme. Oltre, lo spazio costa 0,0087 € l'ora per TB e il traffico in uscita 1 € per TB, IVA esclusa; caricamenti, traffico interno e richieste non si pagano. Si paga ogni ora in cui esiste almeno un bucket, anche vuoto: progetti e chiavi da soli non costano. I cinque bucket pagano quindi un solo prezzo base (pagina di Hetzner «Object Storage», letta il 19/11/2026; il 18/11 la documentazione dava ancora i 4,99 € del lancio).
+
+| Progetto | id (B3) | Bucket | Luogo | Impostazioni | Chiave → dove va |
+|---|---|---|---|---|---|
+| `file-prod` | 16852034 | `foondaco-file` | Falkenstein, `fsn1` | versioning; versioni precedenti tenute 30 giorni | `file-prod` → `S3_ACCESS_KEY_ID` e `S3_SECRET_ACCESS_KEY` della produzione (FON-T07b) |
+| `backup-prod` | 16852084 | `foondaco-backup` | Falkenstein, `fsn1` | niente versioning né ciclo di vita; policy di sola lettura per le chiavi di `lettura-backup-prod` | `pgbackrest-prod` → `PGBACKREST_REPO1_S3_KEY` e `PGBACKREST_REPO1_S3_KEY_SECRET` di `postgres.env` della produzione (OPS-T01a) |
+| `file-test` | 16852085 | `foondaco-file-test` | Falkenstein, `fsn1` | come `file-prod` | `file-test` → `S3_ACCESS_KEY_ID` e `S3_SECRET_ACCESS_KEY` del server di test (FON-T07b) |
+| `backup-test` | 16852086 | `foondaco-backup-test` | Falkenstein, `fsn1` | niente versioning né ciclo di vita | `pgbackrest-test` → `PGBACKREST_REPO1_S3_KEY` e `PGBACKREST_REPO1_S3_KEY_SECRET` di `postgres.env` del server di test (OPS-T01a) |
+| `specchio` | 16852088 | `foondaco-specchio` | **Norimberga (nella console «Nuremberg»), `nbg1`**, non Helsinki: specifica 08, OPS-T03, «Luogo dello specchio» | Object Lock con conservazione predefinita COMPLIANCE di 45 giorni; versioni precedenti e delete marker tolti dopo 45 giorni | `specchio-scrittura` → `MIRROR_DST_ACCESS_KEY_ID` e `MIRROR_DST_SECRET_ACCESS_KEY` di `backup-mirror.env` del server di test (OPS-T01b) |
+| `lettura-backup-prod` | 16852089 | nessuno | — | — | `specchio-lettura` → `MIRROR_SRC_ACCESS_KEY_ID` e `MIRROR_SRC_SECRET_ACCESS_KEY` di `backup-mirror.env` del server di test (OPS-T01b); le chiavi temporanee `prova-ripristino-AAAAMMGG` della prova mensile (OPS-004), cancellate a fine prova (nel terminale delle chiavi si chiamano `prova-ripristino`) |
+
+Indirizzi e regioni, che non sono segreti: `https://fsn1.your-objectstorage.com` con la regione `fsn1`, `https://nbg1.your-objectstorage.com` con la regione `nbg1`.
+
+**Regole.**
+
+- Le chiavi le crea l'utente nella console. Stanno solo nel gestore di password e nella copia sigillata (OPS-009): mai in chat, in git, in un file o in una schermata, nemmeno la sola Access key.
+- Il client S3 è **AWS CLI v2, versione 2.39.4** (passo 1). Prende le chiavi solo dal suo ambiente, dove gliele mette, per ogni singolo comando, il terminale delle chiavi (passo 4). Non si usano mai:
+  - `aws configure` in nessuna forma (nemmeno `aws configure agent-toolkit`, che l'installatore suggerisce) e `aws login`: scrivono in `~/.aws`;
+  - `aws update`: installa l'ultima versione, non quella fissata;
+  - l'opzione `--debug`: scrive nei messaggi la Access key.
+- **Il correttivo del client** (specifica 08, OPS-T03, «Difetto del client S3»; lista di controllo, regola del correttivo). Il client 2.39.4 ha un difetto aperto, aws/aws-cli#10161, non corretto fino alla 2.42.1 (letto il 21/11/2026). Quando una risposta di errore ha il testo vuoto, si ferma con `aws: [ERROR]: argument of type 'NoneType' is not a container or iterable` (codice di uscita 255) e non mostra il codice. Hetzner risponde così agli `AccessDenied` provati (richieste senza chiave e con la chiave, 21/11/2026) e alle impostazioni assenti (`NoSuchLifecycleConfiguration`, `ObjectLockConfigurationNotFoundError`).
+  - **Cosa fa.** Un piccolo modulo Python per il client (un «plugin»), scritto dal blocco del passo 4 e da `check-bucket-isolation.sh`, mette un testo vuoto al posto di quello mancante, prima del controllo che si ferma. Così il client mostra il codice. Non legge né cambia altro: né le richieste, né le chiavi, né il resto delle risposte.
+  - **Dove sta.** Il modulo sta nella cartella temporanea del terminale, in sola lettura, con accanto un file di configurazione del client che contiene solo il suo nome e la sua cartella, nessuna chiave. Le righe del correttivo, fra i segni `# >>> aws-cli-empty-message` e `# <<< aws-cli-empty-message`, sono uguali byte per byte nel blocco e nello script. Le confronta la prova A5, che prova anche il correttivo con il client vero.
+  - **I controlli.** Prima di qualsiasi chiave, il blocco controlla senza rete che il client carichi il correttivo e sia il 2.39.4, e scrive «correttivo del client: attivo (aws-cli/2.39.4 …)». Prima di ogni comando ricontrolla i due file: se sono cambiati, il comando non parte.
+  - **Quando si toglie.** Quando una versione nuova del client corregge il difetto (aws/aws-cli#10161 chiuso, correzione nel registro delle modifiche). Con la 2.39.4 installata A5 non lo può segnalare: lo conferma A5 con la versione nuova installata, perché senza correttivo il client non si ferma più. Allora, con un compito nuovo, si fissa la versione nuova al passo 1 e si toglie il correttivo.
+- Valgono le regole scritte in alto nella lista di controllo: dei 15 minuti, della policy, del terminale delle chiavi, degli appunti, della lettura e del correttivo.
+- I 15 minuti valgono anche per le riletture: prima, Hetzner può rispondere con la configurazione vecchia (FAQ di Hetzner «Buckets and objects», letta il 18/11/2026).
+- Nella console non si usano mai «Reset visibility/policy» (menu «⋯» del bucket nell'elenco) né «Reset Bucket visibility» (menu «Actions» nella pagina del bucket): potrebbero sostituire la policy. Le chiavi si creano solo da «Security» → «S3 credentials». Anche «Generate credentials» del menu «⋯» di un bucket crea una chiave del progetto, che ne avrebbe così due.
+- Stato del servizio: https://status.hetzner.com.
+  - Il 18/11/2026 Object Storage risultava «partially degraded» a Helsinki (scritture lente o fallite, dal 13/11) e a Falkenstein (dal 14/11), tutti e due in «Monitoring».
+  - Dal 18/11/2026 alle 14:32 UTC: «Object Storage HEL: Creation of new buckets temporarily unavailable»: dal 19/11/2026 alle 10:00 ora italiana a Helsinki non si creano bucket nuovi, per un ampliamento di circa tre settimane (pagina letta il 20/11/2026). Per questo lo specchio si crea a Norimberga, dove il 20/11/2026 non c'erano avvisi aperti di Object Storage (solo la manutenzione del 02/12, qui sotto); prima di crearlo si guarda di nuovo la pagina.
+  - Il 02/12/2026, dalle 12 alle 24 ora italiana, c'è una manutenzione di Object Storage con brevi interruzioni: in quella finestra non si fanno i passi da D a J.
+  - Un errore di rete o del fornitore non è un esito (lista di controllo, I, voce «Rete o fornitore»).
+- Se la console è in tedesco: «Sicherheit» → «S3-Zugangsdaten» → «Zugangsdaten generieren»; «Bucket erstellen»; «Schutz aktivieren»; «Sichtbarkeit/Richtlinie zurücksetzen» (da non usare).
+
+### 1. Client S3 (A2; A3 la fa Claude)
+
+AWS CLI v2 **2.39.4**, del 04/11/2026: la più recente uscita entro il 04/11/2026, cioè con almeno due settimane alla data del piano. Si installa dall'archivio ufficiale con la versione nel nome, dopo averne verificato la firma. Claude ha verificato il 18/11/2026 archivio e firma: la firma è buona, fatta con la chiave qui sotto, e l'archivio ha lo SHA-256 `5153610ddd5dff13d43b2965c92d58f16e9f3f54164eea76d3abb29f38787597`.
+
+In una finestra qualsiasi dell'applicazione «Terminal» (Terminale), sempre la stessa: qui non servono chiavi. Si incolla un blocco alla volta e si preme Invio.
+
+**1.** Una cartella nuova e i due file:
+
+```bash
+D=$(mktemp -d) && cd "$D"
+curl -fsSLO https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.39.4.zip
+curl -fsSLO https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.39.4.zip.sig
+```
+
+**2.** La chiave pubblica con cui AWS firma il client, copiata dalla pagina di AWS «Installing or updating to the latest version of the AWS CLI». È la stessa che sta nello script ufficiale `install.sh` della versione 2.39.4 (lette e confrontate il 18/11/2026). Impronta `FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C`, scadenza 01/07/2027. Il comando la copia da questo README, dove è scritta qui sotto, nel file `aws-cli-team.asc`, così non si incolla a mano:
+
+```bash
+sed -n '/^-----BEGIN PGP PUBLIC KEY BLOCK-----$/,/^-----END PGP PUBLIC KEY BLOCK-----$/p' ~/gestionale-negozi/infra/README.md > aws-cli-team.asc
+```
+
+La chiave che il comando copia (è l'unica di questo README):
+
+```text
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mQINBF2Cr7UBEADJZHcgusOJl7ENSyumXh85z0TRV0xJorM2B/JL0kHOyigQluUG
+ZMLhENaG0bYatdrKP+3H91lvK050pXwnO/R7fB/FSTouki4ciIx5OuLlnJZIxSzx
+PqGl0mkxImLNbGWoi6Lto0LYxqHN2iQtzlwTVmq9733zd3XfcXrZ3+LblHAgEt5G
+TfNxEKJ8soPLyWmwDH6HWCnjZ/aIQRBTIQ05uVeEoYxSh6wOai7ss/KveoSNBbYz
+gbdzoqI2Y8cgH2nbfgp3DSasaLZEdCSsIsK1u05CinE7k2qZ7KgKAUIcT/cR/grk
+C6VwsnDU0OUCideXcQ8WeHutqvgZH1JgKDbznoIzeQHJD238GEu+eKhRHcz8/jeG
+94zkcgJOz3KbZGYMiTh277Fvj9zzvZsbMBCedV1BTg3TqgvdX4bdkhf5cH+7NtWO
+lrFj6UwAsGukBTAOxC0l/dnSmZhJ7Z1KmEWilro/gOrjtOxqRQutlIqG22TaqoPG
+fYVN+en3Zwbt97kcgZDwqbuykNt64oZWc4XKCa3mprEGC3IbJTBFqglXmZ7l9ywG
+EEUJYOlb2XrSuPWml39beWdKM8kzr1OjnlOm6+lpTRCBfo0wa9F8YZRhHPAkwKkX
+XDeOGpWRj4ohOx0d2GWkyV5xyN14p2tQOCdOODmz80yUTgRpPVQUtOEhXQARAQAB
+tCFBV1MgQ0xJIFRlYW0gPGF3cy1jbGlAYW1hem9uLmNvbT6JAlQEEwEIAD4CGwMF
+CwkIBwIGFQoJCAsCBBYCAwECHgECF4AWIQT7Xbd/1cEYuAURraimMQrMRnJHXAUC
+akV0ygUJDqP4lQAKCRCmMQrMRnJHXFHjD/9eyZLYcKuQOlLvtqSDtUBiEZf6ZZjM
+i3ygYH8rJNtuToUH+HvSpe819urJCquXhDrlK6N+aqW0hCLtNABJG/vsafIgvIYJ
+hSGgpgtNnQyMV1jViRWqPjbouw8OkYKBThUfT1i2Y+wn58ifs6ODBCmTexWtXspA
+Si+Gt49xDOW0APmbOPnI+a4HJW6tVEo6MWS0WjzpiBayR3d1A4pt4YrPfSdDgpLo
+h2SLQqlRqvvVZJaWBjhkErNFpfsBA06sDcPEOb0G8LBUbR4WOcdvhe5LubJbZuxC
+AG9kNPCVeQP1ixwjgjXKysaxeQ6rv0VzIQgRp6tLVLWhy6AKDNvLjFSsmXZ1Wl08
+Y/RlOHXlzLuQMRE6sR1wOdRxc9TsrNWTGiBK65cvSWOy03JeBkQQ8pesqltiyxI9
+U21kkgiXtTSKNGfKK8pO27D81YANhRqPK7iTp6kuFiY2WtOg90KTMNlIT+Ff85Y2
+b1rHj6Z0SrCkJujhWk3IBPic/wJgz01LEc/OAdUPlby90RJZcIBhSlWhT7mXnXIO
+c0HWlNQrns2s3CTyYwZSiSlYe9ApeLwhjDo8NhbFuCAy61l6O5UsR4AfZxx/rGKv
+2wFb1/RN/P4gNe6vmxZAPjR0AQcwD3tc2McimOLr/22kmPz8IH3I0X7WoSFr0Biz
+E91G7bb0hOb/cA==
+=knv7
+-----END PGP PUBLIC KEY BLOCK-----
+```
+
+**3.** La verifica della firma e, solo se è buona, l'installazione e la versione:
+
+```bash
+gpg --homedir ./gnupg-vuota --dearmor < aws-cli-team.asc > aws-cli-team.gpg
+gpgv --keyring ./aws-cli-team.gpg awscli-exe-linux-x86_64-2.39.4.zip.sig awscli-exe-linux-x86_64-2.39.4.zip && unzip -qo awscli-exe-linux-x86_64-2.39.4.zip && sudo ./aws/install && aws --version
+```
+
+La cartella `./gnupg-vuota` non esiste e non viene creata: serve solo a non toccare il portachiavi personale. `sudo` chiede la password dell'utente del computer. L'uscita, da incollare a Claude (A2), è questa:
+
+```
+gpgv: Signature made Wed 04 Nov 2026 09:17:39 PM CET
+gpgv:                using RSA key FB5DB77FD5C118B80511ADA8A6310ACC4672475C
+gpgv: Good signature from "AWS CLI Team <aws-cli@amazon.com>"
+You can now run: /usr/local/bin/aws --version
+Tip: run 'aws configure agent-toolkit' to set up AWS skills and the AWS MCP server for your AI coding agent(s).
+aws-cli/2.39.4 Python/3.14.8 Linux/7.0.0-43-generic exe/x86_64.ubuntu.26
+```
+
+- Contano «Good signature» e l'impronta nella riga «using RSA key». La data di «Signature made» cambia forma con la lingua del computer.
+- Il suggerimento «Tip» non si segue.
+- In `aws --version` conta `aws-cli/2.39.4`: il resto dipende dal sistema.
+- Con «BAD signature» o «Can't check signature» non si va avanti: il `&&` ferma l'installazione, e lo si dice a Claude.
+- Se il blocco si ferma a `sudo` (password sbagliata, o Ctrl+C), nella stessa cartella si lancia solo `sudo ./aws/install && aws --version`. Se risponde «Found preexisting AWS CLI installation», un client c'è già: si lancia `aws --version` e si manda a Claude quello che stampa.
+
+**4.** Pulizia:
+
+```bash
+cd ~ && rm -rf "$D"
+```
+
+A3 (Claude): `~/.aws/credentials` e `~/.aws/config` non esistono (controllo della sola esistenza). Il client può creare `~/.aws/cli/cache/session.db`, un numero di sessione senza chiavi. Il terminale delle chiavi lo spegne (`AWS_CLI_SESSION_ID_DISABLED=true`); lo script di I2, che toglie tutte le variabili `AWS_*`, no: per questo I2 lo lancia con una cartella di casa nuova e vuota, dove il file finisce al posto di `~/.aws`.
+
+**Cambio di versione.** Si ripetono gli stessi passi con il numero nuovo; al posto di `sudo ./aws/install` si usa `sudo ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update`. Dopo il 01/07/2027 la chiave pubblica si riprende dalla pagina di AWS, che pubblica la stessa chiave con la scadenza prolungata: l'impronta non cambia. Non si prende da un keyserver: `keyserver.ubuntu.com` ne ha una copia scaduta.
+
+### 2. Progetti e chiavi (B1–B4) (utente)
+
+**1. Progetti (A1, B1).** Prima di tutto (A1): https://console.hetzner.com/projects, con il proprio account Hetzner (se non c'è ancora, lo si crea come scritto in alto), e una schermata dell'elenco dei progetti. Poi «New project» (con l'elenco vuoto è il pulsante rosso al centro della pagina) → il nome → il pulsante di conferma (nella console precedente era «Add project»). I sei progetti, con questi nomi: `file-prod`, `backup-prod`, `file-test`, `backup-test`, `specchio`, `lettura-backup-prod`. Poi una schermata dell'elenco dei progetti.
+
+Per entrare in un progetto: https://console.hetzner.com/projects → clic sul nome del progetto. Il progetto aperto si vede nella barra in alto e nell'indirizzo (`/projects/<id>/…`, con l'id della tabella in alto). Prima di ogni «Generate credentials» e di ogni «Create Bucket» si guardano tutti e due: il 19/11/2026 le sei chiavi sono state create tutte in `lettura-backup-prod`.
+
+**2. Una chiave per progetto (B2, B4)**, con il nome della tabella: `file-prod`, `pgbackrest-prod`, `file-test`, `pgbackrest-test`, `specchio-scrittura`, `specchio-lettura`.
+
+1. Nel progetto: menu a sinistra «Security» → scheda «S3 credentials» → «Generate credentials».
+2. «Description»: il nome della chiave → «Generate credentials».
+3. La finestra «Credentials generated» mostra «ACCESS KEY» e, dopo «Click to show», «SECRET KEY». La Secret key si vede **una volta sola**. Prima di chiudere la finestra:
+   - nel gestore di password, una voce nuova `Hetzner S3 · <progetto> · <chiave>` con due campi, «Access key» e «Secret key», copiati dalla finestra;
+   - si salva la voce, la si riapre e si controlla che ci siano i due valori (B4).
+
+   Niente schermate di questa finestra.
+4. Si chiude la finestra.
+
+Secondo una fonte non di Hetzner, una chiave nuova può metterci qualche istante a funzionare: nel frattempo risponde come una chiave sbagliata (`InvalidAccessKeyId`).
+
+Finite le sei chiavi, negli appunti resta l'ultima Secret key copiata. Prima di scrivere a Claude si copia una parola qualsiasi, per esempio il nome di un progetto, e prima di ogni invio si guarda la casella di Claude (regola degli appunti).
+
+Poi, per ciascuna delle sei voci, una risposta scritta a Claude (B4), per esempio «voce `Hetzner S3 · backup-prod · pgbackrest-prod`: Access key e Secret key ci sono». Mai un «ok» per più voci insieme, e niente schermate delle voci: mostrano la Access key. La copia sigillata (OPS-009) si aggiorna alla fine, al passo 13 (K1), quando le chiavi non cambiano più.
+
+**3. Controllo (B2).** Per ogni progetto, una risposta scritta a Claude con il nome della sua unica chiave (colonna «Description»). Il nome si scrive a mano: una riga copiata dalla tabella contiene anche la Access key. Niente schermate di questa pagina: la colonna «Access Key» mostra la chiave per intero.
+
+Una chiave creata nel progetto sbagliato non si sposta. Nel progetto dove si trova: menu «⋯» alla fine della sua riga → «Delete» → conferma. Poi si cancella la sua voce nel gestore di password, e la chiave si rifà nel progetto giusto (punto 2), con una voce nuova. Dopo, B4 per le voci nuove e B2 per tutti i progetti.
+
+**4. Id dei progetti (B3).** L'id è il numero subito dopo `/projects/` nell'indirizzo di una pagina del progetto (`https://console.hetzner.com/projects/<id>/…`). Nella pagina di un bucket c'è anche un secondo numero, dopo `/buckets/`: non è quello. I sei id vanno a Claude, perché non sono segreti: come testo, ciascuno con il nome del suo progetto, copiato dalla barra dell'indirizzo. Niente schermate per gli id: la pagina «Security» → «S3 credentials», dove si è appena stati, mostra le Access key. Claude scrive gli id nella tabella in alto, in `READ_PROJECT_ID` (passo 4) e nella policy di D5.
+
+### 3. Bucket (C1–C5) (utente)
+
+In ciascuno dei cinque progetti delle unità, non in `lettura-backup-prod` (si entra nel progetto e si guarda che sia quello giusto, come al passo 2):
+
+1. Menu a sinistra «STORAGE» → «Object Storage» → «Create Bucket». Se «Object Storage» non si vede, un clic su «STORAGE» apre il gruppo.
+2. «Location»: «Falkenstein» per i quattro bucket di file e backup, «Nuremberg» (Norimberga) solo per `foondaco-specchio`. Si guarda ogni volta: il 19/11/2026 la finestra di `foondaco-file-test` era compilata con «Nuremberg», che per quel bucket era sbagliato.
+3. «Name/URL»: il nome del bucket. La parte grigia dopo il nome deve dire `.fsn1.your-objectstorage.com` (Falkenstein) per i quattro bucket di file e backup, `.nbg1.your-objectstorage.com` (Nuremberg) per lo specchio.
+4. «Object Lock»: «Disabled», tranne per `foondaco-specchio`, dove si sceglie «Enabled». Dopo la creazione non si cambia più.
+5. «Visibility»: «Private».
+6. Prima del pulsante, una schermata della finestra compilata: è la schermata di C3 e, per lo specchio, anche di C4.
+7. «Create & Buy now». La fattura di Object Storage parte dal primo bucket. Per lo specchio si annota l'ora (C4): da lì partono i 15 minuti.
+
+Se un nome è già preso (i nomi sono unici fra tutti i clienti di Hetzner), ci si ferma e lo si dice a Claude, che sceglie con l'utente un nome nuovo e aggiorna il README.
+
+Controlli:
+
+- **C1.** In ogni progetto, «Object Storage» mostra un solo bucket, con il suo nome e il luogo (colonna «Location»: Falkenstein, oppure Nuremberg per lo specchio). Una schermata per progetto.
+- **C2.** In `lettura-backup-prod`, «Object Storage» non mostra bucket («You don't have any Buckets yet»). L'elenco comprende tutti i luoghi. Una schermata.
+- **C3.** La schermata della finestra di creazione, con «Private». Se la pagina del bucket mostra la visibilità, anche una schermata di quella. Le prove vere sono E8 (nessuna policy sugli altri bucket) e le richieste senza chiave di I2.
+- **C5**, solo dopo che C1 è giusto. Un bucket nel progetto sbagliato, nel luogo sbagliato o con Object Lock sbagliato non si sposta e non si rinomina: si cancella finché è vuoto e senza protezione (menu «⋯» alla fine della sua riga → «Delete» → conferma), e si rifà. Con lo stesso proprietario il nome si può riusare subito; per gli altri clienti resta bloccato 14 giorni (FAQ di Hetzner «Buckets & objects», letta il 19/11/2026). Poi, nell'elenco di «Object Storage»: menu «⋯» alla fine della riga del bucket → «Enable protection». Accanto al bucket compare un lucchetto. Una schermata per bucket.
+
+### 4. Terminale delle chiavi (A4) (utente)
+
+Un terminale delle chiavi è sempre una finestra nuova dell'applicazione «Terminal» (Terminale), aperta apposta e mai usata per altro: dal menu delle applicazioni, oppure con Ctrl+Maiusc+N da una finestra del Terminale già aperta. Se ne apre una all'inizio di D, una per I2, e una nuova quando la precedente è stata chiusa; negli altri passi si continua in quella aperta, come dicono i passi.
+
+- Non si usa il terminale di VS Code, e da questa finestra non si avvia Claude Code. La lista di controllo dice che ne erediterebbe le chiavi: con il blocco qui sotto non sono più esportate, ma la regola resta, perché questa finestra serve solo alle chiavi.
+- Qui si lanciano solo i comandi di questa sezione.
+- Si incolla con il tasto destro → «Paste» (Incolla) o con Ctrl+Maiusc+V; si copia con il tasto destro → «Copy» (Copia) o con Ctrl+Maiusc+C (regole del terminale e degli appunti).
+- Ogni blocco si incolla tutto insieme, poi si preme Invio.
+
+Il primo comando è tutto il blocco qui sotto, incollato in una volta sola, poi Invio. Se il Terminale chiede conferma per incollare più righe, si conferma. Se va tutto bene, il blocco stampa tre righe, da incollare a Claude (A4):
+
+```
+cronologia: spenta
+terminale: ptyxis-agent (shell 12345, 18/11/2026 16:10:00)
+correttivo del client: attivo (aws-cli/2.39.4 Python/3.14.8 Linux/7.0.0-43-generic exe/x86_64.ubuntu.26)
+```
+
+`ptyxis-agent` è il Terminale di Ubuntu 26.04 (Ptyxis).
+- Se compare «cronologia: ACCESA», o la scritta che parla di VS Code, si chiude la finestra e se ne apre una nuova.
+- Se compare «ATTENZIONE: il client aws non è in /usr/local/bin», non si va avanti e lo si dice a Claude (passo 1): senza quel file nessun comando verso Hetzner parte. Un eventuale suggerimento del Terminale per installare il client (con `snap` o `apt`) non si segue: installerebbe un client diverso da quello controllato al passo 1.
+- Se al posto della riga «correttivo del client: attivo …» compare «ATTENZIONE: correttivo del client non attivo», non si caricano chiavi: si chiude la finestra e lo si dice a Claude (regola del correttivo), incollandogli tutte le righe stampate dal blocco. Possono essere più di tre: la riga «risposta del client: …», quando c'è, è la prima, sopra «cronologia: …». In quel terminale `load_key` non chiede chiavi, e nessun comando verso Hetzner parte.
+- Se dopo l'incolla il Terminale mostra una riga che comincia con `> ` e non stampa le righe attese, il blocco è arrivato a metà: Ctrl+C, si chiude la finestra e se ne apre una nuova.
+
+Per la lettura (D0), ecco cosa fa il blocco.
+
+- Spegne la cronologia della shell e il suo file (nessun comando resta salvato) e il passaggio automatico ai programmi delle variabili nuove (`allexport`). Toglie tutti gli alias dei file di avvio del terminale (`unalias -a`), un'eventuale funzione `aws` o `cd`, e la funzione di Ubuntu che, per un comando non trovato, lancia un altro programma (`command_not_found_handle`): così al posto di `aws`, e di `cd` nel controllo del correttivo, non parte nient'altro.
+- Toglie le variabili `AWS_*` ereditate (le due delle chiavi anche per nome, nel caso un file di avvio del terminale le avesse solo dichiarate) e prepara il client:
+  - nessun file di credenziali (`/dev/null`); come file di configurazione, all'inizio nessuno (`/dev/null`), poi, dalla riga `if aws_cli_plugin_write && export AWS_CONFIG_FILE=…` in poi, solo quello del correttivo, senza chiavi;
+  - nessun pager, uscite in JSON, nessun numero di sessione;
+  - checksum solo dove l'operazione li richiede;
+  - quattro tentativi per ogni richiesta.
+- Scrive le tabelle dei cinque bucket (nome, luogo, chiave proprietaria) e l'id di `lettura-backup-prod`.
+- Scrive il correttivo del client (regole, «Il correttivo del client»): le righe fra `# >>> aws-cli-empty-message` e `# <<< aws-cli-empty-message`, uguali a quelle di `check-bucket-isolation.sh`.
+  - Il testo fra `<<'AWS_CLI_PLUGIN'` e `AWS_CLI_PLUGIN` è il modulo Python. `_empty_message` mette `''` al posto di un testo d'errore mancante (`None`). `awscli_initialize` la fa eseguire al client prima del suo controllo che si ferma (`register_first`), e scrive «foondaco_empty_message: loaded» solo quando la variabile `FOONDACO_AWS_CLI_PLUGIN_CHECK` vale 1, cioè nel controllo all'avvio.
+  - `aws_cli_plugin_write` scrive il modulo nella sottocartella `aws-cli-plugin` di `$WORK` e, accanto a lei, il file di configurazione `$WORK/aws-config` (tre righe: `[plugins]`, la cartella del modulo, il suo nome). Rifiuta un percorso non assoluto o con «:», e lascia in sola lettura la sottocartella e i due file.
+  - `aws_cli_plugin_intact` controlla che la configurazione in uso sia la sua, che nella cartella ci sia solo il modulo, e che il modulo e la configurazione siano ancora quelli scritti.
+  - `aws_cli_plugin_check` chiede al client, senza chiavi e senza rete (`aws --version`), se carica il correttivo e se è il 2.39.4. Risponde con la versione, oppure scrive «risposta del client: …».
+  - Poi il blocco esporta la configurazione del correttivo (`AWS_CONFIG_FILE`), e solo se il controllo riesce segna il client come pronto (`CLIENT_READY`). Senza, `load_key` non chiede chiavi e `_aws` non lancia il client.
+- Definisce le funzioni:
+
+| Funzione | Cosa fa | Righe |
+|---|---|---|
+| `load_key <nome>` | Chiede Access key e Secret key della voce `<nome>` del gestore di password, senza mostrarle (`read -rs`). Richiede le parti vuote o con spazi, e la Secret key se arriva di nuovo la Access key. Rifiuta, e allora la chiave resta non caricata: una parte uguale a una parte di un'altra chiave già caricata (appunti rimasti); una Secret key non più lunga della Access key (parti scambiate). Se prima della domanda era già arrivato del testo, incollato troppo presto, lo scarta, lo dice e si ferma: così non diventa una chiave. Caricata di nuovo, una chiave prende i valori nuovi. Tiene le chiavi nella memoria di questo terminale | tutte |
+| `use_key <nome>` | Mette la chiave `<nome>` in `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` per i comandi che seguono, senza esportarla: la riceve solo il client `aws`, da `_aws`. Nella lista di controllo «esportare» una chiave e «chiave esportata» vogliono dire metterla in uso con `use_key` e la chiave in uso; l'`export` è il passaggio della chiave al solo comando `aws`. Se `<nome>` non è caricata, non resta in uso nessuna chiave, e i comandi che seguono non usano nessuna chiave (in F e J2 la domanda di `compare_key` arriva lo stesso) | tutte |
+| `s3 fsn1\|nbg1 <operazione> …` | Un comando `aws s3api` verso Falkenstein o Norimberga, con la chiave in uso. Se nella risposta del client comparisse l'Access key di una chiave caricata, la mostra come nome tra parentesi quadre (`[file-prod]`); i messaggi di errore il client li scrive direttamente sullo schermo, e non passano da questa sostituzione. Alla fine scrive luogo, nome della chiave, data, ora e codice di uscita (0 = riuscito). Il client lo lancia `_aws`, che prima ricontrolla il correttivo: se non è attivo o è cambiato, scrive «correttivo del client alterato o non attivo: comando non mandato» e risponde con il codice 3, senza lanciare il client | D–J |
+| `show_config <unità>` | Versioning, ciclo di vita, Object Lock e policy del bucket dell'unità, con la sua chiave | E |
+| `show_policy <unità>` | La policy del bucket. Ogni Access key che conosce la mostra solo come nome tra parentesi quadre (`[specchio-lettura]`); ogni altro valore dopo `p<id>:`, e ogni sequenza di 16 o più maiuscole e cifre, come `[chiave sconosciuta]` | E7, F, J, 12 |
+| `put_policy_keys <nome>…` | Manda la policy di `foondaco-backup` nella forma per chiave, con le Access key delle chiavi `<nome>` caricate. Prima prova ogni chiave chiedendo l'elenco dei suoi bucket a `fsn1` e a `nbg1`: se la chiave non funziona (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o ha dei bucket, non manda niente. Poi mostra la policy con i nomi al posto delle chiavi e la manda: arriva al client da `/dev/stdin`, mai dalla riga di comando. Un messaggio di errore lo stampa con i nomi al posto delle Access key. Se il correttivo non è attivo (`_not_fixed`: codice 3, o la riga `argument of type 'NoneType'`), non manda niente | F, J2, J6, 12 |
+| `check_bucket_list` | I nomi dei bucket del progetto della chiave in uso, chiesti a `fsn1` e a `nbg1`. Se ce n'è almeno uno lo dice e risponde con un errore: nel blocco di F, F1 e F2 non partono. Lo stesso se il correttivo non è attivo | F |
+| `compare_key <nome>` | Chiede sempre di nuovo l'Access key della voce `<nome>`, senza mostrarla, e dice solo se è «uguale» o «diversa» da quella in uso. Se `<nome>` non è la chiave in uso (per esempio perché `load_key` ha rifiutato le due parti) dice «confronto non fatto». Con «diversa» o «confronto non fatto» risponde con un errore: nel blocco di F, F1 e F2 non partono; in quello di J2, lista e scrittura. Una risposta vuota, o la Secret key della chiave in uso (appunti rimasti), la richiede. Come `load_key`, scarta il testo arrivato prima della domanda | F, J2 |
+| `test_ops005 file-prod\|file-test` | G1–G5: scrive due versioni di `prova-ops-005.txt`, le elenca, legge la prima, la recupera, poi cancella tutte le versioni | G |
+| `test_lock` | H1–H5 sullo specchio, con il `VersionId` letto in H1, che stampa a ogni passo. Si ferma se H2 non è come atteso, e se H3 o H4 riescono davvero (il blocco non funziona). In H4 manda la data solo se è nel futuro e precedente a quella di H2. Risponde senza errore solo se arriva in fondo | H1–H5 |
+| `test_h6` | H6: una scrittura senza `Content-MD5` né checksum, la lettura della sua conservazione, poi un delete marker | H6 |
+| `watch_revocation` | J4, con la chiave `prova-ripristino` in uso: la lista di J2 subito e poi a 5, 10, … 60 minuti dall'inizio, finché due prove di fila sono rifiutate con `InvalidAccessKeyId`. Gli errori del client, della rete o del fornitore non contano; un altro codice si stampa e interrompe la serie. Le prove perse perché il computer era sospeso, o perché una chiamata è durata più di 5 minuti, non si recuperano: lo dice con «prove saltate». Se il correttivo non è attivo, si ferma: la serie non vale (regola del correttivo) | J4 |
+| `clean_leftovers <unità>` | Cancella gli oggetti rimasti sotto `check-bucket-isolation/` dopo un'interruzione di I2 | I |
+
+Le chiavi non finiscono mai sullo schermo, in un file o fra gli argomenti di un comando, e non sono esportate: le riceve solo il client `aws`, come variabili d'ambiente di quel solo comando. Nella riga di `_aws` compaiono solo i nomi delle due variabili: i valori vanno nell'ambiente del client, non fra i suoi argomenti. Mentre il client fa la sua chiamata (di solito meno di un secondo; se la rete non risponde, anche qualche minuto, finché il client smette di riprovare), le chiavi sono nel suo ambiente: è il minimo, perché il client le deve avere. Per il client la cartella di casa è la cartella temporanea (`HOME=$WORK`), dove non c'è una cartella `.aws`: non legge alias, modelli o impostazioni da `~/.aws`. I programmi li cerca solo in `/usr/local/bin` (`PATH=/usr/local/bin`), dove l'ha installato il passo 1: così non lancia `lsb_release` e `uname`, che altrimenti lancerebbe a ogni chiamata passando loro le chiavi, e nessun programma della cartella di casa può prendere il posto di `aws`. Lo script di I2 passa anche lui le chiavi solo al suo client; quel client però cerca i programmi anche in `/usr/bin` e `/bin` (riga 1401), e a ogni chiamata lancia `lsb_release` (che lancia `getopt`, `cut` e `tr`) e `uname` di `/usr/bin`, passando loro le chiavi per pochi millesimi di secondo: sono programmi di sistema, che si cambiano solo con la password di amministratore. Dentro il client gira anche il correttivo (regole, «Il correttivo del client»), che non legge le chiavi né le scrive. Sta in una cartella che può cambiare solo l'utente, in sola lettura, e si ricontrolla prima di ogni comando. Un programma che gira con l'utente potrebbe comunque già leggere le chiavi dal client mentre lavora, quindi il correttivo non apre una strada nuova. Gli altri programmi del blocco (`python3`, `date`, `sleep`, `sed`, `env`, `mkdir`, `chmod`…) non ricevono le chiavi; il controllo all'avvio lancia il client con `env`, quando non c'è ancora nessuna chiave. `python3` legge solo le uscite del client, che non contengono chiavi. I file che il blocco scrive, tutti in una cartella temporanea (`$WORK`), sono il correttivo con la sua configurazione, all'avvio, e quelli di prova.
+
+```bash
+# Terminale delle chiavi (infra/README.md, «Archivi S3 (OPS-T03)»): primo comando, incollato tutto insieme.
+set +o history; set +o allexport; unset HISTFILE; unalias -a; unset -f aws cd command_not_found_handle
+for v in $(compgen -e); do case $v in AWS_*) unset "$v" ;; esac; done; unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+export AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_PAGER= \
+  AWS_DEFAULT_OUTPUT=json AWS_CLI_AUTO_PROMPT=off AWS_EC2_METADATA_DISABLED=true \
+  AWS_RETRY_MODE=standard AWS_MAX_ATTEMPTS=4 AWS_CLI_SESSION_ID_DISABLED=true \
+  AWS_REQUEST_CHECKSUM_CALCULATION=when_required AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+READ_PROJECT_ID=16852089   # id del progetto lettura-backup-prod (B3)
+declare -A BUCKET=([file-prod]=foondaco-file [backup-prod]=foondaco-backup [file-test]=foondaco-file-test [backup-test]=foondaco-backup-test [specchio]=foondaco-specchio)
+declare -A PLACE=([file-prod]=fsn1 [backup-prod]=fsn1 [file-test]=fsn1 [backup-test]=fsn1 [specchio]=nbg1)
+declare -A OWNER_KEY=([file-prod]=file-prod [backup-prod]=pgbackrest-prod [file-test]=file-test [backup-test]=pgbackrest-test [specchio]=specchio-scrittura)
+declare -A KEY_ID=() KEY_SECRET=()
+KEY_IN_USE= OUT= WORK=$(mktemp -d)
+AWS_CLI_BASE=$WORK   # il correttivo del client (regole, «Il correttivo del client»): righe uguali a quelle di check-bucket-isolation.sh
+# >>> aws-cli-empty-message (aws/aws-cli#10161; infra/README.md, «Archivi S3 (OPS-T03)»)
+IFS= read -r -d '' AWS_CLI_PLUGIN_TEXT <<'AWS_CLI_PLUGIN'
+"""AWS CLI v2 plugin written by infra/README.md ("Archivi S3 (OPS-T03)") and check-bucket-isolation.sh.
+
+An S3 error response with an empty <Message> is parsed as None, and the CLI's own check in
+awscli/customizations/s3errormsg.py then stops with a TypeError (exit status 255) instead of
+showing the error code (aws/aws-cli#10161). Hetzner answers AccessDenied and missing settings
+that way. Here the None becomes "" before that check runs. Nothing else is read or changed.
+"""
+import os
+import sys
+
+
+def _empty_message(parsed, **kwargs):
+    error = parsed.get('Error') if isinstance(parsed, dict) else None
+    if isinstance(error, dict) and 'Message' in error and error['Message'] is None:
+        error['Message'] = ''
+
+
+def awscli_initialize(event_hooks):
+    event_hooks.register_first('after-call.s3', _empty_message)
+    if os.environ.get('FOONDACO_AWS_CLI_PLUGIN_CHECK') == '1':
+        sys.stderr.write('foondaco_empty_message: loaded\n')
+AWS_CLI_PLUGIN
+AWS_CLI_PLUGIN_DIR=$AWS_CLI_BASE/aws-cli-plugin
+AWS_CLI_CONFIG=$AWS_CLI_BASE/aws-config
+AWS_CLI_CONFIG_TEXT="[plugins]
+cli_legacy_plugin_path = $AWS_CLI_PLUGIN_DIR
+foondaco_empty_message = foondaco_empty_message"
+aws_cli_plugin_write() {
+  case $AWS_CLI_BASE in /*) ;; *) return 1 ;; esac
+  case $AWS_CLI_BASE in *:* | *$'\n'*) return 1 ;; esac
+  mkdir -m 700 -- "$AWS_CLI_PLUGIN_DIR" &&
+    printf '%s' "$AWS_CLI_PLUGIN_TEXT" >"$AWS_CLI_PLUGIN_DIR/foondaco_empty_message.py" &&
+    printf '%s\n' "$AWS_CLI_CONFIG_TEXT" >"$AWS_CLI_CONFIG" &&
+    chmod 400 -- "$AWS_CLI_PLUGIN_DIR/foondaco_empty_message.py" "$AWS_CLI_CONFIG" &&
+    chmod 500 -- "$AWS_CLI_PLUGIN_DIR"
+}
+aws_cli_plugin_intact() {
+  local entries
+  [ "${AWS_CONFIG_FILE-}" = "$AWS_CLI_CONFIG" ] || return 1
+  entries=$(cd -- "$AWS_CLI_PLUGIN_DIR" 2>/dev/null && shopt -s nullglob dotglob && printf '%s\n' *) || return 1
+  [ "$entries" = foondaco_empty_message.py ] &&
+    [ "$(<"$AWS_CLI_PLUGIN_DIR/foondaco_empty_message.py")" = "$(printf '%s' "$AWS_CLI_PLUGIN_TEXT")" ] &&
+    [ "$(<"$AWS_CLI_CONFIG")" = "$AWS_CLI_CONFIG_TEXT" ]
+}
+aws_cli_plugin_check() {
+  local out
+  aws_cli_plugin_intact || return 1
+  if out=$(FOONDACO_AWS_CLI_PLUGIN_CHECK=1 "$@" --version 2>&1 </dev/null); then
+    case $out in
+      $'foondaco_empty_message: loaded\naws-cli/2.39.4 '*) printf '%s\n' "${out#*$'\n'}"; return 0 ;;
+    esac
+  fi
+  out=${out//[[:cntrl:]]/ }
+  printf 'risposta del client: %s\n' "${out:0:300}" >&2
+  return 1
+}
+# <<< aws-cli-empty-message
+CLIENT_READY= CLIENT_VERSION=
+if aws_cli_plugin_write && export AWS_CONFIG_FILE=$AWS_CLI_CONFIG &&
+  CLIENT_VERSION=$(aws_cli_plugin_check env HOME="$WORK" PATH=/usr/local/bin aws); then CLIENT_READY=1; fi
+
+_now() { date '+%d/%m/%Y %H:%M:%S'; }
+_aws() { local place=$1; shift
+  if [ -z "$CLIENT_READY" ] || ! aws_cli_plugin_intact; then
+    echo 'correttivo del client alterato o non attivo: comando non mandato (lista di controllo, regola del correttivo)' >&2; return 3
+  fi
+  HOME=$WORK PATH=/usr/local/bin AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY aws --endpoint-url "https://$place.your-objectstorage.com" --region "$place" s3api "$@"; }
+_not_fixed() { [ "$1" = 3 ] || [[ $2 == *"argument of type 'NoneType'"* ]]; }   # correttivo non attivo (regola del correttivo)
+_code() { printf '%s\n' "$1" | sed -n 's/.*An error occurred (\([A-Za-z0-9]*\)).*/\1/p' | head -n 1; }
+_reason() { local c; c=$(_code "$1"); if [ -n "$c" ]; then printf '%s\n' "$c"; else printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -n 1; fi; }
+_json() { printf '%s' "$OUT" | python3 -I -c 'import json, sys
+d = json.loads(sys.stdin.read() or "{}")
+for k in sys.argv[1:]:
+    d = d.get(k) if isinstance(d, dict) else None
+print("" if d is None else d)' "$@"; }
+_versions_of() { printf '%s' "$OUT" | python3 -I -c 'import json, sys
+d = json.loads(sys.stdin.read() or "{}")
+for kind, label in (("Versions", "versione"), ("DeleteMarkers", "delete-marker")):
+    for v in d.get(kind) or []:
+        if v.get("Key") == sys.argv[1]:
+            print(label, v.get("VersionId"), "più-recente" if v.get("IsLatest") else "-")' "$1"; }
+_retention() { python3 -I -c 'import datetime as dt, sys
+mode, until, t0 = sys.argv[1], sys.argv[2], int(sys.argv[3])
+u = dt.datetime.fromisoformat(until.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
+want = dt.datetime.fromtimestamp(t0, dt.timezone.utc) + dt.timedelta(days=45)
+ok = mode == "COMPLIANCE" and abs(u - want) <= dt.timedelta(days=1)
+print(f"modo {mode}, scadenza {u:%Y-%m-%d %H:%M} UTC; attesa circa {want:%Y-%m-%d %H:%M} UTC (scrittura + 45 giorni):", "va bene" if ok else "NON va bene")
+sys.exit(0 if ok else 1)' "$@"; }
+_day_before() { python3 -I -c 'import datetime as dt, sys
+u = dt.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).astimezone(dt.timezone.utc)
+d = (u - dt.timedelta(days=1)).date()
+start = dt.datetime(d.year, d.month, d.day, tzinfo=dt.timezone.utc)
+if not dt.datetime.now(dt.timezone.utc) < start < u:
+    sys.exit(1)
+print(d.isoformat())' "$1"; }
+_early_input() { # testo arrivato prima di una domanda (incollato troppo presto): lo scarta, così non diventa una chiave
+  local junk seen=
+  [ -t 0 ] || return 1
+  while IFS= read -rs -t 0.05 -n 4096 junk; do [ -z "$junk" ] || seen=1; done
+  [ -z "$junk" ] || seen=1
+  [ -n "$seen" ] || return 1
+  echo "ATTENZIONE: prima della domanda era già arrivato del testo, comparso sullo schermo: l'ho scartato e mi fermo."
+  echo "Se era una parte di chiave, quella chiave è esposta (passo 12). Altrimenti si rilancia il blocco quando è tornato il prompt."
+}
+
+s3() { # s3 fsn1|nbg1 <operazione> [opzioni]: un comando del client con la chiave in uso
+  local place=${1:-} rc text name
+  case $place in fsn1|nbg1) ;; *) echo 'Uso: s3 fsn1|nbg1 <operazione> [opzioni]'; return 2 ;; esac
+  [ -n "$KEY_IN_USE" ] || { echo 'Nessuna chiave in uso: prima use_key <nome>'; return 2; }
+  shift
+  OUT=$(_aws "$place" "$@"); rc=$?
+  [ -z "$OUT" ] || { text=$OUT; for name in "${!KEY_ID[@]}"; do text=${text//"${KEY_ID[$name]}"/"[$name]"}; done; printf '%s\n' "$text"; }
+  echo "[$place · chiave «$KEY_IN_USE» · $(_now)] codice di uscita: $rc"
+  [ "$rc" != 3 ] || echo 'correttivo del client non attivo: questo passo non vale, mi fermo (regola del correttivo)'
+  return "$rc"
+}
+
+load_key() { # load_key <nome>: chiede Access key e Secret key della voce <nome>, senza mostrarle
+  local name=${1:-} part value id= secret= other was_in_use=
+  [[ $name =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Nome «$name» non valido: solo lettere minuscole, cifre e trattini, per esempio load_key file-prod. Nessuna chiave è stata chiesta: non incollarla ora."; return 2; }
+  [ -n "$CLIENT_READY" ] || { echo "Correttivo del client non attivo: nessuna chiave è stata chiesta, non incollarla. Chiudi questo terminale e dillo a Claude (regola del correttivo)."; return 2; }
+  [ "$KEY_IN_USE" != "$name" ] || { was_in_use=1; unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; KEY_IN_USE=; }
+  unset "KEY_ID[$name]" "KEY_SECRET[$name]"   # i valori di prima spariscono: restano solo quelli nuovi, se superano i controlli
+  _early_input && return 1
+  for part in 'Access key' 'Secret key'; do
+    while :; do
+      IFS= read -rs -p "$part di «$name» (incolla e premi Invio; non compare): " value ||
+        { printf '\nInterrotto: «%s» non è caricata. Finito il blocco, lo si rilancia.\n' "$name"; return 1; }
+      printf '\n'
+      value=${value//$'\r'/}; value=${value#"${value%%[![:space:]]*}"}; value=${value%"${value##*[![:space:]]}"}
+      if [ -z "$value" ]; then echo '  vuota: incollala di nuovo'
+      elif [[ $value == *[[:space:]]* ]]; then echo '  contiene spazi: ricopiala dal gestore di password'
+      elif [ "$part" = 'Secret key' ] && [ "$value" = "$id" ]; then echo '  è di nuovo la Access key: copia la Secret key dalla voce e incollala'
+      else break; fi
+    done
+    if [ "$part" = 'Access key' ]; then id=$value; else secret=$value; fi
+    echo '  ricevuta'
+  done
+  for other in "${!KEY_ID[@]}"; do
+    if [ "${KEY_ID[$other]}" = "$id" ] || [ "${KEY_SECRET[$other]}" = "$id" ] || [ "${KEY_ID[$other]}" = "$secret" ] || [ "${KEY_SECRET[$other]}" = "$secret" ]; then
+      echo "Una parte è uguale a una parte di «$other», già caricata (negli appunti c'era ancora quella chiave, oppure a «$other» sono andate per sbaglio le parti di questa voce): «$name» non è caricata. Alle domande che seguono si risponde con la voce che ciascuna nomina; finito il blocco, lo si rilancia copiando ogni campo dalla voce di «$name». Se torna, lo si dice a Claude (senza la chiave)."; return 1
+    fi
+  done
+  if [ "${#secret}" -le "${#id}" ]; then
+    echo "Le due parti sembrano scambiate (la Secret key è la più lunga): «$name» non è caricata. Alle domande che seguono si risponde con la voce che ciascuna nomina; finito il blocco, lo si rilancia, e per «$name» si incolla prima il campo «Access key». Se torna con i campi giusti, lo si dice a Claude (senza la chiave)."; return 1
+  fi
+  KEY_ID[$name]=$id KEY_SECRET[$name]=$secret
+  if [ -n "$was_in_use" ]; then use_key "$name"; else echo "Chiave «$name» pronta in questo terminale; per usarla: use_key $name"; fi
+}
+
+use_key() { # use_key <nome>: la chiave <nome> diventa quella dei comandi che seguono
+  local name=${1:-}
+  if [ -z "$name" ] || [ -z "${KEY_ID[$name]:-}" ]; then
+    unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; KEY_IN_USE=
+    echo "La chiave «$name» non è caricata in questo terminale: prima load_key $name. Ora nessuna chiave è in uso."; return 1
+  fi
+  AWS_ACCESS_KEY_ID="${KEY_ID[$name]}" AWS_SECRET_ACCESS_KEY="${KEY_SECRET[$name]}"   # non esportate: le riceve solo aws, da _aws
+  KEY_IN_USE=$name
+  echo "In uso la chiave «$name»."
+}
+
+compare_key() { # F, J2: compare_key <nome>: chiede sempre l'Access key della voce <nome>; «uguale» solo se <nome> è la chiave in uso e coincide
+  local name=${1:-} value
+  _early_input && return 1
+  while :; do
+    IFS= read -rs -p "Access key della voce di «$name» nel gestore di password (incolla e premi Invio; non compare): " value ||
+      { printf '\nInterrotto\n'; return 1; }
+    printf '\n'
+    value=${value//$'\r'/}; value=${value#"${value%%[![:space:]]*}"}; value=${value%"${value##*[![:space:]]}"}
+    if [ -z "$value" ]; then echo '  vuota: incollala di nuovo'
+    elif [ -n "$name" ] && [ "$KEY_IN_USE" = "$name" ] && [ "$value" = "$AWS_SECRET_ACCESS_KEY" ]; then echo '  questa è la Secret key: copia la Access key dalla voce e incollala'
+    else break; fi
+  done
+  if [ -z "$name" ] || [ "$KEY_IN_USE" != "$name" ]; then
+    echo "confronto non fatto: «$name» non è la chiave in uso. Non incollare altro: si rilancia il blocco quando è tornato il prompt."; return 2
+  fi
+  if [ "$value" = "$AWS_ACCESS_KEY_ID" ]; then echo "confronto con la chiave in uso («$KEY_IN_USE»): uguale"
+  else echo "confronto con la chiave in uso («$KEY_IN_USE»): diversa"; return 1; fi
+}
+
+check_bucket_list() { # F: solo i nomi dei bucket del progetto della chiave in uso, a fsn1 e a nbg1; se ce n'è uno risponde 1
+  local place out rc found=
+  [ -n "$KEY_IN_USE" ] || { echo "Nessuna chiave in uso: l'elenco dei bucket non è stato chiesto."; return 2; }
+  for place in fsn1 nbg1; do
+    out=$(_aws "$place" list-buckets --query 'Buckets[].Name' --output text 2>&1); rc=$?
+    if _not_fixed "$rc" "$out"; then echo "$place: correttivo del client non attivo: mi fermo (regola del correttivo)"; return 2
+    elif [ "$rc" -ne 0 ]; then
+      echo "$place: non riuscito (codice di uscita $rc): $(_reason "$out")"
+    elif [ -z "$out" ] || [ "$out" = None ]; then echo "$place: nessun bucket"
+    else echo "$place: $(printf '%s' "$out" | tr -s '[:space:]' ' ')"; found=1; fi
+  done
+  echo "[chiave «$KEY_IN_USE» · $(_now)]"
+  [ -z "$found" ] || { echo "La chiave in uso («$KEY_IN_USE») ha dei bucket: non è una chiave di lettura-backup-prod."; return 1; }
+}
+
+show_policy() { # E7, E8: la policy del bucket di <unità>; ogni Access key compare solo come nome tra parentesi quadre
+  local unit=${1:-} text rc name masked
+  [ -n "$unit" ] && [ -n "${BUCKET[$unit]:-}" ] || { echo 'Uso: show_policy file-prod|backup-prod|file-test|backup-test|specchio'; return 2; }
+  [ "$KEY_IN_USE" = "${OWNER_KEY[$unit]}" ] || { echo "Serve la chiave ${OWNER_KEY[$unit]}: use_key ${OWNER_KEY[$unit]}"; return 2; }
+  text=$(_aws "${PLACE[$unit]}" get-bucket-policy --bucket "${BUCKET[$unit]}" --query Policy --output text); rc=$?
+  if [ "$rc" -eq 0 ]; then
+    for name in "${!KEY_ID[@]}"; do text=${text//"${KEY_ID[$name]}"/"[$name]"}; done
+    masked=$(printf '%s\n' "$text" | sed -E 's#(p[0-9]+:)([^["][^"]*)#\1[chiave sconosciuta]#g; s#[A-Z0-9]{16,}#[chiave sconosciuta]#g')
+    printf '%s\n' "$masked" | python3 -I -m json.tool 2>/dev/null || printf '%s\n' "$masked"
+  fi
+  echo "[${PLACE[$unit]} · chiave «$KEY_IN_USE» · $(_now)] codice di uscita: $rc"
+  return "$rc"
+}
+
+_policy_text() { printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":%s},"Action":["s3:ListBucket","s3:GetObject"],"Resource":["arn:aws:s3:::foondaco-backup","arn:aws:s3:::foondaco-backup/*"]}]}' "$1"; }
+put_policy_keys() { # F, J2, J6: la policy di foondaco-backup nella forma per chiave, per le chiavi <nome> di lettura-backup-prod
+  local name place out rc err list= shown= sep=
+  [[ $READ_PROJECT_ID =~ ^[0-9]+$ ]] || { echo "Manca l'id di lettura-backup-prod in READ_PROJECT_ID (B3)"; return 2; }
+  [ "$KEY_IN_USE" = pgbackrest-prod ] || { echo 'Serve la chiave pgbackrest-prod: use_key pgbackrest-prod'; return 2; }
+  [ "$#" -ge 1 ] || { echo 'Uso: put_policy_keys specchio-lettura [prova-ripristino]'; return 2; }
+  for name in "$@"; do
+    [ -n "$name" ] && [ -n "${KEY_ID[$name]:-}" ] || { echo "La chiave «$name» non è caricata in questo terminale. Policy non mandata: finito il blocco, lo si rilancia copiando le due parti dalla voce di «$name»."; return 1; }
+    for place in fsn1 nbg1; do # la chiave funziona e non ha bucket? Le chiavi vanno al client solo come variabili d'ambiente
+      out=$(AWS_ACCESS_KEY_ID=${KEY_ID[$name]}; AWS_SECRET_ACCESS_KEY=${KEY_SECRET[$name]}; _aws "$place" list-buckets --query 'Buckets[].Name' --output text 2>&1); rc=$?
+      if [ "$rc" -eq 0 ]; then
+        [ -z "$out" ] || [ "$out" = None ] || { echo "Prova di «$name» a $place: ha dei bucket, quindi non è una chiave di lettura-backup-prod. Policy non mandata: finito il blocco, lo si rilancia copiando le due parti dalla voce di «$name»."; return 1; }
+      elif _not_fixed "$rc" "$out"; then
+        echo "Prova di «$name» a $place: correttivo del client non attivo. Policy non mandata (regola del correttivo)."; return 1
+      else
+        case $(_code "$out") in
+          InvalidAccessKeyId|SignatureDoesNotMatch) echo "Prova di «$name» a $place: $(_code "$out"), la chiave non funziona. Policy non mandata: finito il blocco, lo si rilancia copiando le due parti dalla voce di «$name» (una chiave appena creata può metterci qualche minuto)."; return 1 ;;
+          *) echo "Prova di «$name» a $place: non riuscita ($(_reason "$out")); vado avanti" ;;
+        esac
+      fi
+    done
+    list+="$sep\"arn:aws:iam:::user/p$READ_PROJECT_ID:${KEY_ID[$name]}\""
+    shown+="$sep\"arn:aws:iam:::user/p$READ_PROJECT_ID:[$name]\""
+    sep=,
+  done
+  [ "$#" -eq 1 ] || { list="[$list]"; shown="[$shown]"; }
+  echo 'Policy che mando, con il nome delle chiavi al posto delle Access key:'
+  _policy_text "$shown" | python3 -I -m json.tool
+  err=$(_aws fsn1 put-bucket-policy --bucket foondaco-backup --policy file:///dev/stdin 2>&1 >/dev/null < <(_policy_text "$list")); rc=$?
+  for name in "$@"; do err=${err//"${KEY_ID[$name]}"/"[$name]"}; done
+  [ -z "$err" ] || printf '%s\n' "$err"
+  echo "[fsn1 · chiave «$KEY_IN_USE» · $(_now)] codice di uscita: $rc"
+  return "$rc"
+}
+
+show_config() { # E1–E8: versioning, ciclo di vita, Object Lock e policy del bucket di <unità>, con la sua chiave
+  local unit=${1:-} b place
+  [ -n "$unit" ] && [ -n "${BUCKET[$unit]:-}" ] || { echo 'Uso: show_config file-prod|backup-prod|file-test|backup-test|specchio'; return 2; }
+  use_key "${OWNER_KEY[$unit]}" || return 1
+  b=${BUCKET[$unit]} place=${PLACE[$unit]}
+  echo "== E1: versioning di $b"; s3 "$place" get-bucket-versioning --bucket "$b"
+  echo "== E2-E4: ciclo di vita di $b"; s3 "$place" get-bucket-lifecycle-configuration --bucket "$b"
+  echo "== E5-E6: Object Lock di $b"; s3 "$place" get-object-lock-configuration --bucket "$b"
+  echo "== E7-E8: policy di $b"; show_policy "$unit"
+}
+
+test_ops005() { # G1–G5: sovrascrittura e recupero di un file (test_ops005 file-prod, poi test_ops005 file-test)
+  local unit=${1:-} b place k=prova-ops-005.txt v1 v2 id
+  case $unit in file-prod|file-test) ;; *) echo 'Uso: test_ops005 file-prod oppure test_ops005 file-test'; return 2 ;; esac
+  use_key "$unit" || return 1
+  b=${BUCKET[$unit]} place=${PLACE[$unit]}
+  s3 "$place" list-object-versions --bucket "$b" --prefix "$k" >/dev/null || return 1
+  for id in $(_versions_of "$k" | cut -d ' ' -f 2); do
+    echo "Prima di G1: tolgo la versione $id rimasta da una prova interrotta"
+    s3 "$place" delete-object --bucket "$b" --key "$k" --version-id="$id"
+  done
+  printf 'versione 1\n' > "$WORK/v1.txt"; printf 'versione 2\n' > "$WORK/v2.txt"
+  echo "== G1: due scritture di $k in $b"
+  s3 "$place" put-object --bucket "$b" --key "$k" --body "$WORK/v1.txt" || return 1
+  v1=$(_json VersionId)
+  s3 "$place" put-object --bucket "$b" --key "$k" --body "$WORK/v2.txt" || return 1
+  v2=$(_json VersionId)
+  echo "G1: VersionId della prima scrittura «$v1», della seconda «$v2»"
+  [ -n "$v1" ] && [ -n "$v2" ] && [ "$v1" != "$v2" ] || { echo 'G1: non ci sono due VersionId diversi: mi fermo (il versioning è attivo? E1)'; return 1; }
+  echo "== G2: versioni di $k"
+  s3 "$place" list-object-versions --bucket "$b" --prefix "$k" || return 1
+  echo "G2: versioni $(_versions_of "$k" | grep -c '^versione '); la più recente è la seconda scrittura: $(_versions_of "$k" | grep -q "^versione $v2 più-recente" && echo sì || echo no)"
+  echo "== G3: lettura della prima versione"
+  s3 "$place" get-object --bucket "$b" --key "$k" --version-id="$v1" "$WORK/letto.txt" || return 1
+  echo "G3: il file letto contiene «$(cat "$WORK/letto.txt")»"
+  echo "== G4: recupero della prima versione, poi lettura senza --version-id"
+  s3 "$place" copy-object --bucket "$b" --key "$k" --copy-source "$b/$k?versionId=$v1" || return 1
+  s3 "$place" get-object --bucket "$b" --key "$k" "$WORK/letto.txt" || return 1
+  echo "G4: il file letto contiene «$(cat "$WORK/letto.txt")»"
+  s3 "$place" list-object-versions --bucket "$b" --prefix "$k" || return 1
+  echo "G4: versioni $(_versions_of "$k" | grep -c '^versione ')"
+  echo "== G5: pulizia, una versione alla volta"
+  for id in $(_versions_of "$k" | cut -d ' ' -f 2); do
+    s3 "$place" delete-object --bucket "$b" --key "$k" --version-id="$id"
+  done
+  s3 "$place" list-object-versions --bucket "$b" --prefix "$k" || return 1
+  echo "G5: versioni e delete marker rimasti: $(_versions_of "$k" | wc -l)"
+}
+
+test_lock() { # H1–H5: le versioni bloccate dello specchio, con la chiave specchio-scrittura; risponde 0 solo se arriva in fondo
+  local b=foondaco-specchio k=prova-blocco.txt md5 t0 vh1 until1 h4 verdict rc
+  use_key specchio-scrittura || return 1
+  printf 'prova del blocco, %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$WORK/blocco.txt"
+  md5=$(openssl dgst -md5 -binary "$WORK/blocco.txt" | openssl base64 -A)
+  echo "== H1: scrittura di $k con Content-MD5 $md5"
+  t0=$(date +%s)
+  s3 nbg1 put-object --bucket "$b" --key "$k" --body "$WORK/blocco.txt" --content-md5 "$md5" || return 1
+  vh1=$(_json VersionId)
+  [ -n "$vh1" ] || { echo 'H1: la risposta non ha un VersionId: mi fermo'; return 1; }
+  echo "H1: VersionId «$vh1»"
+  echo "== H2: conservazione della versione $vh1"
+  s3 nbg1 get-object-retention --bucket "$b" --key "$k" --version-id="$vh1" || { echo 'H2: lettura non riuscita: mi fermo prima di H3'; return 1; }
+  until1=$(_json Retention RetainUntilDate)
+  verdict=$(_retention "$(_json Retention Mode)" "$until1" "$t0"); rc=$?
+  echo "H2: $verdict"
+  [ "$rc" -eq 0 ] || { echo 'H2: mi fermo prima di H3; si ripete E5'; return 1; }
+  echo "== H3: cancellazione definitiva della versione $vh1 (attesa: AccessDenied)"
+  s3 nbg1 delete-object --bucket "$b" --key "$k" --version-id="$vh1"
+  s3 nbg1 list-object-versions --bucket "$b" --prefix "$k" || { echo 'H3: lista non riuscita: mi fermo'; return 1; }
+  if _versions_of "$k" | grep -q "^versione $vh1 "; then echo "H3: la versione $vh1 c'è ancora: sì"
+  else echo "H3: la versione $vh1 c'è ancora: no: il blocco non funziona, mi fermo"; return 1; fi
+  echo "== H4: conservazione accorciata della versione $vh1 (attesa: AccessDenied)"
+  h4=$(_day_before "$until1") || { echo "H4: il giorno prima di $until1 non è nel futuro o non è precedente: non lo mando"; return 1; }
+  echo "H4: data di H2 $until1; data mandata $h4 (${h4}T00:00:00Z)"
+  s3 nbg1 put-object-retention --bucket "$b" --key "$k" --version-id="$vh1" --retention "Mode=COMPLIANCE,RetainUntilDate=${h4}T00:00:00Z"
+  s3 nbg1 get-object-retention --bucket "$b" --key "$k" --version-id="$vh1" || { echo 'H4: rilettura non riuscita: mi fermo'; return 1; }
+  if [ "$(_json Retention RetainUntilDate)" = "$until1" ]; then echo "H4: la data della versione $vh1 è ancora quella di H2: sì"
+  else echo "H4: la data della versione $vh1 è ancora quella di H2: no: il blocco non funziona, mi fermo"; return 1; fi
+  echo "== H5: cancellazione senza --version-id, poi lettura della versione $vh1"
+  s3 nbg1 delete-object --bucket "$b" --key "$k"
+  s3 nbg1 list-object-versions --bucket "$b" --prefix "$k"
+  echo "H5: la versione più recente è un delete marker: $(_versions_of "$k" | grep -q '^delete-marker .* più-recente' && echo sì || echo no)"
+  s3 nbg1 get-object --bucket "$b" --key "$k" --version-id="$vh1" "$WORK/letto.txt" &&
+    echo "H5: la versione $vh1 si legge ancora e contiene «$(cat "$WORK/letto.txt")»"
+}
+
+test_h6() { # H6, solo informativo (OPS-T01b): scrittura nello specchio senza Content-MD5 e senza checksum
+  local b=foondaco-specchio k=prova-senza-md5.txt t0 vid
+  use_key specchio-scrittura || return 1
+  printf 'prova senza Content-MD5, %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$WORK/senza-md5.txt"
+  echo "== H6: scrittura di $k senza Content-MD5 né checksum (AWS_REQUEST_CHECKSUM_CALCULATION=$AWS_REQUEST_CHECKSUM_CALCULATION)"
+  t0=$(date +%s)
+  s3 nbg1 put-object --bucket "$b" --key "$k" --body "$WORK/senza-md5.txt" || { echo 'H6: scrittura rifiutata (codice qui sopra)'; return 0; }
+  vid=$(_json VersionId)
+  if s3 nbg1 get-object-retention --bucket "$b" --key "$k" --version-id="$vid"; then
+    echo "H6: accettata; $(_retention "$(_json Retention Mode)" "$(_json Retention RetainUntilDate)" "$t0")"
+  else
+    echo 'H6: accettata, ma la lettura della conservazione non è riuscita (codice qui sopra)'
+  fi
+  echo 'H6: ora la nascondo con un delete marker, come in H5'
+  s3 nbg1 delete-object --bucket "$b" --key "$k"
+}
+
+watch_revocation() { # J4: con la chiave prova-ripristino, la lista di J2 subito e poi ogni 5 minuti, finché è rifiutata due volte di fila con InvalidAccessKeyId; al massimo 60 minuti
+  local start n=0 now t out rc code refusals=0 last_ok= first_refusal=
+  [ "$KEY_IN_USE" = prova-ripristino ] || { echo "J4 si fa con la chiave temporanea: use_key prova-ripristino (ora in uso: «${KEY_IN_USE:-nessuna}»)"; return 2; }
+  start=$(date +%s)
+  echo "J4: chiave «$KEY_IN_USE»; una prova subito e poi ogni 5 minuti, al massimo per 60 minuti. Per fermarla prima: Ctrl+C"
+  while :; do
+    now=$(date +%s)
+    if [ "$now" -gt $((start + 300 * n + 60)) ]; then # in ritardo di più di un minuto: le prove perse non si recuperano
+      n=$(( (now - start + 299) / 300 ))
+      echo "$(date '+%H:%M:%S') prove saltate: il computer era sospeso, o una chiamata è durata più di 5 minuti"
+      [ "$n" -le 12 ] || { echo 'J4: passati 60 minuti'; break; }
+      while [ "$(date +%s)" -lt $((start + 300 * n)) ]; do sleep 5; done
+      continue
+    fi
+    t=$(date '+%H:%M:%S')
+    out=$(_aws fsn1 list-objects-v2 --bucket foondaco-backup --max-items 5 2>&1 >/dev/null); rc=$?
+    code=$(_code "$out")
+    if _not_fixed "$rc" "$out"; then echo "$t correttivo del client non attivo: la serie non vale, mi fermo (regola del correttivo)"; return 2
+    elif [ "$rc" -eq 0 ]; then echo "$t lista riuscita"; last_ok=$t refusals=0 first_refusal=
+    elif [ "$code" = InvalidAccessKeyId ]; then
+      refusals=$((refusals + 1)); [ "$refusals" -gt 1 ] || first_refusal=$t
+      echo "$t lista rifiutata: $code"
+    elif [ -n "$code" ] && ! [[ $code =~ ^(SlowDown|InternalError|ServiceUnavailable|RequestTimeout|RequestTimeTooSkewed|Throttling|TooManyRequests|429|5[0-9][0-9])$ ]]; then
+      refusals=0 first_refusal=
+      echo "$t lista rifiutata con un altro codice: $code (non è la revoca attesa)"
+    else echo "$t errore del client, della rete o del fornitore, non conta: $(_reason "$out")"; fi
+    [ "$refusals" -lt 2 ] || break
+    n=$((n + 1))
+    [ "$n" -le 12 ] || { echo 'J4: passati 60 minuti'; break; }
+    while [ "$(date +%s)" -lt $((start + 300 * n)) ]; do sleep 5; done
+  done
+  if [ "$refusals" -ge 2 ]; then
+    echo "J4: ultima lista riuscita alle ${last_ok:-(nessuna)}; prima delle due rifiutate di fila con InvalidAccessKeyId alle $first_refusal"
+  else
+    echo "J4: ultima lista riuscita alle ${last_ok:-(nessuna)}; due rifiuti di fila con InvalidAccessKeyId: nessuno"
+  fi
+}
+
+clean_leftovers() { # avanzi di I2: cancella gli oggetti rimasti sotto check-bucket-isolation/ nel bucket di <unità>
+  local unit=${1:-} b place key n=0 keys=()
+  [ -n "$unit" ] && [ -n "${BUCKET[$unit]:-}" ] || { echo 'Uso: clean_leftovers file-prod|backup-prod|file-test|backup-test|specchio'; return 2; }
+  use_key "${OWNER_KEY[$unit]}" || return 1
+  b=${BUCKET[$unit]} place=${PLACE[$unit]}
+  s3 "$place" list-objects-v2 --bucket "$b" --prefix check-bucket-isolation/ >/dev/null || return 1
+  mapfile -t keys < <(printf '%s' "$OUT" | python3 -I -c 'import json, sys
+for o in json.loads(sys.stdin.read() or "{}").get("Contents") or []:
+    print(o["Key"])')
+  for key in "${keys[@]}"; do
+    case $key in check-bucket-isolation/?*) ;; *) continue ;; esac
+    s3 "$place" delete-object --bucket "$b" --key "$key" >/dev/null && n=$((n + 1))
+  done
+  echo "$b: cancellati $n oggetti sotto check-bucket-isolation/ (nei bucket con le versioni restano nascosti da un delete marker)"
+}
+
+[ -x /usr/local/bin/aws ] || echo 'ATTENZIONE: il client aws non è in /usr/local/bin (README, passo 1)'
+if [[ -o history ]]; then echo 'cronologia: ACCESA: chiudi questo terminale e aprine uno nuovo'; else echo 'cronologia: spenta'; fi
+if [ "${TERM_PROGRAM:-}" = vscode ] || compgen -e | grep -q '^VSCODE_'; then
+  echo "terminale: $(ps -o comm= -p "$PPID"), ma è il terminale di VS Code o ne viene: chiudilo e apri il Terminale di Ubuntu"
+else
+  echo "terminale: $(ps -o comm= -p "$PPID") (shell $$, $(_now))"
+fi
+if [ -n "$CLIENT_READY" ]; then echo "correttivo del client: attivo ($CLIENT_VERSION)"
+else echo 'ATTENZIONE: correttivo del client non attivo: non caricare chiavi qui; chiudi questo terminale e dillo a Claude (regola del correttivo)'; fi
+```
+
+**Uso delle chiavi.**
+
+- `load_key file-prod`. Il terminale chiede «Access key di «file-prod» (incolla e premi Invio; non compare)»: si apre la voce nel gestore di password, si copia l'Access key, la si incolla e si preme Invio. Non compare nulla, poi «ricevuta». Lo stesso per la Secret key.
+- Una parte di chiave si incolla solo quando la sua domanda è già sullo schermo, e un blocco solo quando il terminale ha finito il precedente (è tornata la riga che finisce con `$`). Una chiave incollata altrove (prima della domanda, fuori da queste domande, o dentro un comando) compare sullo schermo ed è esposta: passo 12.
+- `use_key file-prod`, poi i comandi.
+- Ogni blocco carica con `load_key` le chiavi che usa, tranne D1–D5, che usano quelle del primo blocco di D, J4, che usa quella di J2, nello stesso terminale, e I2, dove le chiavi le chiede lo script. Se una chiave è già caricata in quella finestra, il suo `load_key` la chiede di nuovo: la si incolla di nuovo dalla stessa voce.
+- Se `load_key` rifiuta le due parti (per esempio «sembrano scambiate» o «uguale a una parte di …»), o se a una sua domanda si è premuto Ctrl+C, quella chiave non è caricata. Le domande che seguono nel blocco arrivano lo stesso, compresa quella di `compare_key` in F e J2: si risponde a ciascuna con la voce che nomina (con Invio da solo la domanda torna), e finito il blocco lo si rilancia.
+- Se un comando risponde `InvalidAccessKeyId` o `SignatureDoesNotMatch`, la chiave è incollata male: `load_key <nome>` di nuovo, ricopiando le due parti dalla voce, poi si ripete il comando o il blocco. Una chiave appena creata può non funzionare ancora: si riprova dopo qualche minuto. In J4, invece, `InvalidAccessKeyId` è l'esito atteso.
+- Alla fine si chiude la finestra (`exit`): le chiavi spariscono con lei. Ogni chiusura si dice a Claude (K3).
+
+**Come si leggono le uscite.**
+
+- Un comando riuscito senza niente da dire stampa solo la riga finale, con «codice di uscita: 0». Succede per le modifiche di D e per il versioning di un bucket mai versionato.
+- Un errore stampa una riga vuota, poi `aws: [ERROR]: An error occurred (<codice>) when calling the <operazione> operation: <testo>`, con il codice di uscita 254. Conta il codice tra parentesi. Dopo i due punti spesso non c'è niente: Hetzner non manda il testo, e il correttivo fa vedere il codice lo stesso.
+- Il codice `(None)` vuol dire che il fornitore non ha mandato nemmeno il codice: non è un esito, lo si dice a Claude.
+- Un errore di rete non ha il codice tra parentesi, per esempio `Could not connect to the endpoint URL`.
+- Non sono errori di rete, e nemmeno esiti, la riga `aws: [ERROR]: argument of type 'NoneType' is not a container or iterable` (codice di uscita 255), la riga «correttivo del client alterato o non attivo: comando non mandato» (codice di uscita 3) e ogni riga che dice «correttivo del client non attivo» (di `s3`, `load_key`, `check_bucket_list`, `put_policy_keys` e `watch_revocation`): il correttivo non è attivo, e il riepilogo di quel passo non vale. Ci si ferma e lo si dice a Claude (regola del correttivo).
+- Un comando scritto male non arriva al fornitore: il client risponde `aws: error: …` (per esempio `expected one argument`), con il codice di uscita 252. Non è un esito: lo si dice a Claude.
+
+### 5. Configurazione (D0–D5) (utente)
+
+**D0.** Prima di caricare la prima chiave, l'utente legge in questa sezione il blocco del passo 4 e i comandi dei passi 5–12, compreso il blocco di variabili di I2, e lo dice a Claude. Un comando cambiato dopo D0 si rilegge prima di lanciarlo (regola della lettura).
+
+D3 e D4 si fanno almeno 15 minuti dopo la creazione dello specchio (C4): prima, la rilettura di D3 potrebbe dare la configurazione vecchia. In un terminale delle chiavi nuovo, dopo il blocco del passo 4:
+
+```bash
+load_key file-prod
+load_key file-test
+load_key specchio-scrittura
+load_key pgbackrest-prod
+```
+
+**D1.** Versioning dei due bucket dei file:
+
+```bash
+use_key file-prod
+s3 fsn1 put-bucket-versioning --bucket foondaco-file --versioning-configuration Status=Enabled
+use_key file-test
+s3 fsn1 put-bucket-versioning --bucket foondaco-file-test --versioning-configuration Status=Enabled
+```
+
+**D2.** Ciclo di vita dei due bucket dei file:
+
+```bash
+use_key file-prod
+s3 fsn1 put-bucket-lifecycle-configuration --bucket foondaco-file --lifecycle-configuration '{"Rules":[{"ID":"versioni-precedenti","Status":"Enabled","Prefix":"","NoncurrentVersionExpiration":{"NoncurrentDays":30},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":7}},{"ID":"delete-marker-scaduti","Status":"Enabled","Prefix":"","Expiration":{"ExpiredObjectDeleteMarker":true}}]}'
+use_key file-test
+s3 fsn1 put-bucket-lifecycle-configuration --bucket foondaco-file-test --lifecycle-configuration '{"Rules":[{"ID":"versioni-precedenti","Status":"Enabled","Prefix":"","NoncurrentVersionExpiration":{"NoncurrentDays":30},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":7}},{"ID":"delete-marker-scaduti","Status":"Enabled","Prefix":"","Expiration":{"ExpiredObjectDeleteMarker":true}}]}'
+```
+
+**D3.** Conservazione predefinita dello specchio. Il comando dopo `use_key` prima rilegge la configurazione, per controllare C4: deve rispondere `"ObjectLockEnabled": "Enabled"` (la prima volta senza regola), e solo allora manda la modifica. Se il blocco si ripete dopo una modifica riuscita, la rilettura mostra già la regola e la modifica, uguale, parte di nuovo; dopo una modifica non riuscita la regola non c'è ancora. L'ora da annotare è quella dell'ultima modifica riuscita. Se risponde `ObjectLockConfigurationNotFoundError`, lo specchio è stato creato senza Object Lock: la modifica non parte, compare «D3: la modifica non è partita o non è riuscita», lo si dice a Claude e lo specchio si rifà (passo 3).
+
+```bash
+use_key specchio-scrittura
+s3 nbg1 get-object-lock-configuration --bucket foondaco-specchio &&
+  [ "$(_json ObjectLockConfiguration ObjectLockEnabled)" = Enabled ] &&
+  s3 nbg1 put-object-lock-configuration --bucket foondaco-specchio --object-lock-configuration '{"ObjectLockEnabled":"Enabled","Rule":{"DefaultRetention":{"Mode":"COMPLIANCE","Days":45}}}' ||
+  echo 'D3: la modifica non è partita o non è riuscita: lo si dice a Claude'
+```
+
+**D4.** Ciclo di vita dello specchio, a 45 giorni:
+
+```bash
+use_key specchio-scrittura
+s3 nbg1 put-bucket-lifecycle-configuration --bucket foondaco-specchio --lifecycle-configuration '{"Rules":[{"ID":"versioni-precedenti","Status":"Enabled","Prefix":"","NoncurrentVersionExpiration":{"NoncurrentDays":45},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":7}},{"ID":"delete-marker-scaduti","Status":"Enabled","Prefix":"","Expiration":{"ExpiredObjectDeleteMarker":true}}]}'
+```
+
+**D5.** Policy di `foondaco-backup`, nella forma per progetto: tutte le chiavi di `lettura-backup-prod` possono solo elencare e leggere.
+
+```bash
+use_key pgbackrest-prod
+s3 fsn1 put-bucket-policy --bucket foondaco-backup --policy '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam:::user/p16852089"},"Action":["s3:ListBucket","s3:GetObject"],"Resource":["arn:aws:s3:::foondaco-backup","arn:aws:s3:::foondaco-backup/*"]}]}'
+```
+
+Ogni modifica stampa solo la riga finale, con «codice di uscita: 0». L'ora di quella riga è l'ora da annotare: l'uscita intera va a Claude. Con `InvalidAccessKeyId` o `SignatureDoesNotMatch` la chiave è incollata male: `load_key` di nuovo e si ripete quel passo («Uso delle chiavi»). Su `foondaco-backup-test` non si configura niente, e su `foondaco-backup` solo la policy. Se un comando di D risponde con un errore che parla di checksum, ci si ferma e lo si dice a Claude. Per queste modifiche il client manda sempre un checksum CRC64NVME, perché il protocollo lo richiede.
+
+Le regole del ciclo di vita, nella forma della documentazione di Hetzner (`"Prefix": ""` vale per tutto il bucket):
+
+- `versioni-precedenti`: una versione che non è più la corrente si cancella dopo 30 giorni (45 sullo specchio); un caricamento in più parti interrotto si cancella dopo 7 giorni.
+- `delete-marker-scaduti`: un delete marker rimasto senza versioni si toglie.
+
+Nessuna regola fa scadere le versioni correnti. Per le versioni precedenti Hetzner accetta solo `NoncurrentDays`.
+
+### 6. Riletture (E1–E8) (utente)
+
+Almeno 15 minuti dopo l'ultima ora di C4 e di D. Il blocco carica le cinque chiavi proprietarie: nel terminale di D, se è ancora aperto, chiede di nuovo anche quelle già caricate, e si incollano di nuovo. Nella forma per chiave (passo 7) serve anche `specchio-lettura`, che `show_policy` deve riconoscere: prima del blocco, `load_key specchio-lettura`.
+
+```bash
+load_key file-prod
+load_key file-test
+load_key specchio-scrittura
+load_key pgbackrest-prod
+load_key pgbackrest-test
+show_config file-prod
+show_config file-test
+show_config specchio
+show_config backup-prod
+show_config backup-test
+```
+
+| Riga | `foondaco-file`, `foondaco-file-test` | `foondaco-specchio` | `foondaco-backup` | `foondaco-backup-test` |
+|---|---|---|---|---|
+| E1 versioning | `"Status": "Enabled"` (e `"MFADelete": "Disabled"`, normale su Hetzner) | `"Status": "Enabled"`: Object Lock lo accende da sé | nessuna uscita, solo la riga finale | nessuna uscita, solo la riga finale |
+| E2–E4 ciclo di vita | le due regole di D2, con 30 giorni (elencate in ordine di nome) | le due regole di D4, con 45 giorni | `NoSuchLifecycleConfiguration` | `NoSuchLifecycleConfiguration` |
+| E5–E6 Object Lock | `ObjectLockConfigurationNotFoundError` | `"ObjectLockEnabled": "Enabled"` e la regola `"Mode": "COMPLIANCE"`, `"Days": 45` | `ObjectLockConfigurationNotFoundError` | `ObjectLockConfigurationNotFoundError` |
+| E7–E8 policy | `NoSuchBucketPolicy` | `NoSuchBucketPolicy` | il testo di D5, oppure quello della forma per chiave | `NoSuchBucketPolicy` |
+
+E7: prima di incollare l'uscita, l'utente la guarda. Dopo `p<id>:` può esserci solo un nome tra parentesi quadre. Se c'è altro, non la incolla e lo dice a Claude a parole.
+
+### 7. Prova della policy (F1–F2) (utente)
+
+Subito dopo E, nello stesso terminale, con `specchio-lettura`. Il blocco controlla prima la chiave: `compare_key` chiede di nuovo l'Access key dalla voce `specchio-lettura` e dice «uguale» o «diversa»; `check_bucket_list` chiede i bucket del suo progetto, che non deve averne. F1 e F2 non partono se `compare_key` non dice «uguale», o se `check_bucket_list` trova un bucket o dice che il correttivo non è attivo. È anche il blocco di «F1–F2» della regola della policy, qui sotto, e di J2 e J6.
+
+```bash
+load_key specchio-lettura
+use_key specchio-lettura
+confronto=1; compare_key specchio-lettura && confronto=0
+if check_bucket_list && [ "$confronto" -eq 0 ]; then
+  s3 fsn1 list-objects-v2 --bucket foondaco-backup --max-items 5
+  printf 'prova di sola lettura\n' > "$WORK/prova.txt"
+  s3 fsn1 put-object --bucket foondaco-backup --key prova-sola-lettura.txt --body "$WORK/prova.txt"
+else echo 'F1 e F2 non partono: il motivo è nelle righe qui sopra. Non incollare niente ora.'; fi
+```
+
+- Le domande sono sempre tre, tutte dalla voce `specchio-lettura`: Access key e Secret key per `load_key`, poi di nuovo l'Access key per `compare_key`. Dopo la terza le domande sono finite: alla riga che finisce con `$` non si incolla mai una parte di chiave, solo un blocco.
+- `compare_key` deve dire «uguale», e `check_bucket_list` «fsn1: nessun bucket» e «nbg1: nessun bucket». Con «diversa», con «confronto non fatto» (le due parti rifiutate da `load_key`) o con un bucket nell'elenco, F1 e F2 non partono: si rilancia il blocco, copiando con attenzione dalla voce `specchio-lettura`.
+- Una riga «non riuscito» di `check_bucket_list` non ferma F1 e F2, ma il controllo non è completo e quel giro non vale per F: si segue il punto degli errori qui sotto, poi si rilancia il blocco; se resta, lo si dice a Claude.
+- **F1**, la lista: codice di uscita 0.
+- **F2**, la scrittura: `AccessDenied`.
+- L'uscita va a Claude per intero, dalla prima domanda di `load_key` in poi: il controllo della chiave si incolla insieme a F1 (lista di controllo, F).
+- Un errore di chiave (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o di rete non è un esito: si rilancia il blocco, che chiede di nuovo la chiave, oppure si aspetta qualche minuto e si ripete.
+- Se F2 è riuscita, il file di prova si cancella:
+
+```bash
+load_key pgbackrest-prod
+use_key pgbackrest-prod
+s3 fsn1 delete-object --bucket foondaco-backup --key prova-sola-lettura.txt
+```
+
+**Forma per chiave.** Si usa se F1 è rifiutata con `AccessDenied`, oppure se F2 riesce (lista di controllo, F); nella forma per progetto anche in J2, se la lista della chiave temporanea è rifiutata con `AccessDenied`, ma lì con il primo blocco di J2 (lista di controllo, J2). Dopo F:
+
+```bash
+load_key pgbackrest-prod
+load_key specchio-lettura
+use_key pgbackrest-prod
+put_policy_keys specchio-lettura
+```
+
+`put_policy_keys` prima prova `specchio-lettura`: se è rifiutata (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o ha dei bucket, non manda niente e dice perché; con ogni altro errore, per esempio di rete o del fornitore, lo scrive («non riuscita (…); vado avanti») e manda lo stesso; se il correttivo non è attivo, non manda niente. Poi mostra la policy con i nomi al posto delle chiavi e la manda. Il testo che manda, con un segnaposto al posto della Access key (16852089 è l'id di `lettura-backup-prod`):
+
+```json
+{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam:::user/p16852089:<Access key di specchio-lettura>"},"Action":["s3:ListBucket","s3:GetObject"],"Resource":["arn:aws:s3:::foondaco-backup","arn:aws:s3:::foondaco-backup/*"]}]}
+```
+
+Con due chiavi (J2) il principale diventa un elenco: `"AWS":["arn:aws:iam:::user/p16852089:<Access key di specchio-lettura>","arn:aws:iam:::user/p16852089:<Access key della chiave temporanea>"]`.
+
+Poi la **regola della policy**, che vale anche in J2, in J6 e al passo 12:
+
+1. si annota l'ora della riga finale di `put_policy_keys`, e la sua uscita va a Claude;
+2. si aspettano 15 minuti;
+3. E7, nello stesso terminale: `use_key pgbackrest-prod`, poi `show_policy backup-prod`, che deve mostrare solo le chiavi attese in quel momento, ciascuna come nome tra parentesi quadre (qui `[specchio-lettura]`). Se quel terminale è stato chiuso, in uno nuovo, dopo il blocco del passo 4, in quest'ordine: `load_key pgbackrest-prod`, `load_key specchio-lettura`, fra J2 e J3 anche `load_key prova-ripristino`, poi `use_key pgbackrest-prod` e `show_policy backup-prod`. Una chiave della policy che non è caricata compare come `[chiave sconosciuta]`: la si carica e si ripete `show_policy`, senza aspettare altri 15 minuti, perché la policy non è cambiata. Prima di incollare l'uscita la si guarda, come in E7 (passo 6);
+4. F1–F2, con il blocco di F qui sopra.
+
+In «Valori letti» si annota quale forma è in uso.
+
+### 8. OPS-005: sovrascrittura e recupero (G1–G5) (utente)
+
+```bash
+load_key file-prod
+load_key file-test
+test_ops005 file-prod
+test_ops005 file-test
+```
+
+Le due chiavi si caricano all'inizio, così nessuna domanda arriva mentre una prova è in corso. Ogni prova stampa le parti «== G1» … «== G5», con le risposte del client e una riga di riepilogo per passo. L'uscita intera va a Claude. Il risultato atteso:
+
+| Riga | Riepilogo atteso |
+|---|---|
+| G1 | due `VersionId` diversi |
+| G2 | «versioni 2; la più recente è la seconda scrittura: sì» |
+| G3 | «il file letto contiene «versione 1»» |
+| G4 | «il file letto contiene «versione 1»» e «versioni 3». Su Hetzner la risposta di `copy-object` può non avere un `VersionId`: le versioni le conta la lista |
+| G5 | «versioni e delete marker rimasti: 0» |
+
+Con un errore la prova si ferma. Rilanciandola, prima di G1 toglie le versioni di `prova-ops-005.txt` rimaste dalla prova interrotta. Su Hetzner la cancellazione di una versione che non esiste non dà errore: G5 si giudica dalla lista finale.
+
+### 9. Specchio: versioni bloccate (H1–H6) (utente)
+
+Dopo E5, con `specchio-scrittura`, nello stesso terminale:
+
+```bash
+load_key specchio-scrittura
+test_lock && test_h6
+```
+
+`test_h6` parte solo se `test_lock` è arrivata in fondo (H5): se `test_lock` si ferma, H6 non si fa (lista di controllo, H). L'uscita intera va a Claude.
+
+| Riga | Cosa fa | Atteso |
+|---|---|---|
+| H1 | Scrive `prova-blocco.txt` con il `Content-MD5` calcolato da `openssl` | Riuscita, con il `VersionId` stampato |
+| H2 | Legge la conservazione di quella versione. Il client stampa la data in UTC, così: `2027-01-02T14:56:31.344846+00:00` | «modo COMPLIANCE, scadenza …; attesa circa …: va bene». Con «NON va bene», o se la lettura non riesce, la prova si ferma prima di H3 e si ripete E5 (lista di controllo, H) |
+| H3 | Cancellazione definitiva con il `VersionId` | `AccessDenied` (il testo dopo il codice può essere «forbidden by object lock»), poi «la versione … c'è ancora: sì». Con «no» il blocco non funziona: la prova si ferma (lista di controllo, H) |
+| H4 | Calcola il giorno prima della data di H2 (`AAAA-MM-GG`) e lo mostra accanto a quella. Manda `Mode=COMPLIANCE,RetainUntilDate=<giorno>T00:00:00Z` solo se il giorno è nel futuro e precedente alla data di H2. Una data più lontana allungherebbe il blocco per sempre: per questo la calcola e la controlla la funzione, non si scrive a mano | `AccessDenied`, poi «la data della versione … è ancora quella di H2: sì». Con «no» la prova si ferma |
+| H5 | Cancellazione senza `--version-id` | «la versione più recente è un delete marker: sì», poi la versione di H1 si legge ancora |
+| H6 | Solo informativo, per OPS-T01b, e solo dopo H5. Una scrittura senza `Content-MD5` né checksum, la lettura della sua conservazione, poi un delete marker | Uno dei tre esiti della lista di controllo: «accettata; modo COMPLIANCE … va bene»; «accettata, ma la lettura della conservazione non è riuscita», con `ObjectLockConfigurationNotFoundError` (cioè accettata senza conservazione); «scrittura rifiutata», con il codice |
+
+Le versioni scritte nello specchio restano 45 giorni e nessuno può cancellarle: è lo scopo del blocco. Dopo, il ciclo di vita le toglie.
+
+### 10. Isolamento delle unità (I1–I2) (utente)
+
+**I1.** Lettura di `infra/scripts/check-bucket-isolation.sh` per intero, compreso il correttivo del client (le righe fra i segni `aws-cli-empty-message`, uguali a quelle del passo 4), prima di I2; poi lo si dice a Claude.
+
+**I2.** In un terminale delle chiavi **nuovo**, dopo il blocco del passo 4 e **senza** `load_key`:
+
+```bash
+cd ~/gestionale-negozi && git branch --show-current
+export FILE_PROD_BUCKET=foondaco-file FILE_PROD_ENDPOINT=https://fsn1.your-objectstorage.com FILE_PROD_REGION=fsn1 \
+  BACKUP_PROD_BUCKET=foondaco-backup BACKUP_PROD_ENDPOINT=https://fsn1.your-objectstorage.com BACKUP_PROD_REGION=fsn1 \
+  FILE_TEST_BUCKET=foondaco-file-test FILE_TEST_ENDPOINT=https://fsn1.your-objectstorage.com FILE_TEST_REGION=fsn1 \
+  BACKUP_TEST_BUCKET=foondaco-backup-test BACKUP_TEST_ENDPOINT=https://fsn1.your-objectstorage.com BACKUP_TEST_REGION=fsn1 \
+  MIRROR_DST_BUCKET=foondaco-specchio MIRROR_DST_ENDPOINT=https://nbg1.your-objectstorage.com MIRROR_DST_REGION=nbg1
+if [[ $(git branch --show-current) = @(ops-t03|main) ]] && h=$(git rev-parse -q --verify HEAD:infra/scripts/check-bucket-isolation.sh) && [ "$h" = "$(git hash-object --no-filters infra/scripts/check-bucket-isolation.sh)" ]; then BASH_ENV= HOME=$(mktemp -d) PATH=/usr/local/bin:/usr/bin:/bin bash infra/scripts/check-bucket-isolation.sh; else echo "Script NON lanciato: il ramo non è ops-t03 né main, oppure infra/scripts/check-bucket-isolation.sh non è uguale, byte per byte, a quello dell'ultimo commit. Nessuna chiave è stata chiesta: non incollarne, e dillo a Claude."; false; fi
+echo "codice di uscita: $?"
+```
+
+Il primo comando deve stampare `ops-t03` (dopo l'unione del compito, `main`). Lo script parte solo se il ramo è `ops-t03` o `main` (`@(ops-t03|main)` vuol dire «l'uno o l'altro») e se il file dello script è uguale, byte per byte, a quello salvato nell'ultimo commit: si confrontano due impronte, quella dello script nell'ultimo commit (`git rev-parse`) e quella del file nella cartella (`git hash-object`). Su `ops-t03` lo script è fermo dalla fase test, quindi è quello letto in I1; può cambiare solo tornando alla fase test (`TORNA AI TEST`, oppure `TORNA AL PIANO` e poi `APPROVO`), e allora lo si rilegge prima di lanciarlo. Su `main`, dopo l'unione, può averlo cambiato un compito successivo: prima di lanciarlo Claude controlla se è cambiato dopo I1 (`git log --oneline -- infra/scripts/check-bucket-isolation.sh`), e se sì lo si rilegge (regola della lettura). Se manca una delle due condizioni, il blocco scrive «Script NON lanciato…» e non chiede niente, e a Claude si incolla solo quella riga. Lo script parte senza file di avvio (`BASH_ENV=`), con una cartella di casa nuova e vuota (`HOME=$(mktemp -d)`) e con le sole cartelle di sistema (`PATH=/usr/local/bin:/usr/bin:/bin`): il suo client non legge e non scrive niente in `~/.aws`, e nessun programma delle cartelle della cartella di casa (come `~/.nvm/…/bin`) riceve le chiavi. Oltre al client, a ogni chiamata le ricevono solo `lsb_release` e `uname` di `/usr/bin` (e `getopt`, `cut` e `tr`, che `lsb_release` lancia), per pochi millesimi di secondo (riga 749); dentro il client gira anche il correttivo, che lo script scrive nella sua cartella temporanea, in sola lettura, e ricontrolla prima di ogni chiamata. Prima delle domande lo script controlla, senza chiavi e senza rete, che il client carichi il correttivo e sia il 2.39.4, e scrive «Correttivo del client: caricato (aws/aws-cli#10161)»; se non riesce, si ferma con una riga «risposta del client: …» (quando c'è) seguita da «ERRORE DI CONFIGURAZIONE: il correttivo del client non risulta caricato…», senza chiedere niente (regola del correttivo). Lo script chiede dodici parti, Access key e poi Secret key per ogni chiave, e dopo ognuna scrive «ricevuta»:
+
+| Lo script chiede | Voce del gestore di password |
+|---|---|
+| «file di produzione» | `file-prod` |
+| «backup di produzione» | `pgbackrest-prod` |
+| «file di test» | `file-test` |
+| «backup di test» | `pgbackrest-test` |
+| «specchio» | `specchio-scrittura` |
+| «sola lettura dello specchio» | `specchio-lettura` |
+
+Poi lo script lavora da solo per qualche minuto. Atteso: ultima riga dello script `RIUSCITO: 148 controlli, nessuno fallito.`, poi la riga del blocco «codice di uscita: 0». L'utente incolla a Claude solo l'uscita dello script, dalla riga «check-bucket-isolation.sh: isolamento delle unità di archivio S3» alla sua ultima riga, quella subito prima di «codice di uscita: …»: «RIUSCITO …», oppure l'ultima delle righe «  - …» che seguono «FALLITO …», oppure la riga «Interrotto…», oppure la riga «ERRORE DI CONFIGURAZIONE…» o, se la seguono, la riga «Non incollare altre chiavi…». Se la riga «check-bucket-isolation.sh: …» non c'è, si incolla solo la riga «ERRORE DI CONFIGURAZIONE…». Prima la guarda (regola degli appunti): se contiene una riga che lo script non ha scritto, per esempio una chiave, non la incolla, lo dice a Claude a parole, e quella chiave è esposta (passo 12). Il numero di «codice di uscita» lo scrive a parole. Gli oggetti di prova cancellati restano nascosti da un delete marker nei bucket con le versioni. Il ciclo di vita li toglie dopo 30 giorni, o dopo 45 nello specchio, dove fino ad allora li tiene Object Lock.
+
+**Avanzi.** Dopo un'interruzione, o se la pulizia dello script non è riuscita, in un terminale delle chiavi, tutto il blocco: prima carica le cinque chiavi, poi pulisce i cinque bucket (dove non c'è niente scrive «cancellati 0»).
+
+```bash
+load_key file-prod
+load_key pgbackrest-prod
+load_key file-test
+load_key pgbackrest-test
+load_key specchio-scrittura
+clean_leftovers file-prod
+clean_leftovers backup-prod
+clean_leftovers file-test
+clean_leftovers backup-test
+clean_leftovers specchio
+```
+
+### 11. Chiave temporanea (J1–J6) (utente)
+
+**J1.** Nella console, nel progetto `lettura-backup-prod` (si guarda che sia quello aperto, come al passo 2):
+
+1. «Security» → «S3 credentials» → «Generate credentials», in alto a destra ora che c'è già una chiave;
+2. «Description»: `prova-ripristino-AAAAMMGG`, con la data del giorno (per esempio `prova-ripristino-20261120`) → «Generate credentials»; quando compare la finestra «Credentials generated» si annota l'ora;
+3. la voce `Hetzner S3 · lettura-backup-prod · prova-ripristino-AAAAMMGG`, con la stessa data, nel gestore di password, come al passo 2; poi si copia una parola qualsiasi, perché negli appunti resta una parte della chiave, e prima di inviare a Claude si guarda la casella (regola degli appunti).
+
+Risposta a Claude: nell'elenco ci sono solo `specchio-lettura` e la chiave nuova.
+
+Nel terminale delle chiavi questa chiave si chiama sempre `prova-ripristino`, senza data, così i comandi non cambiano da un mese all'altro. Alle domande «… di «prova-ripristino»» si copia dalla voce `… · prova-ripristino-AAAAMMGG` del giorno.
+
+**J2, nella forma per chiave, prima di tutto.** La chiave nuova va aggiunta alla policy, in un terminale delle chiavi. Nella forma per progetto questo blocco serve solo se la lista di J2, qui sotto, è rifiutata con `AccessDenied` (lista di controllo, J2).
+
+```bash
+load_key pgbackrest-prod
+load_key specchio-lettura
+load_key prova-ripristino
+use_key pgbackrest-prod
+put_policy_keys specchio-lettura prova-ripristino
+```
+
+Una chiave appena creata può metterci qualche minuto a funzionare: se `put_policy_keys` dice che `prova-ripristino` non funziona, si aspetta qualche minuto e si rilancia il blocco. Poi la regola della policy (passo 7): ora annotata e uscita a Claude, 15 minuti, `show_policy backup-prod` che mostra `[specchio-lettura]` e `[prova-ripristino]`, F1–F2 con il blocco di F.
+
+**J2, nelle due forme.** In un terminale delle chiavi che resta aperto fino a J4:
+
+```bash
+load_key prova-ripristino
+use_key prova-ripristino
+if compare_key prova-ripristino; then
+  s3 fsn1 list-objects-v2 --bucket foondaco-backup --max-items 5
+  printf 'prova di sola lettura\n' > "$WORK/prova.txt"
+  s3 fsn1 put-object --bucket foondaco-backup --key prova-sola-lettura.txt --body "$WORK/prova.txt"
+else echo 'Lista e scrittura non partono: il motivo è nelle righe qui sopra. Non incollare niente ora.'; fi
+```
+
+- Le domande sono sempre tre, tutte dalla voce `prova-ripristino-AAAAMMGG`: Access key e Secret key per `load_key`, poi di nuovo l'Access key per `compare_key`. Dopo la terza le domande sono finite: alla riga che finisce con `$` non si incolla mai una parte di chiave, solo un blocco.
+- Atteso: «uguale», poi la lista riuscita, poi la scrittura rifiutata con `AccessDenied`. L'uscita intera va a Claude.
+- Con «diversa» o «confronto non fatto», lista e scrittura non partono: si rilancia il blocco, copiando con attenzione dalla voce.
+- Si annota il tempo da J1 alla prima lista riuscita.
+- Un errore di chiave o di rete non è un esito: si rilancia il blocco, che chiede di nuovo la chiave, ogni 5 minuti, al massimo per 60 minuti da J1 (lista di controllo, J2).
+- Lista rifiutata con `AccessDenied`: ci si ferma e lo si dice a Claude. Nella forma per progetto si passa alla forma per chiave con il primo blocco di J2 e la regola della policy, poi si rilancia questo blocco, entro 60 minuti da J1; nella forma per chiave si ricontrollano J1, E7 e i 15 minuti (lista di controllo, J2).
+- Scrittura riuscita: il file di prova si cancella con `pgbackrest-prod`, come al passo 7; poi ci si ferma e lo si dice a Claude, prima di J3 (lista di controllo, J2).
+
+**J3.** Nella console:
+
+1. `lettura-backup-prod` → «Security» → «S3 credentials»;
+2. nella riga la cui colonna «Description» dice `prova-ripristino-AAAAMMGG` (non `specchio-lettura`): menu «⋯» alla fine della riga → «Delete» → conferma;
+3. si annota l'ora, subito dopo la conferma di «Delete»;
+4. nell'elenco resta solo `specchio-lettura`: lo si dice a Claude a parole, con l'ora del punto 3. Niente schermate di questa pagina: come al passo 2, la colonna «Access Key» mostra per intero la chiave di `specchio-lettura`.
+
+La documentazione di Hetzner non mostra questo menu. Se le voci sono diverse, le si scrive a Claude a parole, così come compaiono, senza schermate. J4 parte subito dopo la risposta del punto 4.
+
+**J4.** Subito dopo J3, nel terminale di J2:
+
+```bash
+use_key prova-ripristino
+watch_revocation
+```
+
+Stampa una riga per prova, subito e poi a 5, 10, … 60 minuti dall'inizio, e alla fine una riga di riepilogo; l'uscita intera va a Claude. Atteso: due rifiuti di fila con `InvalidAccessKeyId` entro 60 minuti dall'ora di J3. Le prove partono qualche minuto dopo J3: Claude ne confronta le ore con quella di J3.
+
+- Le righe «non conta» (errori del client, della rete o del fornitore, per esempio `SlowDown`, `InternalError`, `ServiceUnavailable` o un numero 5xx) non interrompono la prova e non contano come rifiuti.
+- Una riga «con un altro codice» interrompe la serie e si annota: se la chiave è sempre rifiutata così, si decide con `TORNA AI TEST`. Una riga «con un altro codice: None» invece non è un esito (il fornitore non ha mandato il codice): non porta a `TORNA AI TEST`, lo si dice a Claude.
+- Se compare «correttivo del client non attivo: la serie non vale», ci si ferma e lo si dice a Claude: dopo J3 la serie non vale più, e J1–J4 si rifanno con una chiave temporanea nuova (regola del correttivo).
+- Durante J4 il computer non si sospende. Se compare «prove saltate», alcune prove mancano: l'esito di J4 lo decide Claude.
+- Se dopo 60 minuti la lista riesce ancora, nella forma per chiave si fa subito J6 e poi ci si ferma (lista di controllo, J4).
+
+**J5.** Si cancella la voce della chiave temporanea nel gestore di password.
+
+**J6, solo nella forma per chiave, dopo J4.** In un terminale delle chiavi:
+
+```bash
+load_key pgbackrest-prod
+load_key specchio-lettura
+use_key pgbackrest-prod
+put_policy_keys specchio-lettura
+```
+
+Poi la regola della policy (passo 7): ora annotata e uscita a Claude, 15 minuti, `show_policy backup-prod` con solo `[specchio-lettura]`, F1–F2 con il blocco di F. Nella forma per progetto J6 non serve: lo si annota.
+
+Per la prova mensile (OPS-004) la chiave temporanea si crea e si cancella nello stesso modo (J1, J3), con la data del giorno nella console e nel gestore di password; nel terminale si chiama sempre `prova-ripristino`. Nella forma per chiave, la policy cambia come in J2 e J6.
+
+### 12. Chiave esposta o persa (utente)
+
+**Chiave esposta**: comparsa sullo schermo, incollata in chat, oppure incollata fuori dalle domande senza eco (regola del terminale delle chiavi).
+
+1. Si chiude subito quel terminale, senza incollarne l'uscita a Claude.
+2. Nella console, nel progetto della chiave: «Security» → «S3 credentials» → menu «⋯» della riga → «Delete». Poi si crea una chiave nuova con lo stesso nome (passo 2). Una chiave temporanea esposta dopo J3 è già cancellata: non si rifà, e dei punti che seguono non serve nessuno. Lo si dice subito a Claude: se il terminale chiuso al punto 1 è quello di J2, Claude decide come finire J4, e annota l'esposizione per K3.
+3. La voce del gestore di password prende i valori nuovi, al posto dei vecchi. Poi si copia una parola qualsiasi, perché negli appunti resta una parte della chiave, e prima di ogni invio a Claude si guarda la casella (regola degli appunti).
+4. Se la policy è nella forma per chiave e nomina la chiave rifatta (`specchio-lettura`, oppure `prova-ripristino` fra J2 e J3), in un terminale delle chiavi nuovo si rimanda la policy con le chiavi che deve nominare in quel momento. Fra J2 e J3, finché la chiave temporanea esiste: il primo blocco di J2 (`put_policy_keys specchio-lettura prova-ripristino`). In ogni altro momento: il blocco della forma per chiave del passo 7 (`put_policy_keys specchio-lettura`), ma da J3 in poi solo a J4 finito, mai mentre gira (ne cambierebbe l'esito), e allora vale anche come J6. Poi la regola della policy (passo 7).
+5. Se la chiave è già nel file di ambiente di un server (dopo OPS-T01a, FON-T07b od OPS-T01b), l'utente la aggiorna lì con la procedura dei file di ambiente.
+6. Si ripetono le prove di quella chiave, e la data va in «Rotazioni delle chiavi», qui sotto.
+7. Ultimo passo: si aggiorna la copia fuori linea (OPS-009), cioè la copia sigillata, con i valori nuovi al posto dei vecchi, e se ne annota la data in «Valori letti» (copia fuori linea) e in «Rotazioni delle chiavi». Prima del passo 13 le chiavi S3 non sono ancora nella copia sigillata: ce le mette il passo 13, con i valori di quel momento, e qui la data va solo in «Rotazioni delle chiavi».
+
+**Valore perso**: la Secret key non è nel gestore di password. Non si recupera, perché la console la mostra una volta sola: si fanno i passi 2–7 qui sopra.
+
+### 13. Chiusura (K1, K3) (utente)
+
+1. Le sei chiavi (non la temporanea) vanno nella copia sigillata (OPS-009), con i valori che sono ora nel gestore di password. Se le si copia dal gestore di password, alla fine si copia una parola qualsiasi, perché negli appunti resta una parte di chiave, e prima di ogni invio a Claude si guarda la casella (regola degli appunti).
+2. Per ciascuna delle sei voci, una risposta scritta a Claude: c'è nel gestore di password e nella copia sigillata. Niente schermate.
+3. La data dell'aggiornamento della copia sigillata va a Claude, che la scrive in «Valori letti».
+4. Tutti i terminali delle chiavi sono chiusi (`exit`), e ogni chiusura è stata detta a Claude (K3).
+
+### 14. Testimone del ciclo di vita (G6–G9) (utente)
+
+Specifica 08, OPS-005, «Testimone del ciclo di vita». Hetzner risponde alle scritture e alle letture nei bucket dei file con l'intestazione `Expiration`, che dà una scadenza anche alla versione corrente. Secondo il codice di Ceph, il sistema di Hetzner, è un difetto della sola intestazione, e il ciclo di vita toglie solo le versioni precedenti. Il testimone lo controlla dal vivo in `foondaco-file-test`, che ha le stesse regole di `foondaco-file`.
+
+- **Scrittura** (G8, una volta sola, in OPS-T03): scrive due volte di seguito `testimone-ops-005.txt`. L'ultima versione è il **testimone**, che deve restare; la precedente è il **confronto**, che il ciclo di vita deve togliere. Se il file ha già una versione o un delete marker, non scrive niente. Dopo, nessuno lo riscrive né lo cancella: lo toglie solo il compito che cambierà il ciclo di vita o il fornitore dei bucket dei file.
+- **Verifica** (prove mensili e COL-T01, non prima della data di verifica di «Valori letti»): mostra le versioni del testimone, lo legge e rilegge il ciclo di vita. Non scrive e non cancella niente. In G8 la si lancia anche subito dopo la Scrittura, solo quando lo chiede Claude, per il testo: non è la verifica.
+
+Ogni blocco si lancia in un terminale delle chiavi, dopo il blocco del passo 4, e fa due domande: Access key e Secret key della voce `Hetzner S3 · file-test · file-test`. Altre non ne fa: dopo la seconda, alla riga che finisce con `$` non si incolla mai una parte di chiave.
+
+- La Scrittura si lancia in un terminale delle chiavi nuovo.
+- La Verifica, in un terminale delle chiavi nuovo, oppure in quello della prova mensile, ma solo prima di caricare la chiave temporanea o dopo `watch_revocation` (J4): dopo il blocco la chiave in uso è `file-test`. In G8, quando lo chiede Claude, nello stesso terminale della Scrittura.
+- Il blocco si copia per intero, con l'a capo automatico di VS Code spento (Alt+Z), e si incolla tutto insieme, poi Invio.
+- L'uscita intera va a Claude, dalla prima domanda in poi, con la regola degli appunti.
+
+**Scrittura.**
+
+```bash
+# Testimone del ciclo di vita (infra/README.md, passo 14): scrittura (G8): scrive il testimone una volta sola; si rilancia solo come dice il suo messaggio.
+load_key file-test
+use_key file-test
+if s3 fsn1 list-object-versions --bucket foondaco-file-test --prefix testimone-ops-005.txt; then
+  if prima=$(_versions_of testimone-ops-005.txt) && [ -z "$prima" ]; then
+    printf 'testimone del ciclo di vita (OPS-005), prima scrittura (confronto), %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$WORK/testimone-1.txt"
+    if s3 fsn1 put-object --bucket foondaco-file-test --key testimone-ops-005.txt --body "$WORK/testimone-1.txt" &&
+      printf 'testimone del ciclo di vita (OPS-005), scritto il %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$WORK/testimone.txt" &&
+      s3 fsn1 put-object --bucket foondaco-file-test --key testimone-ops-005.txt --body "$WORK/testimone.txt"; then
+      echo "testimone: il file scritto contiene «$(cat "$WORK/testimone.txt")»"
+      s3 fsn1 list-object-versions --bucket foondaco-file-test --prefix testimone-ops-005.txt &&
+        _versions_of testimone-ops-005.txt | sed 's/^/testimone: /'
+    else
+      echo "Scrittura del testimone interrotta (motivo qui sopra). Non rilanciare il blocco: lo si dice a Claude."
+    fi
+  else
+    echo "Testimone NON scritto: c'è già, oppure la lista non si legge. Non rilanciare il blocco: lo si dice a Claude."
+  fi
+else
+  echo "Testimone non scritto: la prima lista non è riuscita (motivo qui sopra). Con un errore di rete o del fornitore si rilancia il blocco; con RequestTimeTooSkewed si rimette prima l'ora del computer. Con un errore di chiave (InvalidAccessKeyId, SignatureDoesNotMatch, domande interrotte, parti rifiutate) o con AccessDenied (di solito la voce sbagliata del gestore di password) si ricopiano le due parti dalla voce di file-test e si rilancia il blocco; se l'errore torna, non si rilancia: lo si dice a Claude. Con «correttivo del client non attivo» vale la regola del correttivo."
+fi
+s3 fsn1 list-object-versions --bucket foondaco-file-test --prefix check-bucket-isolation/
+```
+
+| Uscita | Cosa si fa |
+|---|---|
+| La prima lista senza `Versions` né `DeleteMarkers`; due scritture con «codice di uscita: 0»; «testimone: il file scritto contiene «…»»; poi «testimone: versione … più-recente» (la seconda scrittura) e una o più righe «testimone: versione … -» (la prima; più di una se il client ha ripetuto una scrittura) | Riuscita: l'uscita intera va a Claude, che annota i valori (G9) |
+| «Testimone non scritto: la prima lista non è riuscita» | Con un errore di rete o del fornitore si rilancia il blocco; con `RequestTimeTooSkewed` si rimette prima l'ora del computer. Con un errore di chiave (`InvalidAccessKeyId`, `SignatureDoesNotMatch`, domande interrotte o parti rifiutate da `load_key`) o con `AccessDenied` (di solito la voce sbagliata del gestore di password) le due parti si ricopiano dalla voce di `file-test` e si rilancia il blocco; se l'errore torna con la voce giusta, ci si ferma e lo si dice a Claude (G8). Con «correttivo del client non attivo» vale la regola del correttivo |
+| «Testimone NON scritto: c'è già, oppure la lista non si legge» | Ci si ferma e lo si dice a Claude, senza rilanciare il blocco: Claude guarda la prima lista e decide come dice G8 |
+| «Scrittura del testimone interrotta», oppure la lista finale non riuscita dopo «testimone: il file scritto contiene «…»» | Ci si ferma e lo si dice a Claude, senza rilanciare il blocco: Claude fa lanciare nello stesso terminale la sola lista del testimone (regola della lettura) e decide come dice G8 |
+
+Le risposte delle scritture riportano l'intestazione `Expiration`, e la lista finale il `LastModified` di ogni versione: Claude li annota com'erano (G9). L'intestazione non decide l'esito. Le ultime righe, la lista degli avanzi di I2 sotto `check-bucket-isolation/`, sono solo informative. Il terminale della Scrittura si chiude (`exit`) quando lo dice Claude, perché può servire ancora (G8); se una chiave è comparsa sullo schermo, invece, si chiude subito, senza incollarne l'uscita a Claude (passo 12). La chiusura si dice a Claude (K3).
+
+**Verifica.**
+
+```bash
+# Testimone del ciclo di vita (infra/README.md, passo 14): verifica, non prima della data di verifica di «Valori letti» (in G8 solo per il testo, quando lo chiede Claude).
+load_key file-test
+use_key file-test
+if s3 fsn1 list-object-versions --bucket foondaco-file-test --prefix testimone-ops-005.txt; then
+  if versioni=$(_versions_of testimone-ops-005.txt); then
+    printf '%s\n' "${versioni:-nessuna versione e nessun delete marker}" | sed 's/^/testimone: /'
+  else
+    echo 'testimone: la lista non si legge'
+  fi
+fi
+s3 fsn1 get-object --bucket foondaco-file-test --key testimone-ops-005.txt "$WORK/testimone-letto.txt" &&
+  echo "testimone: il file letto contiene «$(head -c 300 "$WORK/testimone-letto.txt" | LC_ALL=C tr -cd '[:print:]')»"
+s3 fsn1 get-bucket-lifecycle-configuration --bucket foondaco-file-test
+s3 fsn1 list-object-versions --bucket foondaco-file-test --prefix check-bucket-isolation/
+```
+
+Atteso (specifica 08, OPS-005, «Testimone del ciclo di vita», «Atteso»): una sola riga «testimone: versione …» o «testimone: delete-marker …», cioè «testimone: versione <VersionId del testimone di «Valori letti»> più-recente», senza righe «testimone: versione … -» né «testimone: delete-marker …»; la riga «testimone: il file letto contiene «…»» con il testo del testimone; il ciclo di vita con le due regole di D2, `versioni-precedenti` e `delete-marker-scaduti`. Le ultime righe, la lista degli avanzi di I2 sotto `check-bucket-isolation/`, sono solo informative. L'intestazione `Expiration` della lettura porta una data già passata: è il difetto della sola intestazione, non un esito. Un errore di rete o del fornitore, o «testimone: la lista non si legge», non è un esito: si rilancia il blocco; con `RequestTimeTooSkewed` si rimette prima l'ora del computer. Con un errore di chiave (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o con `AccessDenied` (di solito la voce sbagliata del gestore di password) le due parti si ricopiano dalla voce di `file-test` e si rilancia il blocco; se l'errore resta con la voce giusta, non si rilancia più: la verifica non è conclusiva e lo si dice a Claude. L'esito lo decide Claude, con le regole della specifica, e lo annota lì.
+
+### 15. Valori letti
+
+- Id dei progetti (B3): nella tabella in alto.
+- Client: AWS CLI 2.39.4, installato il 18/11/2026, con il correttivo dei messaggi d'errore vuoti dal 21/11/2026 (aws/aws-cli#10161; regole, «Il correttivo del client»). Chiave di firma di AWS `FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C`, con scadenza 01/07/2027.
+- Bucket di Falkenstein creati il 19/11/2026 (C3, C5); `foondaco-file-test`, creato prima per sbaglio a Norimberga, è stato cancellato e rifatto a Falkenstein lo stesso giorno (C1, C3). Specchio creato il 20/11/2026 alle 20:23, cancellato per sbaglio il 21/11/2026 e rifatto lo stesso giorno verso le 14:07 (ora non annotata: alle 14:13 l'elenco diceva «6 minutes ago»), con Object Lock (C4).
+- Forma della policy di `foondaco-backup` in uso: per progetto (`arn:aws:iam:::user/p16852089`), dal 21/11/2026: F1 riuscita e F2 rifiutata con `AccessDenied`; la forma per chiave non è servita. La confermano I2 (21/11/2026: `specchio-lettura` legge `foondaco-backup` e nient'altro) e J2 (22/11/2026: una chiave nuova di `lettura-backup-prod` legge `foondaco-backup` senza cambiare la policy, e non vi scrive).
+- Tempo della revoca di una chiave cancellata: entro circa un minuto e mezzo (J4, 22/11/2026: `prova-ripristino-20261122` cancellata alle 11:47, rifiutata con `InvalidAccessKeyId` già alla prima prova, alle 11:48:31, e alla seconda, alle 11:53:33).
+- Copia fuori linea delle sei chiavi (OPS-009): ultimo aggiornamento il 21/11/2026, dopo la rotazione di `specchio-scrittura` (K1; il 22/11/2026 la sua Access key nella copia sigillata è uguale a quella del gestore di password).
+- Rotazioni delle chiavi: `specchio-scrittura`, 21/11/2026, per precauzione: alle sue domande nel blocco di E del primo terminale non si è caricata, e non si sa se una sua parte è comparsa sullo schermo (passo 12). La copia sigillata non c'era ancora (passo 13).
+- Testimone del ciclo di vita (passo 14), scritto il 23/11/2026 dal blocco «Scrittura», lanciato una volta (G8):
+  - testo dell'ultima scrittura: «testimone del ciclo di vita (OPS-005), scritto il 2026-11-23T08:46:41Z»;
+  - testimone, l'ultima scrittura: `VersionId` `-2PdjCGlXBvP7hXb46wsC7P9-SOyX0L`, `LastModified` 2026-11-23T08:46:42.997000+00:00 (UTC);
+  - confronto, la prima scrittura: `VersionId` `34u7FYYXa6mP4zLbKmB5jOMBZiLSAnG`, `LastModified` 2026-11-23T08:46:40.960000+00:00 (UTC);
+  - intestazione `Expiration` delle risposte delle due scritture, com'è: `expiry-date="Thu, 24 Dec 2026 00:00:00 GMT", rule-id="versioni-precedenti"`;
+  - data di verifica: 31/12/2026 (ultima scrittura + 38 giorni); data limite: 07/01/2027 (+ 45 giorni).
 
 ## PostgreSQL e backup
 
