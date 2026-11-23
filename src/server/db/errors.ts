@@ -16,6 +16,11 @@ const SQLSTATE = /^[0-9A-Z]{5}$/;
  */
 const NAME_ONLY_CLASSES = ['23', '42'];
 const NAME_ONLY_CODES: ReadonlySet<string> = new Set(['25006', '40001', '40P01', '57014', 'P0001']);
+/**
+ * Eccezioni nelle classi qui sopra: 42601 (errore di sintassi), perché to_tsquery e il parser di jsonpath citano nel
+ * messaggio il testo ricevuto come parametro (NEG-T02, nota (13)).
+ */
+const GENERIC_CODES: ReadonlySet<string> = new Set(['42601']);
 
 /** I campi dell'errore di pg (DatabaseError di pg-protocol) che servono qui. */
 interface PgError extends Error {
@@ -38,6 +43,7 @@ function isPgError(error: unknown): error is PgError {
 }
 
 function hasNameOnlyMessage(code: string): boolean {
+  if (GENERIC_CODES.has(code)) return false;
   return NAME_ONLY_CLASSES.includes(code.slice(0, 2)) || NAME_ONLY_CODES.has(code);
 }
 

@@ -18,10 +18,19 @@ const CONTEXT_FILE = 'src/server/db/context.ts';
 const SOURCE_FILES = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 const PLACEHOLDER = '${…}';
 
-// SET app.x, anche con LOCAL o SESSION e con il nome tra virgolette doppie.
-const SET_APP = /\bSET\s+(?:LOCAL\s+|SESSION\s+)?"?app\./i;
-// Ogni chiamata a set_config, qualunque sia il primo argomento (tra apici, E'…', $$…$$, un parametro).
-const SET_CONFIG_ANY = /set_config\s*\(/gi;
+// Nota (18) del ritorno al piano di NEG-T02: vietati anche il nome con le parti tra virgolette separate o con spazi
+// attorno al punto, set_config tra virgolette (anche qualificato), UPDATE pg_settings e, nel modello sql, sql.raw(…),
+// sql.identifier(…) o un altro modello sql al posto del parametro.
+
+// SET app.x, anche con LOCAL o SESSION, con il nome tra virgolette doppie (intero o a parti) e con spazi attorno al punto.
+const SET_APP = /\bSET\s+(?:LOCAL\s+|SESSION\s+)?"?app"?\s*\.\s*"?[a-z_]/i;
+// Ogni chiamata a set_config, qualunque sia il primo argomento (tra apici, E'…', $$…$$, un parametro), anche con il
+// nome della funzione tra virgolette o qualificato.
+const SET_CONFIG_ANY = /"?set_config"?\s*\(/gi;
+// Un UPDATE di pg_settings equivale a un SET di sessione.
+const UPDATE_PG_SETTINGS = /\bUPDATE\s+(?:"?pg_catalog"?\s*\.\s*)?"?pg_settings"?(?![\w$])/i;
+// Il segnaposto di un'espressione che scrive SQL nel testo invece di passare un parametro.
+const RAW_PLACEHOLDER = '${sql non parametrico}';
 // La sola forma che si valuta: il nome tra apici semplici, poi valore e terzo argomento.
 const SET_CONFIG_CALL = /set_config\s*\(\s*'app\.([a-z_]+)'\s*,\s*([^,()]*?)\s*,\s*([^,()]*?)\s*\)/gi;
 
@@ -39,10 +48,31 @@ function scriptKind(file: string): ts.ScriptKind {
   return ts.ScriptKind.TS;
 }
 
-/** Il testo di un modello, con ogni `${…}` sostituito da un segnaposto uguale per tutti. */
+/** Vero se l'espressione scrive SQL nel testo della query: sql.raw(…), sql.identifier(…) o un altro modello sql. */
+function isRawSql(expression: ts.Expression): boolean {
+  if (ts.isCallExpression(expression) && ts.isPropertyAccessExpression(expression.expression)) {
+    const target = expression.expression;
+    return (
+      ts.isIdentifier(target.expression) &&
+      target.expression.text === 'sql' &&
+      ['raw', 'identifier'].includes(target.name.text)
+    );
+  }
+  return ts.isTaggedTemplateExpression(expression) && ts.isIdentifier(expression.tag) && expression.tag.text === 'sql';
+}
+
+/**
+ * Il testo di un modello, con ogni `${…}` sostituito da un segnaposto uguale per tutti, tranne le espressioni che
+ * scrivono SQL nel testo (isRawSql), che hanno un segnaposto diverso: non sono un parametro.
+ */
 function templateText(template: ts.TemplateLiteral): string {
   if (ts.isNoSubstitutionTemplateLiteral(template)) return template.text;
-  return template.head.text + template.templateSpans.map((span) => PLACEHOLDER + span.literal.text).join('');
+  return (
+    template.head.text +
+    template.templateSpans
+      .map((span) => (isRawSql(span.expression) ? RAW_PLACEHOLDER : PLACEHOLDER) + span.literal.text)
+      .join('')
+  );
 }
 
 /** Il rilevatore: funzione pura sul testo di un file, provata qui sotto su sorgenti finti. */
@@ -53,6 +83,7 @@ function scanSource(file: string, source: string): Scan {
 
   const checkSqlTemplate = (text: string) => {
     if (SET_APP.test(text)) violations.push(`${file}: SET … app. in un modello sql`);
+    if (UPDATE_PG_SETTINGS.test(text)) violations.push(`${file}: UPDATE pg_settings in un modello sql`);
     const occurrences = text.match(SET_CONFIG_ANY)?.length ?? 0;
     let calls = 0;
     for (const match of text.matchAll(SET_CONFIG_CALL)) {
@@ -91,7 +122,10 @@ function scanSource(file: string, source: string): Scan {
       ts.isTemplateTail(node)
     ) {
       if (SET_APP.test(node.text)) violations.push(`${file}: SET … app. in un letterale`);
-      if (/set_config\s*\(/i.test(node.text)) violations.push(`${file}: set_config fuori da un modello sql di Drizzle`);
+      if (/"?set_config"?\s*\(/i.test(node.text)) {
+        violations.push(`${file}: set_config fuori da un modello sql di Drizzle`);
+      }
+      if (UPDATE_PG_SETTINGS.test(node.text)) violations.push(`${file}: UPDATE pg_settings in un letterale`);
     }
     ts.forEachChild(node, visit);
   };
@@ -146,6 +180,38 @@ describe('rilevatore', () => {
     ];
     for (const source of rejected) {
       expect(scanSource(CONTEXT_FILE, source).violations, source).not.toEqual([]);
+    }
+  });
+
+  it('NEG-005: rifiuta anche il nome tra virgolette a parti o con spazi, set_config tra virgolette, UPDATE pg_settings e SQL scritto nel testo al posto del parametro', () => {
+    const rejected = [
+      `const q = 'SET LOCAL "app"."shop_id" = 1';`,
+      "const q = 'SET LOCAL app . shop_id = 1';",
+      `const q = 'SET LOCAL app."shop_id" = 1';`,
+      `const q = 'SET "app" . "user_id" = 1';`,
+      'const q = sql`SET LOCAL app . shop_id = ${shopId}`;',
+      `const q = sql\`SELECT "set_config"('app.shop_id', \${shopId}, false)\`;`,
+      `const q = sql\`SELECT "set_config"('app.shop_id', \${shopId}, true)\`;`,
+      `await client.query('SELECT "pg_catalog"."set_config"($1, $2, false)', ['app.shop_id', shopId]);`,
+      'const q = "UPDATE pg_settings SET setting = $1 WHERE name = \'app.shop_id\'";',
+      "const q = sql`UPDATE pg_catalog.pg_settings SET setting = ${shopId} WHERE name = 'app.shop_id'`;",
+      "const q = sql`SELECT set_config('app.shop_id', ${sql.raw(shopId)}, true)`;",
+      "const q = sql`SELECT set_config('app.shop_id', ${sql.identifier(shopId)}, true)`;",
+      "const q = sql`SELECT set_config('app.shop_id', ${sql`${shopId}`}, true)`;",
+    ];
+    for (const source of rejected) {
+      expect(scanSource(CONTEXT_FILE, source).violations, source).not.toEqual([]);
+    }
+  });
+
+  it('NEG-005: le letture di pg_settings e i SET LOCAL di altre impostazioni non contano', () => {
+    const allowed = [
+      "const q = sql`SELECT setting FROM pg_settings WHERE name = 'max_connections'`;",
+      "const q = sql`SET LOCAL lock_timeout = '5s'`;",
+      "const q = 'SET search_path = public, pg_temp';",
+    ];
+    for (const source of allowed) {
+      expect(scanSource('src/server/db/altro.ts', source), source).toEqual({ violations: [], allowed: [] });
     }
   });
 

@@ -4,7 +4,10 @@
 // Drizzle usa la connessione e la rilascia: un `tx` o un costruttore di query usati dopo sollevano l'errore del proxy
 // revocato invece di eseguire su una connessione tornata al pool, magari già in uso con il contesto di un altro negozio.
 // Le tre funzioni esportate con lo stesso nome lavorano sul pool di DATABASE_URL, preso a ogni chiamata e mai
-// all'importazione; createDbContext serve ai test, con un pool di una sola connessione.
+// all'importazione; createDbContext serve ai test, con un pool di una sola connessione. Dal ritorno al piano (nota (10)):
+// una chiamata dentro fn di un'altra si rifiuta, una connessione che esce dal pool non inattiva si scarta, e un commit
+// che PostgreSQL ha trasformato in rollback fa fallire la chiamata.
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ExtractTablesWithRelations } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 import { DrizzleQueryError } from 'drizzle-orm/errors';
@@ -20,9 +23,9 @@ import type { ShopAddress } from './schema';
 export type Tx = PgTransaction<NodePgQueryResultHKT, typeof schema, ExtractTablesWithRelations<typeof schema>>;
 
 export interface ShopCtx {
-  /** Id del negozio, con la forma di un UUID (controllata prima di prendere una connessione). */
+  /** Id del negozio: un UUID in minuscolo, come lo restituisce PostgreSQL (controllato prima di prendere una connessione). */
   shopId: string;
-  /** Utente che agisce; null per i lavori di sistema (app.user_id resta vuoto). */
+  /** Utente che agisce, stringa non vuota; null per i lavori di sistema (app.user_id resta vuoto). */
   userId: string | null;
   /** Chi agisce: è l'`actorType` che chi chiama passa ad audit(). */
   actor: 'user' | 'admin' | 'system';
@@ -55,7 +58,15 @@ export interface DbContext {
   withNewShop<T>(input: NewShopInput, adminId: string, fn: (tx: Tx, shopId: string) => Promise<T>): Promise<T>;
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Un UUID in minuscolo (qualunque versione): così `ctx.shopId` coincide, come stringa, con gli id letti dal database. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * Il segno della transazione aperta, unico per il modulo e non per il contesto (le funzioni esportate creano un contesto
+ * nuovo a ogni chiamata): vale `open: true` finché la transazione è aperta, così una chiamata avviata dentro fn ma
+ * eseguita dopo la sua fine (da un timer, da una promessa non attesa) è ammessa.
+ */
+const openTransaction = new AsyncLocalStorage<{ open: boolean }>();
 
 /** Gli argomenti si controllano prima di prendere una connessione; i messaggi non riportano i valori. */
 function requireUuid(value: unknown, message: string): asserts value is string {
@@ -75,16 +86,60 @@ function connectionUnusable(error: unknown): boolean {
   return error instanceof DrizzleQueryError && (error.query === 'rollback' || dbErrorCode(error) === undefined);
 }
 
+/** Vero per la configurazione della query con cui drizzle-orm 0.45.4 chiude la transazione (`sql\`commit\``). */
+function isCommit(config: unknown): boolean {
+  if (typeof config === 'string') return config === 'commit';
+  return typeof config === 'object' && config !== null && (config as { text?: unknown }).text === 'commit';
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return typeof (value as { then?: unknown } | null)?.then === 'function';
+}
+
+/** Il tag di PostgreSQL di un risultato di pg (`COMMIT`, `ROLLBACK`, …), se c'è. */
+function commandOf(result: unknown): unknown {
+  return typeof result === 'object' && result !== null ? (result as { command?: unknown }).command : undefined;
+}
+
 /** withShop, withUser e withNewShop sul pool ricevuto. */
 export function createDbContext(pool: Pool): DbContext {
   async function transaction<T>(readOnly: boolean, body: (tx: Tx) => Promise<T>): Promise<T> {
+    // Nota (10)(b): una chiamata dentro fn di un'altra aprirebbe una transazione indipendente su una seconda
+    // connessione (scritture non viste, stallo senza limite, pool esaurito): si rifiuta prima di prendere la connessione.
+    if (openTransaction.getStore()?.open === true) {
+      throw new Error(
+        'withShop, withUser e withNewShop non si chiamano dentro fn di un’altra: dentro fn si usa il tx.',
+      );
+    }
     let client: PoolClient;
     try {
       client = await pool.connect();
     } catch (error) {
       throw toDbError(error);
     }
-    const { proxy, revoke } = Proxy.revocable(client, {});
+    // Nota (10)(d): una connessione rilasciata da altro codice a metà di una transazione ('T') o in una transazione
+    // fallita ('E') non si usa: withShop ne proseguirebbe la transazione, o fallirebbe sul begin a ogni chiamata.
+    if (client.getTransactionStatus() !== 'I') {
+      client.release(new Error('Connessione scartata: non era inattiva.'));
+      throw new Error('La connessione presa dal pool non era inattiva ed è stata scartata.');
+    }
+    // Nota (10)(a): drizzle-orm 0.45.4 ignora il risultato del commit. Se fn ha intercettato un errore senza savepoint,
+    // la transazione è fallita e PostgreSQL risponde al commit con il tag ROLLBACK: il proxy legge quel tag.
+    let rolledBack = false;
+    const { proxy, revoke } = Proxy.revocable(client, {
+      get(target, property, receiver) {
+        const value: unknown = Reflect.get(target, property, receiver);
+        if (property !== 'query' || typeof value !== 'function') return value;
+        return function query(this: unknown, ...args: unknown[]): unknown {
+          const result: unknown = Reflect.apply(value, this, args);
+          if (!isCommit(args[0]) || !isThenable(result)) return result;
+          return Promise.resolve(result).then((outcome) => {
+            if (commandOf(outcome) === 'ROLLBACK') rolledBack = true;
+            return outcome;
+          });
+        };
+      },
+    });
     // Mentre la connessione è fuori dal pool, pg-pool non ne ascolta gli errori: una connessione che cade fra due
     // istruzioni emetterebbe 'error' senza ascoltatori e terminerebbe il processo.
     let lost = false;
@@ -92,16 +147,23 @@ export function createDbContext(pool: Pool): DbContext {
       lost = true;
     };
     client.on('error', onError);
+    const marker = { open: true };
     let unusable = false;
     try {
-      return await drizzle({ client: proxy, schema }).transaction(
-        body,
-        readOnly ? { accessMode: 'read only' } : undefined,
+      const result = await openTransaction.run(marker, () =>
+        drizzle({ client: proxy, schema }).transaction(body, readOnly ? { accessMode: 'read only' } : undefined),
       );
+      if (rolledBack) {
+        throw new Error(
+          'La transazione è fallita dentro fn e PostgreSQL l’ha annullata al commit: nulla è stato salvato.',
+        );
+      }
+      return result;
     } catch (error) {
       unusable = connectionUnusable(error);
       throw toDbError(error);
     } finally {
+      marker.open = false;
       client.off('error', onError);
       revoke();
       // Con un errore la connessione si distrugge invece di tornare al pool (pg-pool, release(err)).
@@ -111,7 +173,10 @@ export function createDbContext(pool: Pool): DbContext {
 
   return {
     async withShop(ctx, fn) {
-      requireUuid(ctx.shopId, 'withShop: shopId non ha la forma di un UUID.');
+      requireUuid(ctx.shopId, 'withShop: shopId non ha la forma di un UUID in minuscolo.');
+      // userId è null (lavoro di sistema) o una stringa non vuota: '' o un valore mancante farebbero passare l'azione
+      // di un utente per un lavoro di sistema (nota (10)(c)).
+      if (ctx.userId !== null) requireText(ctx.userId, 'withShop: userId deve essere null o una stringa non vuota.');
       const { shopId } = ctx;
       const userId = ctx.userId ?? '';
       return transaction(ctx.readOnly === true, async (tx) => {

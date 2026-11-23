@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { inspect } from 'node:util';
 import { eq, sql } from 'drizzle-orm';
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, describe, expect, expectTypeOf, it } from 'vitest';
@@ -71,8 +72,20 @@ function rootCause(error: unknown): unknown {
   return current;
 }
 
-/** La chiamata come promessa, anche se l'errore arriva in modo sincrono: il piano non sceglie fra le due forme. */
-const attempt = (run: () => unknown): Promise<unknown> => (async () => run())();
+/**
+ * La chiamata non lancia in modo sincrono e restituisce una promessa (nota (10)(c) del ritorno al piano: un argomento
+ * sbagliato dà sempre una promessa rifiutata, mai un'eccezione sincrona).
+ */
+function asPromise(run: () => unknown): Promise<unknown> {
+  let result: unknown;
+  expect(() => {
+    result = run();
+  }).not.toThrow();
+  expect(result).toBeInstanceOf(Promise);
+  return result as Promise<unknown>;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** L'errore del proxy revocato: TypeError «… on a proxy that has been revoked», anche dentro l'errore di Drizzle. */
 function expectRevoked(error: unknown): void {
@@ -233,16 +246,115 @@ describe('revoca della connessione', () => {
     const error = await context.withShop({ shopId: b, userId: null, actor: 'system' }, async () => errorOf(query));
     expectRevoked(error);
   });
+
+  it('NEG-005: una transazione annidata e una query relazionale di un tx conservato sono rifiutate dentro withShop(B)', async () => {
+    const [a, b] = [await createShop(), await createShop()];
+    const { context } = singleConnection();
+    const leaked = await context.withShop({ shopId: a, userId: null, actor: 'system' }, async (tx) => tx);
+    const result = await context.withShop({ shopId: b, userId: null, actor: 'system' }, async (tx) => ({
+      nested: await errorOf(leaked.transaction(async (sp) => sp.execute(sql`SELECT public.app_shop_id()::text AS id`))),
+      relational: await errorOf(leaked.query.shops.findMany()),
+      own: (await inside(tx)).app_shop,
+    }));
+    expectRevoked(result.nested);
+    expectRevoked(result.relational);
+    expect(result.own).toBe(b);
+  });
+});
+
+describe('transazione fallita dentro fn', () => {
+  it('02§withShop: se fn intercetta un errore del database senza savepoint e restituisce, la promessa è rifiutata e non resta nulla', async () => {
+    const shopId = await createShop();
+    const objectId = `annullata-${randomUUID()}`;
+    const error = await errorOf(
+      withShop({ shopId, userId: USER, actor: 'user' }, async (tx) => {
+        await audit(tx, { actorType: 'user', action: TEST_ACTION, objectType: 'prova', objectId });
+        await errorOf(tx.execute(sql`SELECT 1/0 AS impossibile`));
+        return 'ok';
+      }),
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/nulla è stato salvato/);
+    const rows = await owner().query('SELECT 1 FROM public.audit_log WHERE object_id = $1', [objectId]);
+    expect(rows.rowCount).toBe(0);
+  });
+
+  it('02§withShop: con withNewShop, se fn intercetta un errore senza savepoint e restituisce, la promessa è rifiutata e il negozio non esiste', async () => {
+    let captured: string | undefined;
+    const error = await errorOf(
+      withNewShop(newShopInput(), ADMIN, async (tx, shopId) => {
+        captured = shopId;
+        created.push(shopId); // se il negozio restasse, la pulizia lo toglie comunque
+        await errorOf(tx.execute(sql`SELECT 1/0 AS impossibile`));
+        return shopId;
+      }),
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/nulla è stato salvato/);
+    expect(captured).toBeDefined();
+    const shops = await owner().query('SELECT 1 FROM public.shops WHERE id = $1', [captured]);
+    expect(shops.rowCount).toBe(0);
+  });
+
+  it('02§withShop: dentro fn un errore in un savepoint, intercettato attorno a tx.transaction, è il DrizzleQueryError con il suo codice, e la transazione prosegue fino al commit', async () => {
+    const shopId = await createShop();
+    const [rejected, kept] = [`savepoint-a-${randomUUID()}`, `savepoint-b-${randomUUID()}`];
+    const failure = await withShop({ shopId, userId: USER, actor: 'user' }, async (tx) => {
+      const caught = await errorOf(
+        tx.transaction((sp) =>
+          audit(sp, { actorType: 'invalido' as never, action: TEST_ACTION, objectType: 'prova', objectId: rejected }),
+        ),
+      );
+      await audit(tx, { actorType: 'user', action: TEST_ACTION, objectType: 'prova', objectId: kept });
+      return caught;
+    });
+    expect(failure).toBeInstanceOf(DrizzleQueryError);
+    expect(failure).not.toBeInstanceOf(DbError);
+    expect(dbErrorCode(failure)).toBe('23514');
+    const rows = await owner().query('SELECT object_id FROM public.audit_log WHERE object_id = ANY($1::text[])', [
+      [rejected, kept],
+    ]);
+    expect(rows.rows).toEqual([{ object_id: kept }]);
+  });
+});
+
+describe('connessione chiusa dal server', () => {
+  it('02§withShop: una connessione chiusa dal server fra due istruzioni non termina il processo, la promessa è rifiutata senza SQLSTATE e la chiamata successiva usa una connessione nuova', async () => {
+    const shopId = await createShop();
+    const { context } = singleConnection();
+    let pid = 0;
+    const error = await errorOf(
+      context.withShop({ shopId, userId: null, actor: 'system' }, async (tx) => {
+        pid = (await inside(tx)).pid;
+        await tx.execute(sql`SET LOCAL idle_in_transaction_session_timeout = '100ms'`);
+        await sleep(500);
+        await tx.execute(sql`SELECT 1 AS dopo`);
+      }),
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(DbError);
+    expect(dbErrorCode(error)).toBeUndefined();
+    const next = await context.withShop({ shopId, userId: null, actor: 'system' }, inside);
+    expect(next.app_shop).toBe(shopId);
+    expect(next.pid).not.toBe(pid);
+  });
 });
 
 describe('argomenti e sola lettura', () => {
   it('02§withShop: argomenti sbagliati danno errore senza prendere connessioni dal pool', async () => {
     const { pool, context } = singleConnection();
+    const shopId = randomUUID();
     await expect(
-      attempt(() => context.withShop({ shopId: 'non-un-uuid', userId: null, actor: 'system' }, async () => 1)),
+      asPromise(() => context.withShop({ shopId: 'non-un-uuid', userId: null, actor: 'system' }, async () => 1)),
     ).rejects.toThrow();
-    await expect(attempt(() => context.withUser('', async () => 1))).rejects.toThrow();
-    await expect(attempt(() => context.withNewShop(newShopInput(), '', async () => 1))).rejects.toThrow();
+    await expect(
+      asPromise(() => context.withShop({ shopId: shopId.toUpperCase(), userId: null, actor: 'system' }, async () => 1)),
+    ).rejects.toThrow();
+    await expect(
+      asPromise(() => context.withShop({ shopId, userId: '', actor: 'user' }, async () => 1)),
+    ).rejects.toThrow();
+    await expect(asPromise(() => context.withUser('', async () => 1))).rejects.toThrow();
+    await expect(asPromise(() => context.withNewShop(newShopInput(), '', async () => 1))).rejects.toThrow();
     expect(pool.totalCount).toBe(0);
   });
 
@@ -430,6 +542,65 @@ describe('audit() dentro il contesto', () => {
     expect(error).toMatchObject({ code: '23514' });
     const text = inspect(error, { depth: null });
     for (const value of Object.values(values)) expect(text).not.toContain(value);
+  });
+
+  it('00§4.2: audit() con un ip non valido dà DbError 22P02 con il messaggio generico, senza il valore, e la modifica si annulla', async () => {
+    const shopId = await createShop('Nome originale ip NEG-T02');
+    for (const ip of ['', '203.0.113.5, 10.0.0.2']) {
+      const error = await errorOf(
+        withShop({ shopId, userId: USER, actor: 'user' }, async (tx) => {
+          await tx.update(schema.shops).set({ name: 'Nome cambiato ip NEG-T02' }).where(eq(schema.shops.id, shopId));
+          await audit(tx, { actorType: 'user', action: TEST_ACTION, objectType: 'shop', objectId: shopId, ip });
+        }),
+      );
+      expect(error, ip).toBeInstanceOf(DbError);
+      expect(error, ip).toMatchObject({ code: '22P02', message: 'Errore del database (codice 22P02).' });
+      if (ip !== '') expect(inspect(error, { depth: null }), ip).not.toContain(ip);
+    }
+    const shop = await owner().query('SELECT name FROM public.shops WHERE id = $1', [shopId]);
+    expect(shop.rows).toEqual([{ name: 'Nome originale ip NEG-T02' }]);
+  });
+
+  it('NEG-013: i campi assenti o nulli dell’entry si scrivono come NULL SQL, non come il valore JSON null', async () => {
+    const shopId = await createShop();
+    const [bare, nulls] = [`assenti-${randomUUID()}`, `nulli-${randomUUID()}`];
+    await withShop({ shopId, userId: USER, actor: 'user' }, async (tx) => {
+      await audit(tx, { actorType: 'user', action: TEST_ACTION, objectId: bare });
+      await audit(tx, {
+        actorType: 'user',
+        action: TEST_ACTION,
+        objectType: null,
+        objectId: nulls,
+        before: null,
+        after: null,
+        ip: null,
+        userAgent: null,
+      });
+    });
+    const stored = await owner().query(
+      `SELECT object_id, object_type IS NULL AS no_type, before IS NULL AS no_before, after IS NULL AS no_after,
+              ip IS NULL AS no_ip, user_agent IS NULL AS no_agent
+         FROM public.audit_log WHERE object_id = ANY($1::text[]) ORDER BY object_id`,
+      [[bare, nulls]],
+    );
+    const expected = { no_type: true, no_before: true, no_after: true, no_ip: true, no_agent: true };
+    expect(stored.rows).toEqual([
+      { object_id: bare, ...expected },
+      { object_id: nulls, ...expected },
+    ]);
+  });
+
+  it('00§4.2: un errore di sintassi di to_tsquery dentro withShop dà DbError 42601 con il messaggio generico, senza il testo cercato', async () => {
+    const shopId = await createShop();
+    const searched = 'Mario Rossi Segreto';
+    const error = await errorOf(
+      withShop({ shopId, userId: USER, actor: 'user' }, (tx) =>
+        tx.execute(sql`SELECT to_tsquery('simple', ${searched}) AS q`),
+      ),
+    );
+    expect(error).toBeInstanceOf(DbError);
+    expect(error).toMatchObject({ code: '42601', message: 'Errore del database (codice 42601).' });
+    expect(inspect(error, { depth: null })).not.toContain(searched);
   });
 });
 

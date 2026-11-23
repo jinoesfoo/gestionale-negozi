@@ -4,7 +4,7 @@ import { eq, sql } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { audit } from '@/server/audit';
 import { closeDb } from '@/server/db/client';
-import { withShop } from '@/server/db/context';
+import { type Tx, withShop } from '@/server/db/context';
 import { DbError } from '@/server/db/errors';
 import { resolveHost } from '@/server/db/resolve-host';
 import * as schema from '@/server/db/schema';
@@ -73,6 +73,29 @@ describe('withShop nel worker', () => {
     );
     expect(error).toBeInstanceOf(DbError);
     expect(error).toMatchObject({ code: '25006' });
+  });
+
+  it('02§withShop: dopo closeDb() la withShop esportata prende un pool nuovo e riesce di nuovo', async () => {
+    const shopId = await createShop();
+    const current = (tx: Tx) =>
+      tx.execute<{ id: string }>(sql`SELECT public.app_shop_id()::text AS id`).then((result) => result.rows[0]?.id);
+    expect(await withShop({ shopId, userId: null, actor: 'system' }, current)).toBe(shopId);
+    await closeDb();
+    expect(await withShop({ shopId, userId: null, actor: 'system' }, current)).toBe(shopId);
+  });
+
+  it('02§withShop: una withShop esportata dentro fn di una withShop esportata è rifiutata senza aprire una seconda transazione', async () => {
+    const shopId = await createShop();
+    let innerRan = false;
+    const inner = await withShop({ shopId, userId: null, actor: 'system' }, () =>
+      errorOf(
+        withShop({ shopId, userId: null, actor: 'system' }, async () => {
+          innerRan = true;
+        }),
+      ),
+    );
+    expect(inner).toBeInstanceOf(Error);
+    expect(innerRan).toBe(false);
   });
 });
 

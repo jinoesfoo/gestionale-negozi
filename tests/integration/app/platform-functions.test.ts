@@ -1,15 +1,17 @@
+import type { Pool, PoolClient } from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
 import { closeRolePools, rolePool } from '../../fixtures/db';
 
-// Test generico NEG-006 (02 NEG-006 e NEG-T02, nota (7) del piano): ogni funzione SECURITY DEFINER dello schema public
-// deve essere nell'elenco di 02 §Funzioni di piattaforma, e ogni funzione dell'elenco che esiste deve avere le
+// Test generico NEG-006 (02 NEG-006 e NEG-T02, note (7) e (18) del piano): ogni funzione SECURITY DEFINER dello schema
+// public deve essere nell'elenco di 02 §Funzioni di piattaforma, e ogni funzione dell'elenco che esiste deve avere le
 // proprietà dell'elenco: SECURITY DEFINER, proprietario app_owner, search_path = public, pg_temp, nessun EXECUTE a
 // PUBLIC, e come destinatari espliciti di proacl (esclusi il proprietario e i superuser, che hanno sempre EXECUTE)
 // esattamente i ruoli della colonna "Ruoli", senza WITH GRANT OPTION. Una funzione dell'elenco non ancora creata (il suo
 // compito è più avanti) è ammessa. Chi aggiunge una funzione all'elenco della specifica la aggiunge anche qui: il test
 // fallisce appena la funzione esiste nel database. Le firme si risolvono con to_regprocedure, che accetta anche gli
 // alias dei tipi (int, timestamptz). Durante i test di int-app esiste anche la admin_create_shop provvisoria della
-// preparazione globale, con le proprietà della funzione vera.
+// preparazione globale, con le proprietà della funzione vera. Il controllo è una funzione che riceve un client, provata
+// anche sul caso che deve fallire, in una transazione del proprietario poi annullata.
 
 type Role = 'app_user' | 'app_worker';
 const U: Role[] = ['app_user'];
@@ -61,7 +63,10 @@ const PLATFORM_FUNCTIONS: readonly (readonly [signature: string, roles: Role[]])
   ['exports_to_expire()', W],
 ];
 
-/** Le funzioni dei compiti già chiusi (FON-T10, NEG-T01) e di NEG-T02: devono esistere. */
+/**
+ * Le funzioni dei compiti già chiusi (FON-T10, NEG-T01) e di NEG-T02: devono esistere. Chi crea una funzione dell'elenco
+ * la aggiunge anche qui (ADM-T01 per admin_create_shop, nota (7) di NEG-T02).
+ */
 const MUST_EXIST = [
   'audit_platform(text, text, text, text, text, jsonb, jsonb, inet, text)',
   'platform_config_get()',
@@ -71,13 +76,16 @@ const MUST_EXIST = [
 const SIGNATURES = PLATFORM_FUNCTIONS.map(([signature]) => signature);
 const owner = () => rolePool('owner');
 
+/** Un client del proprietario: il pool, oppure una connessione presa dal pool per una transazione. */
+type OwnerClient = Pool | PoolClient;
+
 afterAll(async () => {
   await closeRolePools();
 });
 
 /** Firma dell'elenco → oid della funzione nel database, o null se non esiste ancora. */
-async function resolveSignatures(): Promise<Map<string, string | null>> {
-  const result = await owner().query<{ signature: string; oid: string | null }>(
+async function resolveSignatures(client: OwnerClient): Promise<Map<string, string | null>> {
+  const result = await client.query<{ signature: string; oid: string | null }>(
     `SELECT s AS signature, to_regprocedure('public.' || s)::oid::text AS oid FROM unnest($1::text[]) AS s`,
     [SIGNATURES],
   );
@@ -95,8 +103,8 @@ interface FunctionRow {
 }
 
 /** Proprietà delle funzioni indicate: i permessi espliciti esclusi il proprietario e i superuser, in ordine. */
-async function functionProperties(oids: string[]): Promise<FunctionRow[]> {
-  const result = await owner().query<FunctionRow>(
+async function functionProperties(client: OwnerClient, oids: string[]): Promise<FunctionRow[]> {
+  const result = await client.query<FunctionRow>(
     `SELECT p.oid::text AS oid, p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS name,
             p.prosecdef AS definer, pg_get_userbyid(p.proowner)::text AS owner, coalesce(p.proconfig, '{}') AS config,
             p.proacl IS NULL AS default_acl,
@@ -111,6 +119,41 @@ async function functionProperties(oids: string[]): Promise<FunctionRow[]> {
     [oids],
   );
   return result.rows;
+}
+
+/** Il controllo di NEG-006 sul catalogo visto dal client: l'elenco delle violazioni, vuoto se tutto è in regola. */
+async function checkPlatformFunctions(client: OwnerClient): Promise<string[]> {
+  const resolved = await resolveSignatures(client);
+  const listed = new Map([...resolved].flatMap(([signature, oid]) => (oid === null ? [] : [[oid, signature]])));
+  const violations: string[] = [];
+
+  const definers = await client.query<{ oid: string; name: string }>(
+    `SELECT p.oid::text AS oid, p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS name
+       FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef ORDER BY 2`,
+  );
+  for (const row of definers.rows) {
+    if (!listed.has(row.oid)) violations.push(`${row.name}: SECURITY DEFINER ma non nell'elenco di 02`);
+  }
+
+  const roles = new Map(PLATFORM_FUNCTIONS.map(([signature, list]) => [signature, list]));
+  for (const fn of await functionProperties(client, [...listed.keys()])) {
+    const signature = listed.get(fn.oid)!;
+    const expected = roles
+      .get(signature)!
+      .map((role) => `${role} EXECUTE`)
+      .sort();
+    if (!fn.definer) violations.push(`${fn.name}: non è SECURITY DEFINER`);
+    if (fn.owner !== 'app_owner') violations.push(`${fn.name}: proprietario ${fn.owner}`);
+    if (!fn.config.includes('search_path=public, pg_temp')) {
+      violations.push(`${fn.name}: search_path non impostato a public, pg_temp`);
+    }
+    if (fn.default_acl) violations.push(`${fn.name}: permessi predefiniti (PUBLIC ha EXECUTE)`);
+    const grants = [...fn.grants].sort();
+    if (JSON.stringify(grants) !== JSON.stringify(expected)) {
+      violations.push(`${fn.name}: permessi ${JSON.stringify(grants)} invece di ${JSON.stringify(expected)}`);
+    }
+  }
+  return violations;
 }
 
 describe('funzioni di piattaforma', () => {
@@ -135,41 +178,35 @@ describe('funzioni di piattaforma', () => {
   });
 
   it('NEG-006: ogni funzione SECURITY DEFINER di public è nell’elenco, e ogni funzione dell’elenco che esiste ne ha proprietà e ruoli', async () => {
-    const resolved = await resolveSignatures();
-    const listed = new Map([...resolved].flatMap(([signature, oid]) => (oid === null ? [] : [[oid, signature]])));
-    const violations: string[] = [];
+    expect(await checkPlatformFunctions(owner())).toEqual([]);
+  });
 
-    const definers = await owner().query<{ oid: string; name: string }>(
-      `SELECT p.oid::text AS oid, p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS name
-         FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef ORDER BY 2`,
-    );
-    for (const row of definers.rows) {
-      if (!listed.has(row.oid)) violations.push(`${row.name}: SECURITY DEFINER ma non nell'elenco di 02`);
+  it('NEG-006: il controllo segnala una funzione SECURITY DEFINER estranea all’elenco e una funzione dell’elenco senza SECURITY DEFINER e con EXECUTE a PUBLIC', async () => {
+    const client = await owner().connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `CREATE FUNCTION public.neg_t02_estranea() RETURNS int LANGUAGE sql SECURITY DEFINER
+           SET search_path = public, pg_temp AS 'SELECT 1'`,
+      );
+      await client.query('ALTER FUNCTION public.platform_config_get() SECURITY INVOKER');
+      await client.query('GRANT EXECUTE ON FUNCTION public.platform_config_get() TO PUBLIC');
+      const violations = await checkPlatformFunctions(client);
+      expect(violations).toContain("neg_t02_estranea(): SECURITY DEFINER ma non nell'elenco di 02");
+      expect(violations).toContain('platform_config_get(): non è SECURITY DEFINER');
+      expect(
+        violations.some((v) => v.startsWith('platform_config_get(): permessi') && v.includes('PUBLIC EXECUTE')),
+      ).toBe(true);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
     }
-
-    const roles = new Map(PLATFORM_FUNCTIONS.map(([signature, list]) => [signature, list]));
-    for (const fn of await functionProperties([...listed.keys()])) {
-      const signature = listed.get(fn.oid)!;
-      const expected = roles
-        .get(signature)!
-        .map((role) => `${role} EXECUTE`)
-        .sort();
-      if (!fn.definer) violations.push(`${fn.name}: non è SECURITY DEFINER`);
-      if (fn.owner !== 'app_owner') violations.push(`${fn.name}: proprietario ${fn.owner}`);
-      if (!fn.config.includes('search_path=public, pg_temp')) {
-        violations.push(`${fn.name}: search_path non impostato a public, pg_temp`);
-      }
-      if (fn.default_acl) violations.push(`${fn.name}: permessi predefiniti (PUBLIC ha EXECUTE)`);
-      const grants = [...fn.grants].sort();
-      if (JSON.stringify(grants) !== JSON.stringify(expected)) {
-        violations.push(`${fn.name}: permessi ${JSON.stringify(grants)} invece di ${JSON.stringify(expected)}`);
-      }
-    }
-    expect(violations).toEqual([]);
+    // Il catalogo condiviso non conserva nulla della prova.
+    expect(await checkPlatformFunctions(owner())).toEqual([]);
   });
 
   it('NEG-006: le funzioni dei compiti già chiusi e di NEG-T02 esistono (audit_platform, platform_config_get, resolve_host)', async () => {
-    const resolved = await resolveSignatures();
+    const resolved = await resolveSignatures(owner());
     expect(MUST_EXIST.filter((signature) => resolved.get(signature) === null)).toEqual([]);
   });
 });

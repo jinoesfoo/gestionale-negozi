@@ -124,6 +124,8 @@ describe('toDbError', () => {
       ['22001', 'value too long for type character varying(5)'],
       ['08006', 'connection failure'],
       ['53300', 'sorry, too many clients already'],
+      // Classe 42, ma to_tsquery e il parser di jsonpath citano il testo ricevuto (NEG-T02, nota (13)).
+      ['42601', 'syntax error in tsquery: "Mario Rossi Segreto"'],
     ];
     for (const [code, message] of cases) {
       const error = toDbError(wrapped(pgError({ code, message })));
@@ -157,6 +159,19 @@ describe('toDbError', () => {
     for (const cause of [lost, revoked, errno, epipe]) {
       const error = toDbError(wrapped(cause));
       expect(error, cause.message).toBe(cause);
+      expectNoValues(error);
+    }
+  });
+
+  it('00§4.2: un DrizzleQueryError la cui cause non è un Error diventa un Error con un messaggio fisso, senza altri campi', () => {
+    for (const cause of ['stringa', undefined]) {
+      const drizzleError = new DrizzleQueryError(QUERY, PARAMS, cause as unknown as Error);
+      const error = toDbError(drizzleError);
+      expect(error, String(cause)).toBeInstanceOf(Error);
+      expect(error, String(cause)).not.toBe(drizzleError);
+      expect((error as Error).message, String(cause)).toBe('Errore del database senza codice SQLSTATE.');
+      expect(Object.keys(error as object), String(cause)).toEqual([]);
+      expect(dbErrorCode(error), String(cause)).toBeUndefined();
       expectNoValues(error);
     }
   });

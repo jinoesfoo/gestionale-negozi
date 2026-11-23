@@ -45,9 +45,10 @@ async function errorOf(promise: Promise<unknown>): Promise<{ code?: string; mess
 }
 
 describe('resolve_host', () => {
-  it('NEG-006: resolve_host è SECURITY DEFINER di app_owner, STABLE, con search_path fisso, restituisce anche name ed è eseguibile solo da app_user', async () => {
+  it('NEG-006: resolve_host è SECURITY DEFINER di app_owner, LANGUAGE sql, STABLE, con search_path fisso, restituisce anche name ed è eseguibile solo da app_user', async () => {
     const fn = await owner().query(
       `SELECT prosecdef AS definer, pg_get_userbyid(proowner) AS owner, proconfig AS config, provolatile AS volatility,
+              (SELECT l.lanname FROM pg_language l WHERE l.oid = prolang)::text AS language,
               pg_get_function_result(oid) AS result, proacl IS NOT NULL AS has_acl
          FROM pg_proc WHERE oid = to_regprocedure($1)`,
       [FUNCTION],
@@ -58,6 +59,7 @@ describe('resolve_host', () => {
         owner: 'app_owner',
         config: ['search_path=public, pg_temp'],
         volatility: 's',
+        language: 'sql',
         result: 'TABLE(shop_id uuid, subdomain text, shop_status text, name text)',
         has_acl: true,
       },

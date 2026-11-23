@@ -4,7 +4,8 @@
 // funzione di piattaforma resolve_host (U). La cache in memoria sta qui, e il proxy non ne aggiunge un'altra: 60 secondi
 // per un negozio trovato, 10 per un risultato vuoto, al massimo 10 000 host (quando è piena si tolgono prima le voci
 // scadute, poi le più vecchie), così host inventati non fanno crescere la memoria senza limite. Un errore del database
-// non entra in cache e risale al chiamante, come DbError.
+// non entra in cache e risale al chiamante, come DbError. L'orologio predefinito è monotono e il negozio in cache è
+// congelato (NEG-T02, nota (14) del ritorno al piano).
 import { getPool } from './client';
 import { toDbError } from './errors';
 
@@ -12,13 +13,14 @@ export const RESOLVE_HOST_TTL_MS = 60_000;
 export const RESOLVE_HOST_NEGATIVE_TTL_MS = 10_000;
 export const RESOLVE_HOST_MAX_ENTRIES = 10_000;
 
+/** Il negozio di un host: lo stesso oggetto, congelato, per ogni chiamante finché la voce resta in cache. */
 export interface ResolvedHost {
-  shopId: string;
-  subdomain: string;
+  readonly shopId: string;
+  readonly subdomain: string;
   /** Lo stato del negozio (`shops.status`): anche `closed`, il 404 del sito lo decide il proxy. */
-  status: string;
+  readonly status: string;
   /** Il nome del negozio, mostrato dalla pagina segnaposto del sito pubblico. */
-  name: string;
+  readonly name: string;
 }
 
 export type HostResolver = (host: string) => Promise<ResolvedHost | null>;
@@ -28,7 +30,10 @@ export interface HostResolverOptions {
   baseDomain: string;
   /** La ricerca nel database di un host già controllato. */
   lookup: (host: string) => Promise<ResolvedHost | null>;
-  /** L'orologio, in millisecondi (00 §5: il tempo si valuta in JavaScript, e i test lo iniettano). */
+  /**
+   * L'orologio, in millisecondi (00 §5: il tempo si valuta in JavaScript, e i test lo iniettano). Quello predefinito è
+   * monotono: un salto all'indietro dell'ora di sistema non allunga le voci.
+   */
   now?: () => number;
   /** Il massimo di host in cache (predefinito RESOLVE_HOST_MAX_ENTRIES). */
   maxEntries?: number;
@@ -46,7 +51,8 @@ interface CacheEntry {
 /** Il risolutore con la sua cache; la ricerca nel database e l'orologio li riceve. */
 export function createHostResolver(options: HostResolverOptions): HostResolver {
   const suffix = `.${options.baseDomain.toLowerCase()}`;
-  const now = options.now ?? Date.now;
+  // Chiamato sull'oggetto performance: in Node 24 il metodo staccato solleva TypeError.
+  const now = options.now ?? (() => performance.now());
   const maxEntries = options.maxEntries ?? RESOLVE_HOST_MAX_ENTRIES;
   // Una Map conserva l'ordine di inserimento: la prima voce è la più vecchia.
   const cache = new Map<string, CacheEntry>();
@@ -75,7 +81,9 @@ export function createHostResolver(options: HostResolverOptions): HostResolver {
       if (cached.expiresAt > now()) return cached.value;
       cache.delete(host);
     }
-    const value = await options.lookup(host);
+    const found = await options.lookup(host);
+    // Una copia congelata: chi la riceve non può cambiarla per le richieste successive.
+    const value = found === null ? null : Object.freeze({ ...found });
     store(host, value, now());
     return value;
   };

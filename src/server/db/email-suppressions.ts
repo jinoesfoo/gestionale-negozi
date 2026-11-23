@@ -1,6 +1,10 @@
 // Esclusioni dalle email (FON-011, 01 FON-T10). Con il client di DATABASE_URL: nell'app app_user (solo INSERT su
-// email_suppressions, EXECUTE su audit_platform), nel worker app_worker (solo SELECT).
+// email_suppressions, EXECUTE su audit_platform), nel worker app_worker (solo SELECT). Allineate a NEG-T02 (nota (13)
+// del ritorno al piano): gli errori escono come DbError, senza il `detail` di pg che contiene l'indirizzo (00 §4.2), e
+// la connessione presa per la transazione si ascolta e si distrugge dopo un errore come in context.ts.
+import type { PoolClient } from 'pg';
 import { getPool } from './client';
+import { toDbError } from './errors';
 
 export type SuppressionReason = 'bounce' | 'complaint';
 
@@ -12,7 +16,19 @@ export type SuppressionReason = 'bounce' | 'complaint';
  */
 export async function recordEmailSuppression(email: string, reason: SuppressionReason): Promise<boolean> {
   const address = email.trim().toLowerCase();
-  const client = await getPool().connect();
+  let client: PoolClient;
+  try {
+    client = await getPool().connect();
+  } catch (error) {
+    throw toDbError(error);
+  }
+  // Mentre la connessione è fuori dal pool, pg-pool non ne ascolta gli errori: senza ascoltatore una connessione che
+  // cade emetterebbe 'error' come eccezione non gestita.
+  let broken = false;
+  const onError = () => {
+    broken = true;
+  };
+  client.on('error', onError);
   try {
     await client.query('BEGIN');
     const inserted = await client.query(
@@ -30,17 +46,28 @@ export async function recordEmailSuppression(email: string, reason: SuppressionR
     await client.query('COMMIT');
     return isNew;
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
+    // Un ROLLBACK fallito lascia la connessione in uno stato sconosciuto: si distrugge.
+    await client.query('ROLLBACK').catch(() => {
+      broken = true;
+    });
+    throw toDbError(error);
   } finally {
-    client.release();
+    client.off('error', onError);
+    client.release(broken ? new Error('Connessione scartata dopo un errore.') : undefined);
   }
 }
 
-/** Vero se l'indirizzo è escluso dagli invii (lettura del worker, prima di ogni `email.send`). */
+/**
+ * Vero se l'indirizzo è escluso dagli invii (lettura del worker, prima di ogni `email.send`). L'ascolto degli errori e
+ * la distruzione della connessione li fa `pool.query` di pg-pool; gli errori escono come DbError.
+ */
 export async function isEmailSuppressed(email: string): Promise<boolean> {
-  const result = await getPool().query('SELECT 1 FROM public.email_suppressions WHERE email = $1', [
-    email.trim().toLowerCase(),
-  ]);
-  return (result.rowCount ?? 0) > 0;
+  try {
+    const result = await getPool().query('SELECT 1 FROM public.email_suppressions WHERE email = $1', [
+      email.trim().toLowerCase(),
+    ]);
+    return (result.rowCount ?? 0) > 0;
+  } catch (error) {
+    throw toDbError(error);
+  }
 }
