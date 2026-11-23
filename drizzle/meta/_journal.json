@@ -29,6 +29,20 @@
       "when": 1795272588042,
       "tag": "0003_audit_email_security",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795349795937,
+      "tag": "0004_shops",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795349802343,
+      "tag": "0005_shops_security",
+      "breakpoints": true
     }
   ]
 }
