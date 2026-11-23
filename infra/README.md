@@ -1534,7 +1534,78 @@ Per la prova mensile (OPS-004) la chiave temporanea si crea e si cancella nello 
 3. La data dell'aggiornamento della copia sigillata va a Claude, che la scrive in «Valori letti».
 4. Tutti i terminali delle chiavi sono chiusi (`exit`), e ogni chiusura è stata detta a Claude (K3).
 
-### 14. Valori letti
+### 14. Testimone del ciclo di vita (G6–G9) (utente)
+
+Specifica 08, OPS-005, «Testimone del ciclo di vita». Hetzner risponde alle scritture e alle letture nei bucket dei file con l'intestazione `Expiration`, che dà una scadenza anche alla versione corrente. Secondo il codice di Ceph, il sistema di Hetzner, è un difetto della sola intestazione, e il ciclo di vita toglie solo le versioni precedenti. Il testimone lo controlla dal vivo in `foondaco-file-test`, che ha le stesse regole di `foondaco-file`.
+
+- **Scrittura** (G8, una volta sola, in OPS-T03): scrive due volte di seguito `testimone-ops-005.txt`. L'ultima versione è il **testimone**, che deve restare; la precedente è il **confronto**, che il ciclo di vita deve togliere. Se il file ha già una versione o un delete marker, non scrive niente. Dopo, nessuno lo riscrive né lo cancella: lo toglie solo il compito che cambierà il ciclo di vita o il fornitore dei bucket dei file.
+- **Verifica** (prove mensili e COL-T01, non prima della data di verifica di «Valori letti»): mostra le versioni del testimone, lo legge e rilegge il ciclo di vita. Non scrive e non cancella niente. In G8 la si lancia anche subito dopo la Scrittura, solo quando lo chiede Claude, per il testo: non è la verifica.
+
+Ogni blocco si lancia in un terminale delle chiavi, dopo il blocco del passo 4, e fa due domande: Access key e Secret key della voce `Hetzner S3 · file-test · file-test`. Altre non ne fa: dopo la seconda, alla riga che finisce con `$` non si incolla mai una parte di chiave.
+
+- La Scrittura si lancia in un terminale delle chiavi nuovo.
+- La Verifica, in un terminale delle chiavi nuovo, oppure in quello della prova mensile, ma solo prima di caricare la chiave temporanea o dopo `watch_revocation` (J4): dopo il blocco la chiave in uso è `file-test`. In G8, quando lo chiede Claude, nello stesso terminale della Scrittura.
+- Il blocco si copia per intero, con l'a capo automatico di VS Code spento (Alt+Z), e si incolla tutto insieme, poi Invio.
+- L'uscita intera va a Claude, dalla prima domanda in poi, con la regola degli appunti.
+
+**Scrittura.**
+
+```bash
+# Testimone del ciclo di vita (infra/README.md, passo 14): scrittura (G8): scrive il testimone una volta sola; si rilancia solo come dice il suo messaggio.
+load_key file-test
+use_key file-test
+if s3 fsn1 list-object-versions --bucket foondaco-file-test --prefix testimone-ops-005.txt; then
+  if prima=$(_versions_of testimone-ops-005.txt) && [ -z "$prima" ]; then
+    printf 'testimone del ciclo di vita (OPS-005), prima scrittura (confronto), %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$WORK/testimone-1.txt"
+    if s3 fsn1 put-object --bucket foondaco-file-test --key testimone-ops-005.txt --body "$WORK/testimone-1.txt" &&
+      printf 'testimone del ciclo di vita (OPS-005), scritto il %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$WORK/testimone.txt" &&
+      s3 fsn1 put-object --bucket foondaco-file-test --key testimone-ops-005.txt --body "$WORK/testimone.txt"; then
+      echo "testimone: il file scritto contiene «$(cat "$WORK/testimone.txt")»"
+      s3 fsn1 list-object-versions --bucket foondaco-file-test --prefix testimone-ops-005.txt &&
+        _versions_of testimone-ops-005.txt | sed 's/^/testimone: /'
+    else
+      echo "Scrittura del testimone interrotta (motivo qui sopra). Non rilanciare il blocco: lo si dice a Claude."
+    fi
+  else
+    echo "Testimone NON scritto: c'è già, oppure la lista non si legge. Non rilanciare il blocco: lo si dice a Claude."
+  fi
+else
+  echo "Testimone non scritto: la prima lista non è riuscita (motivo qui sopra). Con un errore di rete o del fornitore si rilancia il blocco; con RequestTimeTooSkewed si rimette prima l'ora del computer. Con un errore di chiave (InvalidAccessKeyId, SignatureDoesNotMatch, domande interrotte, parti rifiutate) o con AccessDenied (di solito la voce sbagliata del gestore di password) si ricopiano le due parti dalla voce di file-test e si rilancia il blocco; se l'errore torna, non si rilancia: lo si dice a Claude. Con «correttivo del client non attivo» vale la regola del correttivo."
+fi
+s3 fsn1 list-object-versions --bucket foondaco-file-test --prefix check-bucket-isolation/
+```
+
+| Uscita | Cosa si fa |
+|---|---|
+| La prima lista senza `Versions` né `DeleteMarkers`; due scritture con «codice di uscita: 0»; «testimone: il file scritto contiene «…»»; poi «testimone: versione … più-recente» (la seconda scrittura) e una o più righe «testimone: versione … -» (la prima; più di una se il client ha ripetuto una scrittura) | Riuscita: l'uscita intera va a Claude, che annota i valori (G9) |
+| «Testimone non scritto: la prima lista non è riuscita» | Con un errore di rete o del fornitore si rilancia il blocco; con `RequestTimeTooSkewed` si rimette prima l'ora del computer. Con un errore di chiave (`InvalidAccessKeyId`, `SignatureDoesNotMatch`, domande interrotte o parti rifiutate da `load_key`) o con `AccessDenied` (di solito la voce sbagliata del gestore di password) le due parti si ricopiano dalla voce di `file-test` e si rilancia il blocco; se l'errore torna con la voce giusta, ci si ferma e lo si dice a Claude (G8). Con «correttivo del client non attivo» vale la regola del correttivo |
+| «Testimone NON scritto: c'è già, oppure la lista non si legge» | Ci si ferma e lo si dice a Claude, senza rilanciare il blocco: Claude guarda la prima lista e decide come dice G8 |
+| «Scrittura del testimone interrotta», oppure la lista finale non riuscita dopo «testimone: il file scritto contiene «…»» | Ci si ferma e lo si dice a Claude, senza rilanciare il blocco: Claude fa lanciare nello stesso terminale la sola lista del testimone (regola della lettura) e decide come dice G8 |
+
+Le risposte delle scritture riportano l'intestazione `Expiration`, e la lista finale il `LastModified` di ogni versione: Claude li annota com'erano (G9). L'intestazione non decide l'esito. Le ultime righe, la lista degli avanzi di I2 sotto `check-bucket-isolation/`, sono solo informative. Il terminale della Scrittura si chiude (`exit`) quando lo dice Claude, perché può servire ancora (G8); se una chiave è comparsa sullo schermo, invece, si chiude subito, senza incollarne l'uscita a Claude (passo 12). La chiusura si dice a Claude (K3).
+
+**Verifica.**
+
+```bash
+# Testimone del ciclo di vita (infra/README.md, passo 14): verifica, non prima della data di verifica di «Valori letti» (in G8 solo per il testo, quando lo chiede Claude).
+load_key file-test
+use_key file-test
+if s3 fsn1 list-object-versions --bucket foondaco-file-test --prefix testimone-ops-005.txt; then
+  if versioni=$(_versions_of testimone-ops-005.txt); then
+    printf '%s\n' "${versioni:-nessuna versione e nessun delete marker}" | sed 's/^/testimone: /'
+  else
+    echo 'testimone: la lista non si legge'
+  fi
+fi
+s3 fsn1 get-object --bucket foondaco-file-test --key testimone-ops-005.txt "$WORK/testimone-letto.txt" &&
+  echo "testimone: il file letto contiene «$(head -c 300 "$WORK/testimone-letto.txt" | LC_ALL=C tr -cd '[:print:]')»"
+s3 fsn1 get-bucket-lifecycle-configuration --bucket foondaco-file-test
+s3 fsn1 list-object-versions --bucket foondaco-file-test --prefix check-bucket-isolation/
+```
+
+Atteso (specifica 08, OPS-005, «Testimone del ciclo di vita», «Atteso»): una sola riga «testimone: versione …» o «testimone: delete-marker …», cioè «testimone: versione <VersionId del testimone di «Valori letti»> più-recente», senza righe «testimone: versione … -» né «testimone: delete-marker …»; la riga «testimone: il file letto contiene «…»» con il testo del testimone; il ciclo di vita con le due regole di D2, `versioni-precedenti` e `delete-marker-scaduti`. Le ultime righe, la lista degli avanzi di I2 sotto `check-bucket-isolation/`, sono solo informative. L'intestazione `Expiration` della lettura porta una data già passata: è il difetto della sola intestazione, non un esito. Un errore di rete o del fornitore, o «testimone: la lista non si legge», non è un esito: si rilancia il blocco; con `RequestTimeTooSkewed` si rimette prima l'ora del computer. Con un errore di chiave (`InvalidAccessKeyId`, `SignatureDoesNotMatch`) o con `AccessDenied` (di solito la voce sbagliata del gestore di password) le due parti si ricopiano dalla voce di `file-test` e si rilancia il blocco; se l'errore resta con la voce giusta, non si rilancia più: la verifica non è conclusiva e lo si dice a Claude. L'esito lo decide Claude, con le regole della specifica, e lo annota lì.
+
+### 15. Valori letti
 
 - Id dei progetti (B3): nella tabella in alto.
 - Client: AWS CLI 2.39.4, installato il 18/11/2026, con il correttivo dei messaggi d'errore vuoti dal 21/11/2026 (aws/aws-cli#10161; regole, «Il correttivo del client»). Chiave di firma di AWS `FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C`, con scadenza 01/07/2027.
