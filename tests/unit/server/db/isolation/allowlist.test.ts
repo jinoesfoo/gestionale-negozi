@@ -20,15 +20,26 @@ const NON_DATA_PRIVILEGES = ['TRUNCATE', 'TRIGGER', 'REFERENCES', 'MAINTAIN'];
 /** Le colonne dei dati del negozio, le sole che app_user modifica (02 §Permessi su shops, NEG-009), in ordine. */
 const SHOPS_DATA_COLUMNS = ['address', 'legal_name', 'name', 'pec', 'sdi_code', 'tax_code', 'vat_number'];
 
+type ColumnGrants = Readonly<Partial<Record<string, readonly string[]>>>;
+
+/**
+ * I permessi per colonna in ordine, sia i nomi dei permessi sia le colonne, senza i permessi con l'elenco vuoto: così
+ * il confronto con JSON.stringify non dipende dall'ordine in cui sono scritti (nota (13)(a)).
+ */
+function sortedColumns(columns: ColumnGrants): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(columns)
+      .filter(([, list]) => (list ?? []).length > 0)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([privilege, list]) => [privilege, [...(list ?? [])].sort()]),
+  );
+}
+
 /** I permessi di un ruolo su una tabella: quelli sulla tabella e quelli per colonna, come elenchi ordinati. */
 function grantsOf(allowlist: Allowlist, table: string, role: (typeof ROLES)[number]) {
   const grants: RoleGrants | undefined = allowlist[table]?.[role];
   const onTable = [...(grants?.table ?? [])].sort();
-  const onColumns = Object.fromEntries(
-    Object.entries(grants?.columns ?? {})
-      .filter(([, columns]) => (columns ?? []).length > 0)
-      .map(([privilege, columns]) => [privilege, [...(columns ?? [])].sort()]),
-  );
+  const onColumns = sortedColumns(grants?.columns ?? {});
   /** Ogni permesso, sulla tabella o su almeno una colonna. */
   const any = [...new Set([...onTable, ...Object.keys(onColumns)])].sort();
   return { onTable, onColumns, any };
@@ -38,12 +49,12 @@ function grantsOf(allowlist: Allowlist, table: string, role: (typeof ROLES)[numb
 function allowlistViolations(allowlist: Allowlist): string[] {
   const violations: string[] = [];
   const has = (table: string) => Object.hasOwn(allowlist, table);
-  const exactly = (table: string, role: (typeof ROLES)[number], onTable: string[], onColumns = {}) => {
+  const exactly = (table: string, role: (typeof ROLES)[number], onTable: string[], onColumns: ColumnGrants = {}) => {
     const actual = grantsOf(allowlist, table, role);
     if (JSON.stringify(actual.onTable) !== JSON.stringify([...onTable].sort())) {
       violations.push(`${table} ${role}: permessi sulla tabella ${actual.onTable.join(', ')}`);
     }
-    if (JSON.stringify(actual.onColumns) !== JSON.stringify(onColumns)) {
+    if (JSON.stringify(actual.onColumns) !== JSON.stringify(sortedColumns(onColumns))) {
       violations.push(`${table} ${role}: permessi per colonna ${JSON.stringify(actual.onColumns)}`);
     }
   };
@@ -139,6 +150,14 @@ describe('elenco consentito', () => {
     expect(exact('app_user')).toEqual({ onTable: ['SELECT'], onColumns: { UPDATE: SHOPS_DATA_COLUMNS } });
     expect(exact('app_worker')).toEqual({ onTable: ['SELECT'], onColumns: {} });
     expect(exact('app_jobs')).toEqual({ onTable: [], onColumns: {} });
+  });
+
+  it('NEG-012: i permessi per colonna si confrontano senza dipendere dall’ordine dei permessi e delle colonne', () => {
+    // Nota (13)(a): due permessi per colonna scritti in ordine diverso danno lo stesso confronto.
+    const onColumns = (columns: RoleGrants['columns']) =>
+      JSON.stringify(grantsOf({ t: { app_user: { columns } } }, 't', 'app_user').onColumns);
+    expect(onColumns({ UPDATE: ['b', 'a'], SELECT: ['c'] })).toBe(onColumns({ SELECT: ['c'], UPDATE: ['a', 'b'] }));
+    expect(onColumns({ UPDATE: ['b', 'a'], SELECT: ['c'] })).toBe('{"SELECT":["c"],"UPDATE":["a","b"]}');
   });
 
   it('NEG-012: le regole segnalano un elenco che concede ciò che la specifica vieta', () => {
