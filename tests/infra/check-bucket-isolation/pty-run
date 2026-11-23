@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Runs a command in a pseudo-terminal and answers the key prompts of check-bucket-isolation.sh
+the way a user pasting from a password manager would. Dry runs only (run.sh), with fake keys.
+
+Usage: pty-run <plan.json> <transcript file> <result file> -- <command> [arguments...]
+
+Plan (JSON):
+  answers: {VARIABLE: value}       what to paste at each prompt "(VARIABLE): "
+  pad: bool                        put spaces and a tab around each value
+  extra_enter_after: VARIABLE      press Enter once more right after answering it; the next
+                                   prompt is then left to that empty line
+  duplicate_at: VARIABLE           at that prompt paste the previous answer again first
+  bad_paste_at: VARIABLE, bad: s   at that prompt paste s first (for example with a space inside)
+  suspend_at: VARIABLE             at that prompt paste half of a wrong value, press Ctrl-Z, wait,
+                                   then paste the right value
+  abort_at: {var, char, again_after}
+                                   at that prompt send char (Ctrl-D "\u0004", Ctrl-C "\u0003");
+                                   with again_after, send char once more 10 ms after that text
+                                   appears (a second Ctrl-C while the script is exiting)
+  strays: [{after, text}]          paste text once the transcript contains after (for example a
+                                   key pasted during the run, or "\u0003" to interrupt it)
+Before writing anything (answer or stray) it waits until the terminal's echo is off; if echo
+stays on it stops the command and records where. Strays are sent in order.
+Result (JSON): {"exit": status, "echo_on_at": [...], "timeout": bool, "answers": n,
+                "strays_sent": n}
+"""
+import json
+import os
+import pty
+import re
+import select
+import signal
+import sys
+import termios
+import time
+
+plan_file, transcript_file, result_file = sys.argv[1:4]
+if sys.argv[4] != "--":
+    sys.exit("usage: pty-run <plan> <transcript> <result> -- <command...>")
+command = sys.argv[5:]
+plan = json.load(open(plan_file))
+PROMPT = re.compile(rb"\(([A-Z][A-Z0-9_]*_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY))\): ")
+
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(command[0], command)
+
+transcript = bytearray()
+handled = 0
+answers = 0
+previous = None
+skip_next = False
+done = set()
+strays = list(plan.get("strays") or [])
+strays_sent = 0
+echo_on_at = []
+timed_out = False
+deadline = time.monotonic() + 300
+abort = plan.get("abort_at") or {}
+again_pending = False
+
+
+def echo_off(timeout=5.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if not termios.tcgetattr(fd)[3] & termios.ECHO:
+            return True
+        time.sleep(0.001)
+    return False
+
+
+def send(text):
+    os.write(fd, text.encode())
+
+
+def answer(var):
+    global previous, answers
+    value = plan["answers"][var]
+    send((" \t" + value + "  " if plan.get("pad") else value) + "\r")
+    previous = value
+    answers += 1
+
+
+def read_some(wait):
+    ready, _, _ = select.select([fd], [], [], wait)
+    if not ready:
+        return True
+    try:
+        data = os.read(fd, 65536)
+    except OSError:
+        data = b""
+    if not data:
+        return False
+    transcript.extend(data)
+    return True
+
+
+alive = True
+while alive:
+    if time.monotonic() > deadline:
+        timed_out = True
+        os.kill(pid, signal.SIGKILL)
+        break
+    if not read_some(0.05):
+        break
+    for m in PROMPT.finditer(bytes(transcript), handled):
+        handled = m.end()
+        var = m.group(1).decode()
+        if skip_next:
+            skip_next = False
+            continue
+        if not echo_off():
+            echo_on_at.append(var)
+            os.kill(pid, signal.SIGKILL)
+            alive = False
+            break
+        if abort.get("var") == var and "abort" not in done:
+            done.add("abort")
+            send(abort["char"])
+            again_pending = bool(abort.get("again_after"))
+            continue
+        if plan.get("duplicate_at") == var and "duplicate" not in done and previous is not None:
+            done.add("duplicate")
+            send(previous + "\r")
+            continue
+        if plan.get("bad_paste_at") == var and "bad" not in done:
+            done.add("bad")
+            send(plan["bad"] + "\r")
+            continue
+        if plan.get("suspend_at") == var and "suspend" not in done:
+            done.add("suspend")
+            send(plan["answers"][var][: len(plan["answers"][var]) // 2])
+            time.sleep(0.2)
+            send("\x1a")
+            end = time.monotonic() + 1.0
+            while time.monotonic() < end and read_some(0.05):
+                pass
+            if not echo_off():
+                echo_on_at.append(var + " (dopo Ctrl-Z)")
+                os.kill(pid, signal.SIGKILL)
+                alive = False
+                break
+            answer(var)
+            continue
+        answer(var)
+        if plan.get("extra_enter_after") == var and "extra" not in done:
+            done.add("extra")
+            send("\r")
+            skip_next = True
+    if again_pending and abort["again_after"].encode() in transcript:
+        again_pending = False
+        time.sleep(0.01)
+        send(abort["char"])
+    while alive and strays and strays[0]["after"].encode() in transcript:
+        stray = strays.pop(0)
+        if not echo_off():
+            echo_on_at.append("prima di incollare dopo «%s»" % stray["after"])
+            os.kill(pid, signal.SIGKILL)
+            alive = False
+            break
+        send(stray["text"])
+        strays_sent += 1
+
+while True:  # what is left of the output, until the terminal closes or stays quiet
+    ready, _, _ = select.select([fd], [], [], 0.5)
+    if not ready:
+        break
+    try:
+        data = os.read(fd, 65536)
+    except OSError:
+        break
+    if not data:
+        break
+    transcript.extend(data)
+_, status = os.waitpid(pid, 0)
+os.close(fd)
+code = os.waitstatus_to_exitcode(status)
+open(transcript_file, "wb").write(bytes(transcript))
+json.dump({"exit": code if code >= 0 else 128 - code, "echo_on_at": echo_on_at, "timeout": timed_out,
+           "answers": answers, "strays_sent": strays_sent}, open(result_file, "w"))
