@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { audit } from '@/server/audit';
 import { closeDb, getDb } from '@/server/db/client';
+import { withShop } from '@/server/db/context';
 import { closeRolePools, rolePool } from '../../fixtures/db';
 
 // Registro delle azioni ed esclusioni dalle email (01 FON-T10; 02 §Funzioni di contesto e §Funzioni di piattaforma;
@@ -120,18 +121,17 @@ describe('audit_log', () => {
   });
 
   it('NEG-013: audit(tx, …) scrive la riga del negozio nella transazione ricevuta, e sparisce se la transazione si annulla', async () => {
+    // Da NEG-T02 audit() si usa dentro withShop e prende shop_id e actor_user_id dal contesto (nota (3) del piano).
     const shopId = await createShop();
     const kept = `tenuta-${randomUUID()}`;
     const dropped = `annullata-${randomUUID()}`;
 
-    await getDb().transaction(async (tx) => {
-      await tx.execute(sql`SELECT set_config('app.shop_id', ${shopId}, true)`);
-      await audit(tx, { shopId, actorType: 'system', action: TEST_ACTION, objectType: 'prova', objectId: kept });
+    await withShop({ shopId, userId: null, actor: 'system' }, async (tx) => {
+      await audit(tx, { actorType: 'system', action: TEST_ACTION, objectType: 'prova', objectId: kept });
     });
     await expect(
-      getDb().transaction(async (tx) => {
-        await tx.execute(sql`SELECT set_config('app.shop_id', ${shopId}, true)`);
-        await audit(tx, { shopId, actorType: 'system', action: TEST_ACTION, objectType: 'prova', objectId: dropped });
+      withShop({ shopId, userId: null, actor: 'system' }, async (tx) => {
+        await audit(tx, { actorType: 'system', action: TEST_ACTION, objectType: 'prova', objectId: dropped });
         throw new Error('annullamento voluto');
       }),
     ).rejects.toThrow('annullamento voluto');
