@@ -1614,6 +1614,12 @@ Atteso (specifica 08, OPS-005, «Testimone del ciclo di vita», «Atteso»): una
 - Tempo della revoca di una chiave cancellata: entro circa un minuto e mezzo (J4, 22/11/2026: `prova-ripristino-20261122` cancellata alle 11:47, rifiutata con `InvalidAccessKeyId` già alla prima prova, alle 11:48:31, e alla seconda, alle 11:53:33).
 - Copia fuori linea delle sei chiavi (OPS-009): ultimo aggiornamento il 21/11/2026, dopo la rotazione di `specchio-scrittura` (K1; il 22/11/2026 la sua Access key nella copia sigillata è uguale a quella del gestore di password).
 - Rotazioni delle chiavi: `specchio-scrittura`, 21/11/2026, per precauzione: alle sue domande nel blocco di E del primo terminale non si è caricata, e non si sa se una sua parte è comparsa sullo schermo (passo 12). La copia sigillata non c'era ancora (passo 13).
+- Testimone del ciclo di vita (passo 14), scritto il 23/11/2026 dal blocco «Scrittura», lanciato una volta (G8):
+  - testo dell'ultima scrittura: «testimone del ciclo di vita (OPS-005), scritto il 2026-11-23T08:46:41Z»;
+  - testimone, l'ultima scrittura: `VersionId` `-2PdjCGlXBvP7hXb46wsC7P9-SOyX0L`, `LastModified` 2026-11-23T08:46:42.997000+00:00 (UTC);
+  - confronto, la prima scrittura: `VersionId` `34u7FYYXa6mP4zLbKmB5jOMBZiLSAnG`, `LastModified` 2026-11-23T08:46:40.960000+00:00 (UTC);
+  - intestazione `Expiration` delle risposte delle due scritture, com'è: `expiry-date="Thu, 24 Dec 2026 00:00:00 GMT", rule-id="versioni-precedenti"`;
+  - data di verifica: 31/12/2026 (ultima scrittura + 38 giorni); data limite: 07/01/2027 (+ 45 giorni).
 
 ## PostgreSQL e backup
 
