@@ -51,6 +51,12 @@ export const TABLE_PRIVILEGES: Readonly<Record<string, TableAllowlist>> = {
     app_user: { table: ['INSERT'] },
     app_worker: { table: ['SELECT'] },
   },
+  // Migrazione 0008 (02 §Segreti per negozio, NEG-T09): app_user legge, inserisce e cancella i segreti e aggiorna solo
+  // il testo cifrato e la data della rotazione; app_worker li legge soltanto.
+  shop_secrets: {
+    app_user: { table: ['SELECT', 'INSERT', 'DELETE'], columns: { UPDATE: ['ciphertext', 'rotated_at'] } },
+    app_worker: { table: ['SELECT'] },
+  },
 };
 
 /** Gli schemi controllati: public dà solo USAGE ai due ruoli; pgboss (di app_jobs) non dà nulla ai ruoli di public. */

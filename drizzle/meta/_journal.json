@@ -50,6 +50,20 @@
       "when": 1795387460998,
       "tag": "0006_resolve_host",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795513643161,
+      "tag": "0007_shop_secrets",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795513649950,
+      "tag": "0008_shop_secrets_security",
+      "breakpoints": true
     }
   ]
 }

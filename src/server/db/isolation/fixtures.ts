@@ -54,4 +54,13 @@ export const SHOP_DATA_FIXTURES: Readonly<Record<string, ShopDataFixture>> = {
       [shop.id, shop.userId],
     );
   },
+  // NEG-T09, nota (3): 28 byte a zero, inerti e non cifrati. isolation-check usa questa fixture nel servizio migrate,
+  // che non ha SHOP_SECRETS_KEY, e nessun codice li decifra; 28 byte rispettano il vincolo sulla lunghezza minima.
+  shop_secrets: async (owner, shop) => {
+    await owner.query(
+      `INSERT INTO public.shop_secrets (shop_id, name, ciphertext)
+       VALUES ($1::uuid, 'fixture_isolation', decode(repeat('00', 28), 'hex'))`,
+      [shop.id],
+    );
+  },
 };

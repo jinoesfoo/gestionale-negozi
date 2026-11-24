@@ -10,7 +10,7 @@ import {
 // per ogni tabella che contiene: il test di integrazione confronta il database con l'elenco, questo controlla che
 // l'elenco stesso non conceda ciò che la specifica vieta. Le regole per le tabelle che nasceranno in compiti successivi
 // valgono appena la tabella entra nell'elenco. Nota (12)(a): su ogni tabella, app_user e app_worker hanno solo SELECT,
-// INSERT, UPDATE e DELETE.
+// INSERT, UPDATE e DELETE. NEG-T09, nota (3): shop_secrets ha regole esatte, come shops.
 
 type Allowlist = Readonly<Record<string, TableAllowlist>>;
 const ROLES = ['app_user', 'app_worker', 'app_jobs'] as const;
@@ -19,6 +19,8 @@ const WRITES = ['INSERT', 'UPDATE', 'DELETE'];
 const NON_DATA_PRIVILEGES = ['TRUNCATE', 'TRIGGER', 'REFERENCES', 'MAINTAIN'];
 /** Le colonne dei dati del negozio, le sole che app_user modifica (02 §Permessi su shops, NEG-009), in ordine. */
 const SHOPS_DATA_COLUMNS = ['address', 'legal_name', 'name', 'pec', 'sdi_code', 'tax_code', 'vat_number'];
+/** Le sole colonne di shop_secrets che app_user aggiorna (02 §Segreti per negozio, NEG-T09 nota (3)), in ordine. */
+const SHOP_SECRETS_UPDATE_COLUMNS = ['ciphertext', 'rotated_at'];
 
 type ColumnGrants = Readonly<Partial<Record<string, readonly string[]>>>;
 
@@ -112,7 +114,12 @@ function allowlistViolations(allowlist: Allowlist): string[] {
     without('sdi_invoices', 'app_user', WRITES);
     for (const role of ROLES) without('sdi_invoices', role, ['DELETE']);
   }
-  if (has('shop_secrets')) without('shop_secrets', 'app_worker', WRITES);
+  if (has('shop_secrets')) {
+    without('shop_secrets', 'app_worker', WRITES);
+    // NEG-T09, nota (3): regole esatte di §Segreti per negozio.
+    exactly('shop_secrets', 'app_user', ['SELECT', 'INSERT', 'DELETE'], { UPDATE: SHOP_SECRETS_UPDATE_COLUMNS });
+    exactly('shop_secrets', 'app_worker', ['SELECT']);
+  }
   if (has('email_suppressions')) {
     exactly('email_suppressions', 'app_user', ['INSERT']);
     exactly('email_suppressions', 'app_worker', ['SELECT']);
@@ -152,6 +159,20 @@ describe('elenco consentito', () => {
     expect(exact('app_jobs')).toEqual({ onTable: [], onColumns: {} });
   });
 
+  it('NEG-012: shop_secrets dà ad app_user SELECT, INSERT, DELETE e UPDATE di ciphertext e rotated_at, ad app_worker solo SELECT, e nient’altro (NEG-T09)', () => {
+    expect(TABLE_PRIVILEGES).toHaveProperty('shop_secrets');
+    const exact = (role: (typeof ROLES)[number]) => {
+      const { onTable, onColumns } = grantsOf(TABLE_PRIVILEGES, 'shop_secrets', role);
+      return { onTable, onColumns };
+    };
+    expect(exact('app_user')).toEqual({
+      onTable: ['DELETE', 'INSERT', 'SELECT'],
+      onColumns: { UPDATE: SHOP_SECRETS_UPDATE_COLUMNS },
+    });
+    expect(exact('app_worker')).toEqual({ onTable: ['SELECT'], onColumns: {} });
+    expect(exact('app_jobs')).toEqual({ onTable: [], onColumns: {} });
+  });
+
   it('NEG-012: i permessi per colonna si confrontano senza dipendere dall’ordine dei permessi e delle colonne', () => {
     // Nota (13)(a): due permessi per colonna scritti in ordine diverso danno lo stesso confronto.
     const onColumns = (columns: RoleGrants['columns']) =>
@@ -174,6 +195,11 @@ describe('elenco consentito', () => {
         app_user: { table: ['SELECT', 'TRUNCATE'] },
         app_worker: { table: ['SELECT'], columns: { REFERENCES: ['shop_id'] } },
       },
+      // NEG-T09, nota (3): UPDATE su ogni colonna per app_user e una cancellazione per app_worker.
+      shop_secrets: {
+        app_user: { table: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] },
+        app_worker: { table: ['SELECT', 'DELETE'] },
+      },
     };
     expect(allowlistViolations(tampered)).toEqual(
       expect.arrayContaining([
@@ -184,6 +210,10 @@ describe('elenco consentito', () => {
         'platform_config app_jobs: ha SELECT',
         'sdi_invoices app_user: ha TRUNCATE',
         'sdi_invoices app_worker: ha REFERENCES',
+        'shop_secrets app_user: permessi sulla tabella DELETE, INSERT, SELECT, UPDATE',
+        'shop_secrets app_user: permessi per colonna {}',
+        'shop_secrets app_worker: ha DELETE',
+        'shop_secrets app_worker: permessi sulla tabella DELETE, SELECT',
       ]),
     );
   });
