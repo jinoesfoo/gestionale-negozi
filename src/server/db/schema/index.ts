@@ -3,4 +3,5 @@
 export * from './audit-log';
 export * from './email-suppressions';
 export * from './platform-config';
+export * from './shop-secrets';
 export * from './shops';
