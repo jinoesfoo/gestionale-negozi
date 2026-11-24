@@ -1875,7 +1875,7 @@ Su ciascun server, prima il test e poi la produzione:
 
 Copia fuori linea di `caddy.env`, nella voce del token nel gestore di password e nella copia sigillata, con l'appunto di `BASE_DOMAIN` e `ACME_EMAIL`:
 - server di test: 24/11/2026;
-- produzione: _(da annotare)_.
+- produzione: 24/11/2026.
 
 ### OPS-T01a
 
