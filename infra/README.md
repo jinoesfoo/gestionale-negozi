@@ -587,7 +587,7 @@ Prima il server di test, poi la produzione: lì si scrive `prod` al posto di `te
 5. `/srv/app/deploy-env`: `ssh test 'printf "test\n" > /srv/app/deploy-env'` (in produzione `prod`). Da qui `/srv/app/dc` sceglie `compose.test.yml` o `compose.prod.yml`, e `deploy.sh` non lo tocca mai.
 6. `/srv/app/dc`: `ssh test install -m 755 /srv/app/infra/scripts/dc /srv/app/dc`. Controlli:
    - `ssh test cmp /srv/app/infra/scripts/dc /srv/app/dc` non stampa nulla;
-   - `ssh test stat -c '%U %a %F' /srv/app/dc` risponde `deploy 755 regular file`.
+   - `ssh test 'stat -c "%U %a %F" /srv/app/dc'` risponde `deploy 755 regular file`. Il formato va fra virgolette dentro gli apici: senza, la shell del server lo divide in tre parole.
 
    È una copia, non un collegamento: resta usabile anche se `/srv/app/infra` si rompe. Quando FON-T08 cambia lo script, la reinstalla.
 7. L'utente scrive i file di ambiente: «File di ambiente dei server», sottosezione DOM-T02.

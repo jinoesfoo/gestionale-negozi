@@ -26,3 +26,25 @@ Gli esiti dei passi dell'utente sono scritti sotto sua dettatura.
 | B6 | Riuscito (24/11/2026), lanciato dall'utente nel suo terminale (con il token finto `cfut_` seguito da 40 `x`, Claude Code fa girare il comando nella sandbox, dove Docker non si raggiunge): «Valid configuration». Nel log, `server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS` e `enabling automatic HTTP->HTTPS redirects` per `srv0`. |
 | B7 | Riuscito (24/11/2026): `Prove: 16, come attese: 16, diverse: 0`. |
 | B8 | Riuscito (24/11/2026). Prima della pubblicazione `docker manifest inspect ghcr.io/jinoesfoo/gestionale-negozi-caddy:2.11.9-1` → `manifest unknown`, uscita 1: il tag non esisteva. `docker push` riuscito: `2.11.9-1: digest: sha256:58ad41dca747143904e76c5b1372273ad89443917904d3859f8097103550bc5a`. |
+
+## C. Pacchetto su GitHub
+
+| # | Esito |
+|---|---|
+| C1 | _(da fare)_ |
+| C2 | _(da fare)_ |
+| C3 | _(da fare)_ |
+
+## D. Preparazione di ciascun server
+
+| # | Server di test | Produzione |
+|---|---|---|
+| D1 | Riuscito (24/11/2026): `docker pull` come `deploy`, `Digest: sha256:58ad41dca747143904e76c5b1372273ad89443917904d3859f8097103550bc5a`, lo stesso di B8. | _(da fare)_ |
+| D2 | Riuscito (24/11/2026): `rsync -rlpt --delete infra/ test:/srv/app/infra/` dal commit `a439fef`, con `git status --short --ignored infra` vuoto; il confronto `rsync -rlpcn --delete --itemize-changes` non stampa nulla; `grep -c enable_ipv6 /srv/app/infra/compose.yml` → `1`. | _(da fare)_ |
+| D3 | Riuscito (24/11/2026): `/srv/app/.env` contiene esattamente `CADDY_TAG=2.11.9-1`, `APP_TAG=bootstrap`, `POSTGRES_TAG=bootstrap`; `deploy 664 regular file`. | _(da fare)_ |
+| D4 | Riuscito (24/11/2026): `/srv/app/deploy-env` contiene `test`. | _(da fare)_ |
+| D5 | Riuscito (24/11/2026): `install -m 755 /srv/app/infra/scripts/dc /srv/app/dc`; `cmp` non stampa nulla; `deploy 755 regular file`. | _(da fare)_ |
+| D6 | _(da fare)_ | _(da fare)_ |
+| D7 | _(da fare)_ | _(da fare)_ |
+| D8 | _(da fare)_ | _(da fare)_ |
+| D9 | Riuscito (24/11/2026): delle cinque righe finte, `riga normale` esce uguale e le quattro con `cfut_`, `cfat_`, `CF_API_TOKEN` e «appears invalid» escono come `[riga nascosta dal filtro del token]`; `set -o pipefail; false \| sed …` → `esito-diverso-da-zero`. | _(da fare)_ |
