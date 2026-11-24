@@ -4,7 +4,10 @@
 // La voce di invitations, tabella che nasce in ACC-T06, sta qui perché 08 §Esportazione elenca le due colonne in
 // questo file.
 
-/** Per ogni tabella, le colonne escluse dall'esportazione. */
+/**
+ * Per ogni tabella, le colonne escluse dall'esportazione. La chiave è il nome della tabella senza schema e senza
+ * virgolette, come `relname` di `pg_class`, da cui exports.build scopre le tabelle.
+ */
 export const EXPORT_EXCLUDED_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   // L'hash del token d'invito: i token si salvano solo come hash (00 §4.3), e nemmeno l'hash si esporta.
   invitations: ['token_hash'],
@@ -12,7 +15,10 @@ export const EXPORT_EXCLUDED_COLUMNS: Readonly<Record<string, readonly string[]>
   shop_secrets: ['ciphertext'],
 };
 
-/** Le colonne esportabili di una tabella: quelle date, nello stesso ordine, senza le escluse. */
+/**
+ * Le colonne esportabili di una tabella (`table` come in EXPORT_EXCLUDED_COLUMNS, senza schema): quelle date, nello
+ * stesso ordine, senza le escluse. Un nome scritto in un'altra forma (`public.shop_secrets`) non trova la sua voce.
+ */
 export function exportableColumns(table: string, columns: readonly string[]): string[] {
   const excluded = Object.hasOwn(EXPORT_EXCLUDED_COLUMNS, table) ? (EXPORT_EXCLUDED_COLUMNS[table] ?? []) : [];
   return columns.filter((column) => !excluded.includes(column));
