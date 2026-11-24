@@ -31,9 +31,9 @@ Gli esiti dei passi dell'utente sono scritti sotto sua dettatura.
 
 | # | Esito |
 |---|---|
-| C1 | _(da fare)_ |
-| C2 | _(da fare)_ |
-| C3 | _(da fare)_ |
+| C1 | Riuscito (24/11/2026), schermata dell'utente: la pagina del pacchetto `gestionale-negozi-caddy` (tag `2.11.9-1`) ha l'etichetta **Private**. |
+| C2 | Riuscito (24/11/2026), schermate dell'utente: nella pagina del pacchetto, sotto «Details», il repository `gestionale-negozi`; in «Package settings», «Repository source» `jinoesfoo/gestionale-negozi`, con la label `org.opencontainers.image.source` del Dockerfile. |
+| C3 | Riuscito (24/11/2026), schermata dell'utente: «Package settings» → «Manage Actions access» elenca `gestionale-negozi` con «Role: Write», dopo il messaggio «Permissions added for selected repositories.». |
 
 ## D. Preparazione di ciascun server
 
