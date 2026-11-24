@@ -581,10 +581,12 @@ Prima il server di test, poi la produzione: lì si scrive `prod` al posto di `te
 
    Il commit si annota nell'esito.
 4. `/srv/app/.env`: `ssh test 'printf "CADDY_TAG=2.11.9-1\nAPP_TAG=bootstrap\nPOSTGRES_TAG=bootstrap\n" > /srv/app/.env'`, poi `ssh test cat /srv/app/.env`.
+   - Se il controllo automatico di Claude Code ferma la lettura, perché il file si chiama `.env` (è successo il 24/11/2026), si controlla per impronta: `ssh test sha256sum /srv/app/.env` deve dare `35bf9ab9919ab65b0bcfcaca716b26375a60bf251db82acf2eaed672d7496d4e`, la stessa di `printf "CADDY_TAG=2.11.9-1\nAPP_TAG=bootstrap\nPOSTGRES_TAG=bootstrap\n" | sha256sum` su yoo.
    - I tre tag servono a Compose per caricare il progetto, anche per un solo servizio (FON-002).
    - `APP_TAG` lo aggiorna FON-T07b, `POSTGRES_TAG` lo aggiorna OPS-T01a.
    - Il file contiene solo tag, non segreti.
 5. `/srv/app/deploy-env`: `ssh test 'printf "test\n" > /srv/app/deploy-env'` (in produzione `prod`). Da qui `/srv/app/dc` sceglie `compose.test.yml` o `compose.prod.yml`, e `deploy.sh` non lo tocca mai.
+   - Controllo: `ssh test cat /srv/app/deploy-env`, oppure per impronta, come al passo 4: `ssh test sha256sum /srv/app/deploy-env` dà `f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2` per `test` e `49d5c577f2810d67653c0031933534b8ce82dffe4676bd0222af797d379fc9fd` per `prod` (`printf "test\n" | sha256sum` su yoo).
 6. `/srv/app/dc`: `ssh test install -m 755 /srv/app/infra/scripts/dc /srv/app/dc`. Controlli:
    - `ssh test cmp /srv/app/infra/scripts/dc /srv/app/dc` non stampa nulla;
    - `ssh test 'stat -c "%U %a %F" /srv/app/dc'` risponde `deploy 755 regular file`. Il formato va fra virgolette dentro gli apici: senza, la shell del server lo divide in tre parole.
