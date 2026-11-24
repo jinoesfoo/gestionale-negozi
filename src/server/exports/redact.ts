@@ -15,11 +15,20 @@ export const EXPORT_EXCLUDED_COLUMNS: Readonly<Record<string, readonly string[]>
   shop_secrets: ['ciphertext'],
 };
 
+/** Il nome semplice del catalogo (`relname`, `attname`): niente schema, virgolette o spazi. */
+const SIMPLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const BAD_NAME = 'Nome di tabella o di colonna non valido per l’esportazione: serve il nome semplice del catalogo.';
+
+const isSimpleName = (name: unknown) => typeof name === 'string' && SIMPLE_NAME.test(name);
+
 /**
- * Le colonne esportabili di una tabella (`table` come in EXPORT_EXCLUDED_COLUMNS, senza schema): quelle date, nello
- * stesso ordine, senza le escluse. Un nome scritto in un'altra forma (`public.shop_secrets`) non trova la sua voce.
+ * Le colonne esportabili di una tabella: quelle date, nello stesso ordine, senza le escluse. Tabella e colonne si
+ * passano con il nome semplice del catalogo, come le chiavi di EXPORT_EXCLUDED_COLUMNS: un nome in un'altra forma
+ * (`public.shop_secrets`, `"ciphertext"`) non troverebbe la sua voce e lascerebbe passare la colonna esclusa, quindi
+ * si rifiuta con un errore dal messaggio fisso, che non riporta il nome (nota (5) di NEG-T09, dalla revisione).
  */
 export function exportableColumns(table: string, columns: readonly string[]): string[] {
+  if (!isSimpleName(table) || !columns.every(isSimpleName)) throw new Error(BAD_NAME);
   const excluded = Object.hasOwn(EXPORT_EXCLUDED_COLUMNS, table) ? (EXPORT_EXCLUDED_COLUMNS[table] ?? []) : [];
   return columns.filter((column) => !excluded.includes(column));
 }
