@@ -1,0 +1,17 @@
+# Prova del filtro dei registri di Caddy (06 §Caddy, blocco `log default`; 00 §4.2; DOM-T02): prova.sh.
+# Il blocco `log default` è identico a quello di infra/caddy/Caddyfile (lo controlla tests/unit/infra/caddy.test.ts).
+# Il sito risponde 502, come il reverse_proxy di produzione quando l'app è spenta: sulla porta 9 non ascolta nessuno.
+# Caddyfile-senza-filtro è lo stesso file senza il blocco `log default`.
+{
+	log default {
+		output stderr
+		format filter {
+			wrap json
+			request delete
+		}
+	}
+}
+
+http://127.0.0.1:8080 {
+	reverse_proxy 127.0.0.1:9
+}

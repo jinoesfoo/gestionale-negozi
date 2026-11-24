@@ -1,0 +1,7 @@
+# Controllo della prova del filtro dei registri di Caddy (prova.sh): lo stesso sito di Caddyfile, senza il blocco
+# `log default`, cioè i registri come li scrive Caddy da sé. La prova vuole qui i token finti nel registro: così si
+# vede che li riconosce quando ci sono (lo stesso sito lo controlla tests/unit/infra/caddy.test.ts).
+
+http://127.0.0.1:8080 {
+	reverse_proxy 127.0.0.1:9
+}

@@ -85,6 +85,11 @@ services:
 
 networks:
   edge:
+    # IPv6 (06 §DNS, DOM-T02). Con una rete solo IPv4 Docker inoltra le connessioni IPv6 con docker-proxy, e Caddy vedrebbe
+    # l'indirizzo del gateway, uguale per tutti i client IPv6; con IPv6 sulla rete fa solo NAT di destinazione, e a Caddy
+    # arriva l'indirizzo vero. La sottorete (ULA, /64) la sceglie Docker. Creando la rete Docker accende l'inoltro IPv6:
+    # sull'host rotta e indirizzo IPv6 devono essere statici (infra/README.md, «Caddy e certificati», DOM-T02).
+    enable_ipv6: true
   internal:
 
 volumes:

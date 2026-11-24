@@ -505,7 +505,176 @@ Nota: i record DKIM `CNAME` vanno «DNS only». Con il proxy (nuvola arancione) 
 
 ### DOM-T02
 
-_Da scrivere in DOM-T02:_ costruzione e prima pubblicazione dell'immagine Caddy, `/srv/app/infra/`, `/srv/app/.env`, `/srv/app/deploy-env`, installazione di `/srv/app/dc`, avvio del Caddy di bootstrap con Compose (volume `app_caddy_data`).
+L'immagine `ghcr.io/jinoesfoo/gestionale-negozi-caddy` si costruisce da `infra/caddy/` (06 §Caddy). Contiene:
+- Caddy 2.11.9;
+- il modulo DNS `github.com/caddy-dns/cloudflare` v0.2.4, la prima versione che accetta i token di Cloudflare nel formato nuovo (`cfut_`);
+- il Caddyfile, copiato dentro l'immagine.
+
+La lista di controllo è `docs/verifiche/dom-t02.md`, gli esiti sono in `docs/verifiche/dom-t02-esito.md`.
+
+#### Revisioni e `infra/versions.env`
+
+Il tag è la versione di Caddy, un trattino e il numero di revisione (06 §Compiti, note (1) e (2) del piano di DOM-T02):
+- la revisione cresce a ogni modifica di un file di `infra/caddy/`, anche solo di un commento, e riparte da 1 con una nuova versione di Caddy;
+- un tag pubblicato non si ripubblica mai: prima di ogni pubblicazione si controlla che il tag non esista (passo 6 qui sotto);
+- `infra/versions.env` ha una riga `NOME=valore` per immagine, senza apici né spazi. Su `main` `CADDY_TAG` è sempre la revisione con il `reverse_proxy`, mai quella di avvio, altrimenti FON-T07b e i rilasci di FON-T08 rimetterebbero in servizio la risposta fissa.
+
+| Tag | Caddyfile | Commit | Digest | Pubblicata | Dove gira |
+|---|---|---|---|---|---|
+| `2.11.9-1` | di avvio: `respond "In arrivo - {remote_host}" 200` al posto di `reverse_proxy app:3000`, unica riga diversa | _(da annotare)_ | _(da annotare)_ | _(da annotare)_ | server di test e produzione, fino a FON-T07b |
+| `2.11.9-2` | quello del repository, con `reverse_proxy app:3000` | _(da annotare)_ | _(da annotare)_ | _(da annotare)_ | nessuno: la mette in servizio FON-T07b |
+
+La revisione di avvio esiste solo in un commit del ramo `dom-t02`, con il Caddyfile di avvio e `CADDY_TAG=2.11.9-1`. Il commit successivo ha rimesso la riga del `reverse_proxy` e `CADDY_TAG=2.11.9-2`. La risposta di avvio mostra a chi chiama il proprio indirizzo, come lo vede Caddy: così si prova che arriva l'indirizzo vero del client, in IPv4 e in IPv6 (06 §DNS).
+
+#### Costruzione e pubblicazione a mano (Claude, su yoo)
+
+Dalla cartella del progetto, con `infra/caddy/` uguale al commit da annotare (`git status --short infra/caddy` non stampa nulla). Docker gira fuori dalla sandbox: un comando per riga. `IMG` sta per `ghcr.io/jinoesfoo/gestionale-negozi-caddy:<tag>`, scritto per intero nei comandi.
+
+1. Costruzione: `docker build -t IMG infra/caddy`.
+2. Versioni:
+   - `docker run --rm IMG caddy version` comincia con `v2.11.9`;
+   - `docker run --rm IMG caddy list-modules --versions --skip-standard` elenca un solo modulo non standard, `dns.providers.cloudflare v0.2.4`.
+3. Caddyfile nell'immagine: l'impronta di `docker run --rm --entrypoint sha256sum IMG /etc/caddy/Caddyfile` è uguale a quella di `git show <commit>:infra/caddy/Caddyfile | sha256sum`.
+4. Configurazione, senza rete e con valori finti: `docker run --rm --network none -e BASE_DOMAIN=prova.invalid -e ACME_EMAIL=prova@prova.invalid -e CF_API_TOKEN=cfut_<40 x> IMG caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` risponde «Valid configuration». `<40 x>` sono quaranta lettere `x`. Il token finto deve avere la forma che il modulo accetta: `cfut_` o `cfat_`, poi da 32 a 256 caratteri fra lettere, cifre, `_` e `-`. Con un valore di un'altra forma il modulo si ferma con «appears invalid» e stampa il valore.
+5. Prova del filtro dei registri: `docker run --rm --network none -v ./tests/infra/caddy-log:/prova:ro IMG sh /prova/prova.sh` finisce con `Prove: 16, come attese: 16, diverse: 0`.
+6. Il tag non esiste ancora: `docker manifest inspect IMG` deve fallire, senza mostrare un manifest. Se un manifest c'è, non si pubblica: si usa una revisione nuova.
+7. Pubblicazione: `docker push IMG`. Il digest dell'ultima riga va nella tabella qui sopra. Se GHCR rifiuta per l'accesso («unauthorized», «denied»), l'utente rifà su yoo `docker login ghcr.io -u jinoesfoo` con il suo token `write:packages`.
+8. Dopo la prima pubblicazione del pacchetto, l'utente fa i tre passi di «Collegamento dei pacchetti al repository» (sezione «Accesso a GHCR dai server»), con una schermata per passo.
+
+#### Filtro del token
+
+Vale finché Caddy non è partito senza errori su un server, dopo un'immagine nuova o un token nuovo (06 §Caddy, nota (4) del piano di DOM-T02). In quel periodo Claude legge l'uscita di ogni comando `/srv/app/dc` (tranne `config --no-env-resolution`) e i log di Caddy solo attraverso il filtro. Il filtro gira sul server, dopo `2>&1`, e il comando comincia con `set -o pipefail;`, così l'esito resta quello di `dc` e non quello del filtro:
+
+```bash
+ssh test 'set -o pipefail; /srv/app/dc up -d caddy 2>&1 | sed -E "s/.*(cfut_|cfat_|CF_API_TOKEN|appears invalid).*/[riga nascosta dal filtro del token]/"'
+```
+
+Il filtro sostituisce ogni riga che contiene `cfut_`, `cfat_`, `CF_API_TOKEN` o «appears invalid». Così il segno dell'errore resta visibile, e il token no.
+
+Una riga sostituita vuol dire che un errore (del modulo DNS o di Compose) ha scritto il token. Allora ci si ferma: vale «Token esposto» (sezione «DNS ed email», punto 2), e la causa si toglie prima di riprovare.
+
+Prova del filtro sul server, con righe finte (la prima riga esce uguale, le altre quattro sostituite):
+
+```bash
+ssh test 'set -o pipefail; printf "%s\n" "riga normale" "x cfut_finto" "x cfat_finto" "CF_API_TOKEN=finto" "token appears invalid" | sed -E "s/.*(cfut_|cfat_|CF_API_TOKEN|appears invalid).*/[riga nascosta dal filtro del token]/"'
+ssh test 'set -o pipefail; false | sed -E "s/.*(cfut_|cfat_|CF_API_TOKEN|appears invalid).*/[riga nascosta dal filtro del token]/" && echo esito-zero || echo esito-diverso-da-zero'
+```
+
+Il secondo comando deve rispondere `esito-diverso-da-zero`.
+
+#### Preparazione di un server (Claude, come `deploy`)
+
+Prima il server di test, poi la produzione: lì si scrive `prod` al posto di `test`, e ogni comando verso `prod` lo conferma l'utente. Fino al primo avvio si usano solo comandi che non caricano il progetto.
+
+1. Controlli:
+   - `ssh test docker ps -a` e `ssh test docker volume ls`: nessun container Caddy, nessun volume `app_caddy_data` né `app_caddy_config`;
+   - `ssh test ss -ltnu`: nessun ascolto sulle porte 80 e 443 TCP né sulla 443 UDP;
+   - `ssh test rsync --version`: `rsync` c'è (altrimenti al passo 3 si usa `scp -r`);
+   - rotta e indirizzo IPv6 statici: vedi «IPv6» qui sotto.
+2. `ssh test docker pull ghcr.io/jinoesfoo/gestionale-negozi-caddy:2.11.9-1`: il digest è quello della tabella.
+3. Copia di `infra/` del commit corrente, con `git status --short --ignored infra` vuoto:
+   - copia: `rsync -rlpt --delete infra/ test:/srv/app/infra/`;
+   - controllo: `rsync -rlpcn --delete --itemize-changes infra/ test:/srv/app/infra/` non stampa nulla.
+
+   Il commit si annota nell'esito.
+4. `/srv/app/.env`: `ssh test 'printf "CADDY_TAG=2.11.9-1\nAPP_TAG=bootstrap\nPOSTGRES_TAG=bootstrap\n" > /srv/app/.env'`, poi `ssh test cat /srv/app/.env`.
+   - I tre tag servono a Compose per caricare il progetto, anche per un solo servizio (FON-002).
+   - `APP_TAG` lo aggiorna FON-T07b, `POSTGRES_TAG` lo aggiorna OPS-T01a.
+   - Il file contiene solo tag, non segreti.
+5. `/srv/app/deploy-env`: `ssh test 'printf "test\n" > /srv/app/deploy-env'` (in produzione `prod`). Da qui `/srv/app/dc` sceglie `compose.test.yml` o `compose.prod.yml`, e `deploy.sh` non lo tocca mai.
+6. `/srv/app/dc`: `ssh test install -m 755 /srv/app/infra/scripts/dc /srv/app/dc`. Controlli:
+   - `ssh test cmp /srv/app/infra/scripts/dc /srv/app/dc` non stampa nulla;
+   - `ssh test stat -c '%U %a %F' /srv/app/dc` risponde `deploy 755 regular file`.
+
+   È una copia, non un collegamento: resta usabile anche se `/srv/app/infra` si rompe. Quando FON-T08 cambia lo script, la reinstalla.
+7. L'utente scrive i file di ambiente: «File di ambiente dei server», sottosezione DOM-T02.
+8. Prova del filtro sul server (sopra).
+
+#### Avvio e controlli sul server (Claude)
+
+- Avvio, attraverso il filtro: `ssh test 'set -o pipefail; /srv/app/dc up -d caddy 2>&1 | sed -E "…"'`, con l'espressione di sed del filtro scritta per intero.
+  - Si avvia solo il servizio `caddy`, sempre con Compose e mai con un `docker run`.
+  - Così lo stato ACME vive dal primo giorno nel volume `app_caddy_data`, che FON-T07b riusa. Let's Encrypt limita i certificati uguali a 5 ogni 7 giorni.
+- Stato, attraverso il filtro: `ssh test 'set -o pipefail; /srv/app/dc ps 2>&1 | sed -E "…"'`. Poi `ssh test docker ps -a` e `ssh test docker volume ls`.
+- Log, attraverso il filtro: `ssh test 'set -o pipefail; /srv/app/dc logs --no-color caddy 2>&1 | sed -E "…"'`. Attesi:
+  - «certificate obtained successfully» per la radice e per il jolly, dall'emittente `acme-v02.api.letsencrypt.org`;
+  - per `srv0`, la voce «server running» con `"protocols":["h1","h2"]`;
+  - nessuna voce «enabling HTTP/3 listener».
+
+  Il server dei reindirizzamenti della porta 80 (`remaining_auto_https_redirects`) elenca i protocolli predefiniti. Senza TLS però non li avvia, e lo dice con gli avvisi «HTTP/2 skipped because it requires TLS» e «HTTP/3 skipped because it requires TLS».
+- Dopo una partenza senza errori, i certificati nel volume: `ssh test /srv/app/dc exec caddy ls /data/caddy/certificates/acme-v02.api.letsencrypt.org-directory`. Ci sono la radice e il jolly (`wildcard_.` davanti al dominio).
+- Se l'emissione fallisce, non si ricrea il container in ciclo e non si cancella il volume. Caddy riprova da solo e, dopo un errore, prova con l'ambiente di prova di Let's Encrypt, che non consuma i limiti. Si legge la causa nel log (attraverso il filtro), la si toglie, poi si fa un solo `/srv/app/dc up -d --force-recreate caddy` (attraverso il filtro).
+- Configurazione e porte:
+  - `ssh test /srv/app/dc config --no-env-resolution`: il servizio `caddy` pubblica 80 e 443 solo in TCP;
+  - `ssh test ss -lnu`: nessun ascolto UDP sulla 443.
+
+#### Prove dall'altro server (Claude)
+
+Il server di test si prova da `prod`, la produzione da `test`. Qui sotto c'è l'esempio per il server di test: per la produzione si scambiano i nomi e si usano `foondaco.com` e `91.108.122.251`.
+
+- Certificati, per la radice, `www`, `app`, `admin` e un nome inventato del jolly (`prova-dom-t02`): `ssh prod 'openssl s_client -connect 145.14.158.72:443 -servername app.foondaco.it </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -ext subjectAltName -dates'`.
+  - Atteso: per la radice il certificato di `foondaco.it`, per gli altri `*.foondaco.it`.
+  - Emittente Let's Encrypt, senza «STAGING», e valido oggi.
+- HTTP/2 senza `Alt-Svc`: `ssh prod curl -sI --http2 -4 https://foondaco.it/api/health`, e lo stesso con `-6`. Atteso `HTTP/2 200`, nessuna intestazione `alt-svc`.
+- HSTS: nelle intestazioni della radice, di `app.` e di `prova-dom-t02.`, `strict-transport-security: max-age=31536000; includeSubDomains`.
+- Porta 80: `ssh prod curl -sI http://foondaco.it/`. Atteso `308`, con `location: https://foondaco.it/`.
+- Indirizzo del client: `ssh prod curl -s -4 https://foondaco.it/`, e lo stesso con `-6`. Atteso `In arrivo - <indirizzo di prod>` (in IPv4 e in IPv6).
+- Webhook email da un indirizzo che non è di Brevo: `ssh prod 'curl -s -o /dev/null -w "%{http_code}\n" -4 https://foondaco.it/api/webhooks/email'`.
+  - Lo stesso con `www.foondaco.it` e con `-6`.
+  - Atteso `403` in tutti e quattro i casi.
+- Nome fuori dai certificati: `ssh prod curl -sv --resolve esempio.invalid:443:145.14.158.72 https://esempio.invalid/`. Atteso: un errore TLS, nessuna risposta HTTP.
+- Rete e host dopo l'avvio, sul server provato:
+  - `ssh test docker network inspect app_edge` ha `EnableIPv6` vero e una sottorete `fd…/64`;
+  - `ssh test docker network inspect app_internal` ha `EnableIPv6` falso;
+  - `ssh test sysctl net.ipv6.conf.all.forwarding` risponde `1`;
+  - `ssh test ip -6 route show default` e `ssh test ip -6 addr show scope global` sono uguali a prima dell'avvio.
+
+#### IPv6
+
+Decisione del piano di DOM-T02 (06 §DNS): la rete `edge` di `infra/compose.yml` ha `enable_ipv6: true`, la rete `internal` resta solo IPv4, e i record `AAAA` restano.
+- Con una rete solo IPv4, Docker 29 inoltra le connessioni IPv6 con `docker-proxy`. Caddy vedrebbe allora l'indirizzo del gateway, uguale per tutti i client IPv6: ne dipendono i limiti per IP (03 ACC-004) e il matcher `remote_ip` del webhook.
+- Con IPv6 sulla rete, Docker fa solo NAT di destinazione e l'indirizzo vero arriva a Caddy. All'app arriva in `x-forwarded-for`, che Caddy scrive da sé, ignorando quello mandato dal client, finché nel Caddyfile non c'è `trusted_proxies`.
+- La sottorete (ULA, /64) la assegna Docker. `/etc/docker/daemon.json` non cambia.
+
+Precondizione sull'host: creando la rete Docker accende l'inoltro IPv6, e con l'inoltro acceso il kernel ignora gli annunci dei router. Per questo la rotta IPv6 predefinita e l'indirizzo del server devono essere statici. Controllo dell'utente, prima del primo avvio di Caddy su un server e in ogni ricostruzione (08 OPS-046):
+- `ssh test-admin ip -6 route show default` contiene `proto static`;
+- `ssh test-admin ip -6 addr show scope global` mostra l'indirizzo con `valid_lft forever` e senza `dynamic`.
+
+Fatto il 24/11/2026 su entrambi i server, con esito positivo. Se non fosse così, prima dell'avvio l'utente rende statici indirizzo e rotta nella configurazione di netplan.
+
+Brevo non pubblica indirizzi IPv6 per i webhook: una sua chiamata in IPv6 riceverebbe 403.
+
+#### Intervalli dei webhook di Brevo
+
+`not remote_ip 1.179.112.0/20 172.246.240.0/20` nel Caddyfile: solo IPv4.
+
+La fonte è l'articolo del centro assistenza di Brevo «Brevo IP ranges: List of publicly exposed services» (help.brevo.com, articolo 15127404548498), sezione «Webhook IP ranges». Il contenuto risulta modificato il 9/9/2026; il controllo è del 24/11/2026. Vale per i webhook di marketing, transazionali e delle automazioni.
+
+Non si usa la pagina per sviluppatori «Secure webhook calls»: rimanda per errore all'articolo 208848409, che elenca gli indirizzi da cui Brevo invia le email.
+
+Come ripetere il controllo: si apre l'articolo e si confrontano gli intervalli della sezione «Webhook IP ranges» con la riga `not remote_ip` del Caddyfile. Si ripete prima di FON-T07b, che registra il webhook su Brevo, e a ogni nuova revisione dell'immagine.
+
+Se gli intervalli sono cambiati, serve un compito con una revisione nuova dell'immagine, che cambia:
+- il Caddyfile;
+- la costante `BREVO_WEBHOOK_RANGES` di `tests/unit/infra/caddy.test.ts`;
+- 06 §Caddy.
+
+La data del controllo si aggiorna qui.
+
+#### Aggiornare Caddy o il modulo
+
+- **Versione nuova di Caddy.** Si cambiano le due righe `FROM` di `infra/caddy/Dockerfile`, con lo stesso numero, e `CADDY_TAG` diventa `<versione>-1`. Poi si seguono le note della versione e si costruisce, si controlla e si pubblica come sopra.
+- **Versione nuova del modulo.** Si cambia la riga di xcaddy, mai sotto la v0.2.4, e la revisione cresce di 1. Prima si controlla, nel codice del modulo, che la forma dei token accettata comprenda ancora quella dei token in `caddy.env` (sezione «DNS ed email», punto 2, rotazione, passo 3).
+- **Messa in servizio.** Fino a FON-T08 la costruzione e la pubblicazione si fanno a mano, come sopra; da FON-T08 le fa la CI, che non sovrascrive mai un tag esistente. A ogni immagine nuova su un server valgono le regole di 06 §Caddy:
+  - controllo della versione del modulo;
+  - filtro del token finché Caddy non riparte senza errori.
+
+#### Punti lasciati da DOM-T01
+
+La sezione «DNS ed email (DOM-T01)», «Punti lasciati ai compiti successivi», aveva lasciato a DOM-T02 tre punti. Esito di ciascuno:
+- **Intervalli IP dei webhook di Brevo:** controllati e scritti nel Caddyfile («Intervalli dei webhook di Brevo», qui sopra).
+- **IPv6:** rete `edge` con IPv6 («IPv6», qui sopra). Le prove in IPv6 e quelle sull'indirizzo del client sono in `docs/verifiche/dom-t02-esito.md`. Se il firewall di Hostinger copre anche IPv6 e ICMP, lo annota lo stesso esito (riga A2).
+- **Formato dei token e modulo di Caddy:** il modulo è fissato alla v0.2.4 nel Dockerfile, e lo controlla `tests/unit/infra/caddy.test.ts`. La forma del valore in `caddy.env` la controlla l'utente («File di ambiente dei server», DOM-T02), il token passa dal filtro qui sopra.
 
 ### FON-T07b
 
@@ -1637,7 +1806,55 @@ Tutti i file di `/srv/app/env/` li scrive l'utente, come `deploy` (`ssh -t <nome
 
 ### DOM-T02
 
-_Da scrivere in DOM-T02:_ `caddy.env` e i file vuoti `app.env`, `worker.env`, `migrate.env`, `postgres.env`.
+`caddy.env` e i quattro file vuoti, scritti dall'utente prima del primo avvio di Caddy su quel server (06, DOM-T02).
+
+Compose controlla che esistano i file `env_file` di tutti i servizi anche quando ne avvia uno solo. Per questo `app.env`, `worker.env`, `migrate.env` e `postgres.env` restano vuoti finché non li sostituiscono con i file veri FON-T07b (i primi tre) e OPS-T01a (`postgres.env`).
+
+Su ciascun server, prima il test e poi la produzione:
+
+1. `ssh -t test-admin sudo -iu deploy` (in produzione `prod-admin`), poi, **un comando alla volta**:
+   ```bash
+   hostname                      # srv2155002 per il test, srv1874119 per la produzione
+   whoami                        # deploy
+   umask 077
+   printf 'BASE_DOMAIN=foondaco.it\n' > /srv/app/env/caddy.env        # in produzione: foondaco.com
+   read -r E && printf 'ACME_EMAIL=%s\n' "$E" >> /srv/app/env/caddy.env && unset E
+   ```
+   Dopo il `read -r E` il terminale aspetta. Si scrive l'indirizzo email per l'account di Let's Encrypt e si preme Invio. L'indirizzo non è un segreto, quindi si vede mentre lo si scrive.
+   ```bash
+   read -rs T && printf 'CF_API_TOKEN=%s\n' "$T" >> /srv/app/env/caddy.env && unset T
+   ```
+   Dopo il `read -rs T` si incolla il token di Cloudflare **della zona di quel server**, preso dal gestore di password:
+   - `caddy-foondaco-it` per il test;
+   - `caddy-foondaco-com` per la produzione.
+
+   Il token non si vede; poi si preme Invio. Non incollare più righe insieme: il `read` prenderebbe come token la riga seguente.
+   ```bash
+   chmod 600 /srv/app/env/caddy.env
+   test -e /srv/app/env/app.env || install -m 600 /dev/null /srv/app/env/app.env
+   test -e /srv/app/env/worker.env || install -m 600 /dev/null /srv/app/env/worker.env
+   test -e /srv/app/env/migrate.env || install -m 600 /dev/null /srv/app/env/migrate.env
+   test -e /srv/app/env/postgres.env || install -m 600 /dev/null /srv/app/env/postgres.env
+   ```
+   `test -e … ||` crea un file vuoto solo se il file non c'è ancora: un file vero, scritto più avanti, non si cancella.
+2. Controlli. Rispondono con numeri o con proprietario e permessi, e non stampano i valori. L'utente detta a Claude ogni risposta, una per comando:
+   ```bash
+   stat -c '%U %a %s %n' /srv/app/env/caddy.env /srv/app/env/app.env /srv/app/env/worker.env /srv/app/env/migrate.env /srv/app/env/postgres.env
+   ```
+   Atteso: `deploy 600` su tutte e cinque le righe, e dimensione `0` (il terzo numero) per i quattro file diversi da `caddy.env`.
+   ```bash
+   grep -cvE '^[[:space:]]*(#|$)' /srv/app/env/caddy.env                         # 3: righe con un valore
+   grep -c '^[^#]*CF_API_TOKEN' /srv/app/env/caddy.env                             # 1: una sola riga del token
+   grep -cE '^CF_API_TOKEN=cfut_[A-Za-z0-9_-]{32,256}$' /srv/app/env/caddy.env     # 1: la forma che il modulo accetta
+   grep -cx 'BASE_DOMAIN=foondaco.it' /srv/app/env/caddy.env                       # 1 (in produzione foondaco.com)
+   grep -cE '^ACME_EMAIL=[^[:space:]@]+@[^[:space:]@]+$' /srv/app/env/caddy.env    # 1: un indirizzo email
+   grep -c CAMBIA /srv/app/env/caddy.env                                           # 0
+   exit
+   ```
+   Se un numero è diverso, si riscrive il file dal punto 1. Il primo `printf`, con `>`, lo ricomincia da capo.
+3. Copia fuori linea (OPS-009): i tre valori di `caddy.env` vanno nel gestore di password e nella copia sigillata. L'utente risponde «fatto», e Claude annota qui la data.
+
+Copia fuori linea di `caddy.env`: _(da annotare: server di test, produzione)_.
 
 ### OPS-T01a
 
