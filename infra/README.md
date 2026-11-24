@@ -647,6 +647,19 @@ Fatto il 24/11/2026 su entrambi i server, con esito positivo. Se non fosse così
 
 Brevo non pubblica indirizzi IPv6 per i webhook: una sua chiamata in IPv6 riceverebbe 403.
 
+#### Firewall di Hostinger
+
+Le regole sono quelle di «Firewall di Hostinger (FON-T07a)». Controllo di DOM-T02, riga A2 dell'esito:
+- **Attivazione.** Il gruppo di regole (`gestionale-base`) si accende su ciascuna VPS con l'interruttore accanto al suo nome, nella pagina «Sicurezza» → «Firewall» della VPS. Non basta che il gruppo esista e compaia nella pagina. Il 24/11/2026 l'interruttore era spento su tutte e due le VPS. L'ha acceso l'utente: server di test il 24/11/2026, produzione _(da annotare)_. Il pannello avverte che l'attivazione può richiedere fino a 5 minuti.
+- **Prova che è acceso**, dall'altro server: `ping` e `ping -6` non rispondono, `nc -z -v -w 5 <indirizzo> 22` risponde, in IPv4 e in IPv6. Con l'interruttore spento il ping risponde.
+- **IPv6 e ICMP.** Le regole valgono anche per IPv6. ICMP e ICMPv6 in ingresso non passano: nessuna regola li accetta, e la quarta scarta tutto il resto. Passano invece le risposte al traffico che parte dal server: ping, DNS, HTTPS verso Let's Encrypt, Cloudflare e GHCR.
+- **Rischio per le connessioni IPv6.** In IPv6 i router non spezzano i pacchetti troppo grandi per un tratto del percorso. Li scartano, e al server mandano un messaggio ICMPv6 «Packet Too Big», da cui il server impara la misura giusta: è la scoperta della MTU del percorso (PMTUD).
+  - Non si può provare se il firewall lascia passare questi messaggi.
+  - Se li scarta, con un client che ha un tratto di rete più stretto di 1500 byte (un tunnel, una VPN, alcune linee) la connessione si apre, ma i pacchetti grandi non arrivano: per esempio il certificato TLS o una pagina. Il client resta in attesa.
+  - In IPv4 può succedere lo stesso con i messaggi ICMP «Fragmentation Needed».
+  - Se qualcuno segnala pagine che si bloccano solo da certe reti, si controlla prima questo.
+  - Il rimedio è una regola che accetta ICMPv6 prima della quarta. Cambia le regole di FON-T07a: si decide in un compito apposta.
+
 #### Intervalli dei webhook di Brevo
 
 `not remote_ip 1.179.112.0/20 172.246.240.0/20` nel Caddyfile: solo IPv4.
@@ -676,7 +689,7 @@ La data del controllo si aggiorna qui.
 
 La sezione «DNS ed email (DOM-T01)», «Punti lasciati ai compiti successivi», aveva lasciato a DOM-T02 tre punti. Esito di ciascuno:
 - **Intervalli IP dei webhook di Brevo:** controllati e scritti nel Caddyfile («Intervalli dei webhook di Brevo», qui sopra).
-- **IPv6:** rete `edge` con IPv6 («IPv6», qui sopra). Le prove in IPv6 e quelle sull'indirizzo del client sono in `docs/verifiche/dom-t02-esito.md`. Se il firewall di Hostinger copre anche IPv6 e ICMP, lo annota lo stesso esito (riga A2).
+- **IPv6:** rete `edge` con IPv6 («IPv6», qui sopra). Le prove in IPv6 e quelle sull'indirizzo del client sono in `docs/verifiche/dom-t02-esito.md`. Il firewall di Hostinger copre anche IPv6, e ICMP e ICMPv6 in ingresso non passano («Firewall di Hostinger», qui sopra; esito, riga A2).
 - **Formato dei token e modulo di Caddy:** il modulo è fissato alla v0.2.4 nel Dockerfile, e lo controlla `tests/unit/infra/caddy.test.ts`. La forma del valore in `caddy.env` la controlla l'utente («File di ambiente dei server», DOM-T02), il token passa dal filtro qui sopra.
 
 ### FON-T07b
