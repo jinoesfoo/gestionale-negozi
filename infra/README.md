@@ -521,7 +521,7 @@ Il tag è la versione di Caddy, un trattino e il numero di revisione (06 §Compi
 
 | Tag | Caddyfile | Commit | Digest | Pubblicata | Dove gira |
 |---|---|---|---|---|---|
-| `2.11.9-1` | di avvio: `respond "In arrivo - {remote_host}" 200` al posto di `reverse_proxy app:3000`, unica riga diversa | _(da annotare)_ | _(da annotare)_ | _(da annotare)_ | server di test e produzione, fino a FON-T07b |
+| `2.11.9-1` | di avvio: `respond "In arrivo - {remote_host}" 200` al posto di `reverse_proxy app:3000`, unica riga diversa | `082e5fc` | `sha256:58ad41dca747143904e76c5b1372273ad89443917904d3859f8097103550bc5a` | 24/11/2026 | server di test e produzione, fino a FON-T07b |
 | `2.11.9-2` | quello del repository, con `reverse_proxy app:3000` | _(da annotare)_ | _(da annotare)_ | _(da annotare)_ | nessuno: la mette in servizio FON-T07b |
 
 La revisione di avvio esiste solo in un commit del ramo `dom-t02`, con il Caddyfile di avvio e `CADDY_TAG=2.11.9-1`. Il commit successivo ha rimesso la riga del `reverse_proxy` e `CADDY_TAG=2.11.9-2`. La risposta di avvio mostra a chi chiama il proprio indirizzo, come lo vede Caddy: così si prova che arriva l'indirizzo vero del client, in IPv4 e in IPv6 (06 §DNS).
@@ -535,7 +535,10 @@ Dalla cartella del progetto, con `infra/caddy/` uguale al commit da annotare (`g
    - `docker run --rm IMG caddy version` comincia con `v2.11.9`;
    - `docker run --rm IMG caddy list-modules --versions --skip-standard` elenca un solo modulo non standard, `dns.providers.cloudflare v0.2.4`.
 3. Caddyfile nell'immagine: l'impronta di `docker run --rm --entrypoint sha256sum IMG /etc/caddy/Caddyfile` è uguale a quella di `git show <commit>:infra/caddy/Caddyfile | sha256sum`.
-4. Configurazione, senza rete e con valori finti: `docker run --rm --network none -e BASE_DOMAIN=prova.invalid -e ACME_EMAIL=prova@prova.invalid -e CF_API_TOKEN=cfut_<40 x> IMG caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` risponde «Valid configuration». `<40 x>` sono quaranta lettere `x`. Il token finto deve avere la forma che il modulo accetta: `cfut_` o `cfat_`, poi da 32 a 256 caratteri fra lettere, cifre, `_` e `-`. Con un valore di un'altra forma il modulo si ferma con «appears invalid» e stampa il valore.
+4. Configurazione, senza rete e con valori finti: `docker run --rm --network none -e BASE_DOMAIN=prova.invalid -e ACME_EMAIL=prova@prova.invalid -e CF_API_TOKEN=cfut_<40 x> IMG caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` risponde «Valid configuration».
+   - `<40 x>` sono quaranta lettere `x`.
+   - Il token finto deve avere la forma che il modulo accetta: `cfut_` o `cfat_`, poi da 32 a 256 caratteri fra lettere, cifre, `_` e `-`. Con un valore di un'altra forma il modulo si ferma con «appears invalid» e stampa il valore.
+   - Questo comando lo lancia l'utente nel suo terminale: contiene un token finto della forma `cfut_…`, e Claude Code lo fa girare nella sandbox, dove Docker non si raggiunge (prova del 24/11/2026). I valori sono finti: l'uscita si può incollare in chat.
 5. Prova del filtro dei registri: `docker run --rm --network none -v ./tests/infra/caddy-log:/prova:ro IMG sh /prova/prova.sh` finisce con `Prove: 16, come attese: 16, diverse: 0`.
 6. Il tag non esiste ancora: `docker manifest inspect IMG` deve fallire, senza mostrare un manifest. Se un manifest c'è, non si pubblica: si usa una revisione nuova.
 7. Pubblicazione: `docker push IMG`. Il digest dell'ultima riga va nella tabella qui sopra. Se GHCR rifiuta per l'accesso («unauthorized», «denied»), l'utente rifà su yoo `docker login ghcr.io -u jinoesfoo` con il suo token `write:packages`.
