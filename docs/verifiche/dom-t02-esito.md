@@ -9,7 +9,7 @@ Gli esiti dei passi dell'utente sono scritti sotto sua dettatura.
 | # | Esito |
 |---|---|
 | A1 | Riuscito (24/11/2026, fase piano): sul server di test `default via 2a02:4780:d::1 dev eth0 proto static`, indirizzo `2a02:4780:d:8458::1/48` con `valid_lft forever preferred_lft forever`, senza `dynamic`; in produzione `default via 2a02:4780:c::1 dev eth0 proto static`, indirizzo `2a02:4780:c:f90c::1/48` con `valid_lft forever preferred_lft forever`, senza `dynamic`. Comandi lanciati dall'utente con `test-admin` e `prod-admin`. |
-| A2 | _(da fare)_ |
+| A2 | _(da fare: schermate dell'utente)_. Prova di Claude (24/11/2026), dal server di test verso la produzione: `ping -c 3 91.108.122.251` e `ping -6 -c 3 2a02:4780:c:f90c::1` rispondono 3 su 3. Secondo la documentazione di Hostinger il firewall, quando è attivo, scarta anche il traffico ICMP che nessuna regola accetta, e filtra IPv4 e IPv6 («How to use a managed VPS firewall at Hostinger», articolo 8172641, modificato il 29/10/2026). Va controllato nelle schermate se il gruppo è attivo sulla VPS di produzione. |
 | A3 | Server di test, riuscito (24/11/2026): `rsync version 3.4.1 protocol version 32`. Produzione: _(da fare)_ |
 | A4 | Server di test, riuscito (24/11/2026): `docker ps -a` e `docker volume ls` vuoti; `ss -ltnu` mostra in ascolto solo la 22/tcp (IPv4 e IPv6) e i servizi locali del sistema (53 su `127.0.0.53`/`127.0.0.54`, 323/udp su `127.0.0.1` e `[::1]`), niente sulle porte 80 e 443. Produzione: _(da fare)_ |
 | A5 | Riuscito (24/11/2026, fase test): `Prove: 16, come attese: 16, diverse: 0` con `caddy:2.11.9` (`sha256:4851e54a46b206517c574821bb5cc67f170d2156041e9fbc4c9193b45e84a75b`). Prova a rovescio, con la configurazione senza il blocco `log` montata al posto di quella con il blocco: `Prove: 16, come attese: 11, diverse: 5`, uscita 1 (i cinque casi «nessun …» trovano la fuga). |
@@ -44,7 +44,7 @@ Gli esiti dei passi dell'utente sono scritti sotto sua dettatura.
 | D3 | Riuscito (24/11/2026): `/srv/app/.env` contiene esattamente `CADDY_TAG=2.11.9-1`, `APP_TAG=bootstrap`, `POSTGRES_TAG=bootstrap`; `deploy 664 regular file`. | _(da fare)_ |
 | D4 | Riuscito (24/11/2026): `/srv/app/deploy-env` contiene `test`. | _(da fare)_ |
 | D5 | Riuscito (24/11/2026): `install -m 755 /srv/app/infra/scripts/dc /srv/app/dc`; `cmp` non stampa nulla; `deploy 755 regular file`. | _(da fare)_ |
-| D6 | _(da fare)_ | _(da fare)_ |
-| D7 | _(da fare)_ | _(da fare)_ |
-| D8 | _(da fare)_ | _(da fare)_ |
+| D6 | Riuscito (24/11/2026): `stat -c '%U %a %s %n'` lanciato dall'utente come `deploy`, uscita incollata in chat: `deploy 600` per tutti e cinque i file; dimensioni `caddy.env` 122 byte, `app.env`, `worker.env`, `migrate.env` e `postgres.env` 0 byte. | _(da fare)_ |
+| D7 | Riuscito (24/11/2026): comandi lanciati dall'utente come `deploy` su `srv2155002`, uscita incollata in chat: righe con un valore `3`; righe del token `1`; forma `CF_API_TOKEN=cfut_…` `1`; `BASE_DOMAIN=foondaco.it` esatto `1`; `ACME_EMAIL` con un indirizzo `1`; `CAMBIA` `0`. | _(da fare)_ |
+| D8 | Riuscito (24/11/2026): l'utente risponde «fatto» alla richiesta di aggiornare tutte e due le parti della copia fuori linea, cioè il gestore di password e la copia sigillata. Nella voce `caddy-foondaco-it` c'è ora l'appunto con `BASE_DOMAIN=foondaco.it` e `ACME_EMAIL`, e lo stesso appunto è nella copia sigillata. Il token c'era già in tutte e due dal 17/11/2026 (DOM-T01). | _(da fare)_ |
 | D9 | Riuscito (24/11/2026): delle cinque righe finte, `riga normale` esce uguale e le quattro con `cfut_`, `cfat_`, `CF_API_TOKEN` e «appears invalid» escono come `[riga nascosta dal filtro del token]`; `set -o pipefail; false \| sed …` → `esito-diverso-da-zero`. | _(da fare)_ |

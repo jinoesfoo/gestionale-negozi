@@ -1857,7 +1857,9 @@ Su ciascun server, prima il test e poi la produzione:
    Se un numero è diverso, si riscrive il file dal punto 1. Il primo `printf`, con `>`, lo ricomincia da capo.
 3. Copia fuori linea (OPS-009): i tre valori di `caddy.env` vanno nel gestore di password e nella copia sigillata. L'utente risponde «fatto», e Claude annota qui la data.
 
-Copia fuori linea di `caddy.env`: _(da annotare: server di test, produzione)_.
+Copia fuori linea di `caddy.env`, nella voce del token nel gestore di password e nella copia sigillata, con l'appunto di `BASE_DOMAIN` e `ACME_EMAIL`:
+- server di test: 24/11/2026;
+- produzione: _(da annotare)_.
 
 ### OPS-T01a
 
