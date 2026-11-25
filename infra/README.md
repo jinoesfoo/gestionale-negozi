@@ -627,7 +627,7 @@ Il server di test si prova da `prod`, la produzione da `test`. Qui sotto c'è l'
   - Emittente Let's Encrypt, senza «STAGING», e valido oggi.
 - HTTP/2 senza `Alt-Svc`: `ssh prod curl -sI --http2 -4 https://foondaco.it/api/health`, e lo stesso con `-6`. Atteso `HTTP/2 200`, nessuna intestazione `alt-svc`.
 - HSTS: nelle intestazioni della radice, di `app.` e di `prova-dom-t02.`, `strict-transport-security: max-age=31536000; includeSubDomains`.
-- Porta 80: `ssh prod curl -sI http://foondaco.it/`. Atteso `308`, con `location: https://foondaco.it/`.
+- Porta 80: `ssh prod curl -sI -4 http://foondaco.it/`, e lo stesso con `-6`. Atteso `308` in tutti e due i casi, con `Location: https://foondaco.it/`.
 - Indirizzo del client: `ssh prod curl -s -4 https://foondaco.it/`, e lo stesso con `-6`. Atteso `In arrivo - <indirizzo di prod>` (in IPv4 e in IPv6).
 - Webhook email da un indirizzo che non è di Brevo: `ssh prod 'curl -s -o /dev/null -w "%{http_code}\n" -4 https://foondaco.it/api/webhooks/email'`.
   - Lo stesso con `www.foondaco.it` e con `-6`.
@@ -666,7 +666,7 @@ Le regole sono quelle di «Firewall di Hostinger (FON-T07a)». Controllo di DOM-
   - Se li scarta, con un client che ha un tratto di rete più stretto di 1500 byte (un tunnel, una VPN, alcune linee) la connessione si apre, ma i pacchetti grandi non arrivano: per esempio il certificato TLS o una pagina. Il client resta in attesa.
   - In IPv4 può succedere lo stesso con i messaggi ICMP «Fragmentation Needed».
   - Se qualcuno segnala pagine che si bloccano solo da certe reti, si controlla prima questo.
-  - Il rimedio è una regola che accetta ICMPv6 prima della quarta. Cambia le regole di FON-T07a: si decide in un compito apposta.
+  - Il rimedio è una regola che accetta ICMPv6 prima della quarta. Cambia le regole di FON-T07a: si decide nel piano di FON-T07b, prima che arrivi traffico vero (06 §DNS, nota della revisione di DOM-T02).
 
 #### Intervalli dei webhook di Brevo
 
