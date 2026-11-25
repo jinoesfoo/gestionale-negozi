@@ -1,0 +1,37 @@
+# Caddyfile dell'immagine Caddy (06 §Caddy, DOM-T02). È copiato nell'immagine: ogni modifica di questo file è una
+# revisione nuova dell'immagine (infra/versions.env). I valori arrivano da /srv/app/env/caddy.env: BASE_DOMAIN e
+# ACME_EMAIL si sostituiscono quando Caddy legge il file; il token di Cloudflare lo legge il modulo DNS quando Caddy
+# carica la configurazione, e nella configurazione resta il segnaposto env. (06 §Caddy).
+# Gli intervalli di @email_webhook_foreign sono quelli da cui Brevo invia i webhook, controllati il 24/11/2026
+# (infra/README.md, «Caddy e certificati», DOM-T02).
+{
+	email {$ACME_EMAIL}
+	servers {
+		protocols h1 h2
+	}
+	log default {
+		output stderr
+		format filter {
+			wrap json
+			request delete
+		}
+	}
+}
+
+{$BASE_DOMAIN}, *.{$BASE_DOMAIN} {
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	request_header -x-middleware-subrequest
+	request_header -x-shop-id
+	request_header -x-nonce
+	@email_webhook_foreign {
+		host {$BASE_DOMAIN} www.{$BASE_DOMAIN}
+		path /api/webhooks/email
+		not remote_ip 1.179.112.0/20 172.246.240.0/20
+	}
+	respond @email_webhook_foreign 403
+	encode zstd gzip
+	reverse_proxy app:3000
+}

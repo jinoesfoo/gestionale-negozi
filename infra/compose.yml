@@ -8,8 +8,10 @@
 # del progetto, /srv/app: ./infra/… è la cartella infra/ del commit rilasciato.
 #
 # Ogni servizio ha il suo file di ambiente in /srv/app/env/, che scrive l'utente; ENV_DIR serve solo a
-# infra/check-ports.sh, che usa gli esempi di infra/env.example/. Compose controlla che esistano i file di tutti i
-# servizi anche quando ne avvia uno solo (DOM-T02 li crea vuoti).
+# infra/check-ports.sh, che usa gli esempi di infra/env.example/. Finché un servizio non ha il suo file vero, il
+# file c'è ma è vuoto (lo scrive l'utente in DOM-T02): con Compose v5.7.1, la versione dei server, `up` e `run`
+# controllano solo i file dei servizi scelti, ma i file vuoti servono con ogni versione di Compose (06, DOM-T02,
+# esito del [VERIFICA] su env_file).
 #
 # Solo caddy pubblica porte, 80 e 443 solo TCP (FON-008); app, worker e PostgreSQL stanno sulla rete internal, una
 # rete bridge normale (non `internal: true`: devono raggiungere Stripe, l'email, l'archivio S3 e gli altri servizi
@@ -85,6 +87,11 @@ services:
 
 networks:
   edge:
+    # IPv6 (06 §DNS, DOM-T02). Con una rete solo IPv4 Docker inoltra le connessioni IPv6 con docker-proxy, e Caddy vedrebbe
+    # l'indirizzo del gateway, uguale per tutti i client IPv6; con IPv6 sulla rete fa solo NAT di destinazione, e a Caddy
+    # arriva l'indirizzo vero. La sottorete (ULA, /64) la sceglie Docker. Creando la rete Docker accende l'inoltro IPv6:
+    # sull'host rotta e indirizzo IPv6 devono essere statici (infra/README.md, «Caddy e certificati», DOM-T02).
+    enable_ipv6: true
   internal:
 
 volumes:
