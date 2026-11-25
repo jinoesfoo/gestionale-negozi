@@ -329,7 +329,7 @@ Nel frattempo Caddy, se è in funzione, non può emettere né rinnovare i certif
 
 **Altri token.** Sull'account restano solo i token che servono. L'assistente AI del pannello («Ask AI», nella documentazione Agent Lee, prima «Cloudflare Agent») crea un token utente «Cloudflare Agent Token - <data>», con permessi ampi, quando gli si concede l'accesso (documentazione di Cloudflare, «Agent Lee» → «Manage access», letta il 17/11/2026). Se l'assistente non serve, quel token si cancella dall'elenco («⋯» → «Delete»). Se ricompare, si spegne l'assistente: «Configurations» → «Preferences» → «Cloudflare Agent». Alla richiesta di accesso di «Ask AI» non si risponde di sì, se l'assistente non serve.
 
-Token in uso: `caddy-foondaco-com` e `caddy-foondaco-it`, creati il 17/11/2026 (DOM-T01). Copia fuori linea (OPS-009): nel gestore di password e nella copia sigillata, ultimo aggiornamento 17/11/2026.
+Token in uso: `caddy-foondaco-com` e `caddy-foondaco-it`, creati il 17/11/2026 (DOM-T01). Copia fuori linea (OPS-009): nel gestore di password e nella copia sigillata, ultimo aggiornamento 25/11/2026 (valore nuovo di `caddy-foondaco-com`; quello di `caddy-foondaco-it` è del 17/11/2026).
 
 **Rotazione di un token** (utente). Caddy usa il token solo quando emette o rinnova un certificato: intanto serve quello già salvato nel volume `app_caddy_data`. Per questo «il certificato si vede ancora» non prova che il token nuovo funzioni.
 
@@ -356,6 +356,7 @@ Token in uso: `caddy-foondaco-com` e `caddy-foondaco-it`, creati il 17/11/2026 (
 
 Rotazioni, compresi i «Roll» di «Valore perso» e «Token esposto»:
 - 17/11/2026: «Roll» di `caddy-foondaco-com` e `caddy-foondaco-it` (DOM-T01, «Valore perso»: il primo valore non era stato salvato).
+- 25/11/2026: «Roll» di `caddy-foondaco-com` (DOM-T02, «Valore perso»: il valore salvato il 17/11/2026 non valeva, e Cloudflare l'ha rifiutato al primo avvio di Caddy in produzione; esito di DOM-T02, riga E4).
 
 ### 3. Record dei server (utente), su ciascuna zona
 
@@ -1829,6 +1830,10 @@ Tutti i file di `/srv/app/env/` li scrive l'utente, come `deploy` (`ssh -t <nome
 
 Compose controlla che esistano i file `env_file` di tutti i servizi anche quando ne avvia uno solo. Per questo `app.env`, `worker.env`, `migrate.env` e `postgres.env` restano vuoti finché non li sostituiscono con i file veri FON-T07b (i primi tre) e OPS-T01a (`postgres.env`).
 
+Prima di scrivere `caddy.env` si prova il token, dal proprio terminale, con il valore copiato dalla voce del gestore di password: è la prova del punto 2 della rotazione («DNS ed email», sezione 2). La prima risposta deve dire `"status":"active"`, e la zona del server deve risultare con `"count":1`. Il valore di `caddy-foondaco-com` salvato in DOM-T01 non valeva: lo si è scoperto solo al primo avvio di Caddy in produzione, quando Cloudflare l'ha rifiutato (esito di DOM-T02, riga E4). Per avere solo le righe che servono, senza i dati dell'account, si aggiunge a ogni `curl` `| grep -oE '"(success|status|count|code|message)":[^,}]*'`.
+
+Nel pannello di Cloudflare del 25/11/2026 l'elenco dei token si apre dall'icona in alto a destra → «Settings» → «API credentials» → «API tokens» (indirizzo diretto: `https://dash.cloudflare.com/profile/api-tokens`). La voce «My Profile» dei passi di «DNS ed email», sezione 2, non c'è più. La colonna «Value» dell'elenco mostra l'inizio e le ultime quattro cifre del valore di ogni token.
+
 Su ciascun server, prima il test e poi la produzione:
 
 1. `ssh -t test-admin sudo -iu deploy` (in produzione `prod-admin`), poi, **un comando alla volta**:
@@ -1871,11 +1876,13 @@ Su ciascun server, prima il test e poi la produzione:
    exit
    ```
    Se un numero è diverso, si riscrive il file dal punto 1. Il primo `printf`, con `>`, lo ricomincia da capo.
+
+   Dopo un «Roll» si controlla anche, prima di `exit`, che sul server ci sia il valore nuovo: `grep -c '^CF_API_TOKEN=cfut_.*<ultime quattro cifre>$' /srv/app/env/caddy.env` risponde `1`. Al posto di `<ultime quattro cifre>` si scrivono quelle che Cloudflare mostra per il token nella colonna «Value».
 3. Copia fuori linea (OPS-009): i tre valori di `caddy.env` vanno nel gestore di password e nella copia sigillata. L'utente risponde «fatto», e Claude annota qui la data.
 
 Copia fuori linea di `caddy.env`, nella voce del token nel gestore di password e nella copia sigillata, con l'appunto di `BASE_DOMAIN` e `ACME_EMAIL`:
 - server di test: 24/11/2026;
-- produzione: 24/11/2026.
+- produzione: 24/11/2026; il 25/11/2026 il token nuovo, dopo il «Roll» (esito, riga E4).
 
 ### OPS-T01a
 
