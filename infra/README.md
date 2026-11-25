@@ -1924,7 +1924,53 @@ _Da scrivere in OPS-T11:_ procedura generale di rotazione di ogni segreto, con u
 
 ### NEG-T09
 
-_Da scrivere in NEG-T09:_ rotazione di `SHOP_SECRETS_KEY`.
+Rotazione di `SHOP_SECRETS_KEY` (02 §Segreti per negozio, nota (7) di NEG-T09). La chiave cifra la tabella `shop_secrets`. La hanno solo `app` e `worker`, che devono avere la stessa, e non sta né nel database né nei backup (00 R-DATI-10).
+
+**Quando vale.** Solo finché nessun modulo scrive segreti reali. In fase 0 nessuna pagina e nessun lavoro scrive segreti, quindi ruotare la chiave vuol dire cambiarla e svuotare la tabella. Il compito che scrive il primo segreto reale scrive anche il comando `secrets:rotate-shop-key`, che ricifra le righe, e sostituisce questa sottosezione. La procedura non si esegue durante un rilascio né durante il controllo di separazione (C12), che scrive e cancella righe di prova. Ogni server ha la sua chiave: quella del server di test non si copia mai in produzione, e viceversa.
+
+La procedura la esegue l'utente, perché i file di ambiente sono suoi. Si lavora su un server alla volta, come `deploy` (`ssh -t <nome>-admin sudo -iu deploy`, poi `hostname` e `whoami`, come in «Accessi e server»). Si passa al passo successivo solo se il controllo del passo dà l'esito atteso. Nessun comando sul server stampa la chiave: la mostra solo `openssl`, al passo 2, nel proprio terminale.
+
+1. **Che cosa c'è nella tabella.**
+   ```bash
+   /srv/app/dc exec -u postgres postgres psql -d app -tAc "SELECT name, count(*) FROM public.shop_secrets GROUP BY name ORDER BY name"
+   ```
+   Il comando stampa solo nomi e numeri, che non sono segreti. Deve rispondere niente, oppure solo `fixture_isolation|<numero>`: sono le righe inerti lasciate da un `isolation-check` interrotto. Con un altro nome ci si ferma senza toccare chiave, file e tabella: c'è un segreto vero, e la rotazione si fa con `secrets:rotate-shop-key`, da scrivere prima.
+2. **La chiave nuova**, nel proprio terminale e non sul server: `openssl rand -base64 32`. Va subito nel gestore di password, con il nome del server e la data, e mai in chat né in un file del progetto. Deve essere diversa dalla chiave dell'altro server e da `JOB_PAYLOAD_KEY`. Controllo: si salva la voce e la si riapre, per vedere che il valore ci sia intero (come al punto 6 dei token di DOM-T01).
+3. **I file di ambiente**, con la procedura di «File di ambiente dei server» (copia e `mv`):
+   ```bash
+   cp -p /srv/app/env/app.env /srv/app/env/app.env.nuovo
+   cp -p /srv/app/env/worker.env /srv/app/env/worker.env.nuovo
+   ```
+   In ciascuna copia si sostituisce la riga `SHOP_SECRETS_KEY=…` con la chiave nuova: una sola riga, senza apici né spazi, e nessun'altra modifica. Poi, sulle copie e prima del `mv`, quattro controlli per ciascuno dei due file, che non stampano valori. Per `app.env.nuovo`:
+   - `grep -c '^[^#]*SHOP_SECRETS_KEY' /srv/app/env/app.env.nuovo` risponde `1`: c'è una sola riga della chiave, senza contare i commenti;
+   - `grep -cE '^SHOP_SECRETS_KEY=[A-Za-z0-9+/]{43}=$' /srv/app/env/app.env.nuovo` risponde `1`: la riga ha la forma che app e worker accettano, 32 byte in base64;
+   - `cmp -s <(grep '^SHOP_SECRETS_KEY=' /srv/app/env/app.env) <(grep '^SHOP_SECRETS_KEY=' /srv/app/env/app.env.nuovo) && echo UGUALE || echo cambiata` risponde `cambiata`. Una copia non modificata, o la chiave vecchia incollata di nuovo, risponde `UGUALE`;
+   - `cmp -s <(grep -v '^SHOP_SECRETS_KEY=' /srv/app/env/app.env) <(grep -v '^SHOP_SECRETS_KEY=' /srv/app/env/app.env.nuovo) && echo resto-uguale || echo RESTO-CAMBIATO` risponde `resto-uguale`: tutte le altre righe, commenti compresi, sono come nel file in uso. Una riga tagliata o un carattere cambiato altrove fermerebbe app o worker al passo 4, oppure li farebbe partire con un valore sbagliato che il passo 4 non vede; risponde `RESTO-CAMBIATO` anche se la chiave vecchia è rimasta in un commento.
+
+   Per `worker.env.nuovo`, gli stessi quattro controlli:
+   - `grep -c '^[^#]*SHOP_SECRETS_KEY' /srv/app/env/worker.env.nuovo` risponde `1`;
+   - `grep -cE '^SHOP_SECRETS_KEY=[A-Za-z0-9+/]{43}=$' /srv/app/env/worker.env.nuovo` risponde `1`;
+   - `cmp -s <(grep '^SHOP_SECRETS_KEY=' /srv/app/env/worker.env) <(grep '^SHOP_SECRETS_KEY=' /srv/app/env/worker.env.nuovo) && echo UGUALE || echo cambiata` risponde `cambiata`;
+   - `cmp -s <(grep -v '^SHOP_SECRETS_KEY=' /srv/app/env/worker.env) <(grep -v '^SHOP_SECRETS_KEY=' /srv/app/env/worker.env.nuovo) && echo resto-uguale || echo RESTO-CAMBIATO` risponde `resto-uguale`.
+
+   Con un esito diverso si corregge la copia e si rifanno i suoi controlli. Poi si sostituiscono i file e si controlla che app e worker abbiano la stessa chiave:
+   ```bash
+   mv /srv/app/env/app.env.nuovo /srv/app/env/app.env
+   mv /srv/app/env/worker.env.nuovo /srv/app/env/worker.env
+   cmp -s <(grep '^SHOP_SECRETS_KEY=' /srv/app/env/app.env) <(grep '^SHOP_SECRETS_KEY=' /srv/app/env/worker.env) && echo uguali || echo DIVERSE
+   ```
+   L'ultimo comando risponde `uguali`. Con `DIVERSE`, app e worker usano ancora i file di prima, perché non sono stati ricreati: si rifà la copia del solo file la cui chiave non è quella salvata nel gestore di password, con i suoi quattro controlli, poi il `mv`, e si ripete il confronto. Si passa al passo 4 solo con `uguali`.
+4. **App e worker ricreati**, perché rileggano i file: `/srv/app/dc up -d --force-recreate app worker`. Un `restart` non basta: Compose rilegge `env_file` solo quando ricrea il container. All'avvio app e worker controllano la forma della chiave e che sia diversa da `JOB_PAYLOAD_KEY`, e altrimenti non partono. Controllo, dopo una ventina di secondi: `/srv/app/dc ps app worker` mostra per tutti e due, nella colonna «CREATED», un container di pochi secondi o di un minuto fa, e nella colonna «STATUS» «Up» da almeno 20 secondi, non «Restarting». Se uno dei due non è «Up» ci si ferma prima del passo 5: `/srv/app/dc logs --tail 50 app` (o `worker`) dice quale variabile non va, senza il valore. La si corregge con una copia nuova del file e un `mv`: i valori stanno nel gestore di password e nella copia sigillata, compresa la chiave vecchia fino al passo 6, e le righe della tabella restano cifrate con la chiave vecchia finché non si fa il passo 5. Se la chiave non si tocca, prima del `mv` i suoi controlli rispondono `1`, `1` e `UGUALE`. Poi si rifà il passo 4.
+5. **La tabella svuotata**, come superuser di PostgreSQL, che salta la RLS (la forma di 09 C26). Si cancellano solo le righe di prova, poi si contano tutte le righe:
+   ```bash
+   /srv/app/dc exec -u postgres postgres psql -d app -c "DELETE FROM public.shop_secrets WHERE name = 'fixture_isolation'"
+   /srv/app/dc exec -u postgres postgres psql -d app -tAc 'SELECT count(*) FROM public.shop_secrets'
+   ```
+   Il secondo comando risponde `0`: la tabella è vuota. Le righe cifrate con la chiave vecchia non si decifrerebbero più, e dopo il passo 1 restano solo righe di prova; per questo la cancellazione non scrive nel registro. Con un numero diverso da `0`, fra il passo 1 e questo è comparso un segreto vero: non si cancella altro, ci si ferma e si rifà il passo 1 per vederne il nome. Il segreto è cifrato con la chiave vecchia o con la nuova a seconda di quando è stato scritto, e lo sistema `secrets:rotate-shop-key`, da scrivere prima.
+6. **Ultimo passo: la copia fuori linea** (OPS-009). Nel gestore di password e nella copia sigillata, la chiave nuova di quel server prende il posto della vecchia, che si toglie: con la tabella vuota nessuna riga ne ha bisogno. Poi si aggiunge una riga a «Rotazioni» qui sotto, con la data della rotazione e dell'aggiornamento della copia fuori linea e il server. Backup, copia specchio e snapshot di prima della rotazione non richiedono passi finché vale questa procedura. Come trattare la chiave vecchia quando ci saranno segreti reali lo decide il compito che scrive `secrets:rotate-shop-key`.
+
+Rotazioni di `SHOP_SECRETS_KEY` (data, server):
+- nessuna.
 
 ## Amministratori e secondo fattore
 
