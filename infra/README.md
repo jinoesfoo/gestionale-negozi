@@ -535,7 +535,9 @@ Dalla cartella del progetto, con `infra/caddy/` uguale al commit da annotare (`g
 2. Versioni:
    - `docker run --rm IMG caddy version` comincia con `v2.11.9`;
    - `docker run --rm IMG caddy list-modules --versions --skip-standard` elenca un solo modulo non standard, `dns.providers.cloudflare v0.2.4`.
-3. Caddyfile nell'immagine: l'impronta di `docker run --rm --entrypoint sha256sum IMG /etc/caddy/Caddyfile` è uguale a quella di `git show <commit>:infra/caddy/Caddyfile | sha256sum`.
+3. Caddyfile nell'immagine: l'impronta di `docker run --rm --entrypoint sha256sum IMG /etc/caddy/Caddyfile` è uguale a quella di `git show <commit>:infra/caddy/Caddyfile | sha256sum`. Poi:
+   - confronto byte per byte con il file del ramo: `docker run --rm --network none -v ./infra/caddy/Caddyfile:/ramo/Caddyfile:ro --entrypoint cmp IMG /etc/caddy/Caddyfile /ramo/Caddyfile` non stampa nulla;
+   - dalla seconda revisione in poi, la differenza dalla revisione precedente: `docker run --rm --network none -v ./infra/caddy/Caddyfile:/ramo/Caddyfile:ro --entrypoint diff ghcr.io/jinoesfoo/gestionale-negozi-caddy:<tag precedente> /etc/caddy/Caddyfile /ramo/Caddyfile` stampa solo le righe cambiate, ed esce con 1. Fra `2.11.9-1` e `2.11.9-2` la riga è una sola, la 36: `respond "In arrivo - {remote_host}" 200` → `reverse_proxy app:3000` (esito, riga F5).
 4. Configurazione, senza rete e con valori finti: `docker run --rm --network none -e BASE_DOMAIN=prova.invalid -e ACME_EMAIL=prova@prova.invalid -e CF_API_TOKEN=cfut_<40 x> IMG caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` risponde «Valid configuration».
    - `<40 x>` sono quaranta lettere `x`.
    - Il token finto deve avere la forma che il modulo accetta: `cfut_` o `cfat_`, poi da 32 a 256 caratteri fra lettere, cifre, `_` e `-`. Con un valore di un'altra forma il modulo si ferma con «appears invalid» e stampa il valore.
@@ -578,11 +580,13 @@ Prima il server di test, poi la produzione: lì si scrive `prod` al posto di `te
 2. `ssh test docker pull ghcr.io/jinoesfoo/gestionale-negozi-caddy:2.11.9-1`: il digest è quello della tabella.
 3. Copia di `infra/` del commit corrente, con `git status --short --ignored infra` vuoto:
    - copia: `rsync -rlpt --delete infra/ test:/srv/app/infra/`;
-   - controllo: `rsync -rlpcn --delete --itemize-changes infra/ test:/srv/app/infra/` non stampa nulla.
+   - controllo: `rsync -rlpcn --delete --itemize-changes infra/ test:/srv/app/infra/` non stampa nulla;
+   - rete `edge` con IPv6 nella copia: `ssh test grep -c enable_ipv6 /srv/app/infra/compose.yml` risponde `1`.
 
    Il commit si annota nell'esito.
 4. `/srv/app/.env`: `ssh test 'printf "CADDY_TAG=2.11.9-1\nAPP_TAG=bootstrap\nPOSTGRES_TAG=bootstrap\n" > /srv/app/.env'`, poi `ssh test cat /srv/app/.env`.
    - Se il controllo automatico di Claude Code ferma la lettura, perché il file si chiama `.env` (è successo il 24/11/2026), si controlla per impronta: `ssh test sha256sum /srv/app/.env` deve dare `35bf9ab9919ab65b0bcfcaca716b26375a60bf251db82acf2eaed672d7496d4e`, la stessa di `printf "CADDY_TAG=2.11.9-1\nAPP_TAG=bootstrap\nPOSTGRES_TAG=bootstrap\n" | sha256sum` su yoo.
+   - Proprietario: `ssh test 'stat -c "%U %a %F" /srv/app/.env'` risponde `deploy 664 regular file`.
    - I tre tag servono a Compose per caricare il progetto, anche per un solo servizio (FON-002).
    - `APP_TAG` lo aggiorna FON-T07b, `POSTGRES_TAG` lo aggiorna OPS-T01a.
    - Il file contiene solo tag, non segreti.
@@ -1828,7 +1832,7 @@ Tutti i file di `/srv/app/env/` li scrive l'utente, come `deploy` (`ssh -t <nome
 
 `caddy.env` e i quattro file vuoti, scritti dall'utente prima del primo avvio di Caddy su quel server (06, DOM-T02).
 
-Compose controlla che esistano i file `env_file` di tutti i servizi anche quando ne avvia uno solo. Per questo `app.env`, `worker.env`, `migrate.env` e `postgres.env` restano vuoti finché non li sostituiscono con i file veri FON-T07b (i primi tre) e OPS-T01a (`postgres.env`).
+Ci sono anche `app.env`, `worker.env`, `migrate.env` e `postgres.env`, vuoti finché non li sostituiscono con i file veri FON-T07b (i primi tre) e OPS-T01a (`postgres.env`). Con Compose v5.7.1, la versione dei server, `up` e `run` controllano solo i file `env_file` dei servizi scelti: i file vuoti servono comunque con ogni versione di Compose e non costano nulla (06, DOM-T02, esito del [VERIFICA] su `env_file`). Non si usa `env_file` con `required: false`, perché un file mancante passerebbe in silenzio.
 
 Prima di scrivere `caddy.env` si prova il token, dal proprio terminale, con il valore copiato dalla voce del gestore di password: è la prova del punto 2 della rotazione («DNS ed email», sezione 2). La prima risposta deve dire `"status":"active"`, e la zona del server deve risultare con `"count":1`. Il valore di `caddy-foondaco-com` salvato in DOM-T01 non valeva: lo si è scoperto solo al primo avvio di Caddy in produzione, quando Cloudflare l'ha rifiutato (esito di DOM-T02, riga E4). Per avere solo le righe che servono, senza i dati dell'account, si aggiunge a ogni `curl` `| grep -oE '"(success|status|count|code|message)":[^,}]*'`.
 
