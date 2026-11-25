@@ -523,7 +523,7 @@ Il tag è la versione di Caddy, un trattino e il numero di revisione (06 §Compi
 | Tag | Caddyfile | Commit | Digest | Pubblicata | Dove gira |
 |---|---|---|---|---|---|
 | `2.11.9-1` | di avvio: `respond "In arrivo - {remote_host}" 200` al posto di `reverse_proxy app:3000`, unica riga diversa | `082e5fc` | `sha256:58ad41dca747143904e76c5b1372273ad89443917904d3859f8097103550bc5a` | 24/11/2026 | server di test e produzione, fino a FON-T07b |
-| `2.11.9-2` | quello del repository, con `reverse_proxy app:3000` | _(da annotare)_ | _(da annotare)_ | _(da annotare)_ | nessuno: la mette in servizio FON-T07b |
+| `2.11.9-2` | quello del repository, con `reverse_proxy app:3000` | `0aa6289` | `sha256:49f16de0dda82b10c3a9af19c0efa50e16053b6a20a018f3c81b68c820e46ec7` | 25/11/2026 | nessuno, è solo scaricata sul server di test: la mette in servizio FON-T07b |
 
 La revisione di avvio esiste solo in un commit del ramo `dom-t02`, con il Caddyfile di avvio e `CADDY_TAG=2.11.9-1`. Il commit successivo ha rimesso la riga del `reverse_proxy` e `CADDY_TAG=2.11.9-2`. La risposta di avvio mostra a chi chiama il proprio indirizzo, come lo vede Caddy: così si prova che arriva l'indirizzo vero del client, in IPv4 e in IPv6 (06 §DNS).
 
