@@ -68,3 +68,24 @@ Le prove «dall'altro server» per il server di test sono lanciate da `prod`, og
 | E11 | Riuscito (24/11/2026, dalla produzione): `/api/webhooks/email` → `403` sulla radice e su `www`, in IPv4 e in IPv6. | Riuscito (25/11/2026, da `test`): `/api/webhooks/email` → `403` sulla radice e su `www`, in IPv4 e in IPv6. |
 | E12 | Riuscito (24/11/2026, dalla produzione): `curl -sv --resolve esempio.invalid:443:145.14.158.72 https://esempio.invalid/` → «TLSv1.3 (IN), TLS alert, internal error (592)» e «TLS connect error: error:0A000438:SSL routines::tlsv1 alert internal error», uscita 35; nessuna risposta HTTP. | Riuscito (25/11/2026, da `test`): `curl -sv --resolve esempio.invalid:443:91.108.122.251 https://esempio.invalid/` → «TLSv1.3 (IN), TLS alert, internal error (592)» e «TLS connect error: error:0A000438:SSL routines::tlsv1 alert internal error», uscita 35; nessuna risposta HTTP. |
 | E13 | Riuscito (24/11/2026):<br>- `docker network inspect`: `app_edge` con `EnableIPv6=true` e sottoreti `172.18.0.0/16` e `fd2c:3305:c34d::/64`; `app_internal` con `EnableIPv6=false` e `172.19.0.0/16`;<br>- `net.ipv6.conf.all.forwarding = 1` (prima dell'avvio `0`);<br>- `ip -6 route show default` → `default via 2a02:4780:d::1 dev eth0 proto static metric 1024 pref medium`; `ip -6 addr show scope global` per `eth0` → `2a02:4780:d:8458::1/48`, `valid_lft forever preferred_lft forever`, senza `dynamic`. Uguali ad A1 e a prima dell'avvio;<br>- in più c'è il ponte della rete `edge`, con `fd2c:3305:c34d::1/64` (`scope global nodad`): l'indirizzo di Docker nella sottorete ULA. | Riuscito (24/11/2026):<br>- `docker network inspect`: `app_edge` con `EnableIPv6=true` e sottoreti `172.18.0.0/16` e `fd76:3808:b05f::/64`; `app_internal` con `EnableIPv6=false` e `172.19.0.0/16`;<br>- `net.ipv6.conf.all.forwarding = 1` (prima dell'avvio `0`);<br>- `ip -6 route show default` → `default via 2a02:4780:c::1 dev eth0 proto static metric 1024 pref medium`; `ip -6 addr show scope global` per `eth0` → `2a02:4780:c:f90c::1/48`, `valid_lft forever preferred_lft forever`, senza `dynamic`. Uguali ad A1 e a prima dell'avvio;<br>- in più c'è il ponte della rete `edge`, con `fd76:3808:b05f::1/64` (`scope global nodad`). |
+
+## F. Revisione con il `reverse_proxy`, `2.11.9-2`
+
+| # | Esito |
+|---|---|
+| F1 | Riuscito (25/11/2026): `docker build -t ghcr.io/jinoesfoo/gestionale-negozi-caddy:2.11.9-2 infra/caddy` dal commit `7b8a3ab`, con `git status --short infra/caddy` vuoto. `infra/caddy/` è quella del commit `0aa6289`, l'ultimo che l'ha cambiata: rispetto a `082e5fc` (B2) cambia solo la riga del `reverse_proxy`. Immagini di base con gli stessi digest di B3. La fase `builder` (`xcaddy build --with github.com/caddy-dns/cloudflare@v0.2.4`) e la copia del binario vengono dalla cache della costruzione di B3: il binario di Caddy è lo stesso della `2.11.9-1`, cambia solo lo strato del Caddyfile. Indice dell'immagine locale `sha256:49f16de0dda82b10c3a9af19c0efa50e16053b6a20a018f3c81b68c820e46ec7`. |
+| F2 | Riuscito (25/11/2026): `caddy version` → `v2.11.9 h1:bhZtcRKQOq0fuLvEgCdPYvUxXyGn9kzjG4lh2332DTE=`; `caddy list-modules --versions --skip-standard` → `dns.providers.cloudflare v0.2.4`, «Non-standard modules: 1». Come in B4. Impronta di `/etc/caddy/Caddyfile` nell'immagine `8acd375b72560ddf2950fc1bcac3a82f345c8a807865c70021b3ee577f5f8b35`, uguale a quella di `infra/caddy/Caddyfile` del ramo. In più, `cmp` dentro un container dell'immagine, fra `/etc/caddy/Caddyfile` e il Caddyfile del ramo montato in sola lettura, non stampa nulla ed esce con 0: i due file sono identici byte per byte. |
+| F3 | _(da fare)_ |
+| F4 | Riuscito (25/11/2026): `docker run --rm --network none -v ./tests/infra/caddy-log:/prova:ro ghcr.io/jinoesfoo/gestionale-negozi-caddy:2.11.9-2 sh /prova/prova.sh` → `Prove: 16, come attese: 16, diverse: 0`. |
+| F5 | Riuscito (25/11/2026): `diff` dentro un container della `2.11.9-1`, fra il suo `/etc/caddy/Caddyfile` e il Caddyfile del ramo montato in sola lettura, che è identico a quello della `2.11.9-2` (F2). Una sola riga diversa, la 36: `respond "In arrivo - {remote_host}" 200` nella `2.11.9-1`, `reverse_proxy app:3000` nella `2.11.9-2`. L'impronta del Caddyfile della `2.11.9-1` è ancora `da5fdccd0d447d2f178f8d56801b22fbbfae5ef28b095e12a3d8c2e308ace7f0`, quella di B5. |
+| F6 | _(da fare)_ |
+| F7 | _(da fare)_ |
+
+## G. Chiusura
+
+| # | Esito |
+|---|---|
+| G1 | _(da fare)_ |
+| G2 | _(da fare)_ |
+| G3 | _(da fare)_ |
+| G4 | _(da fare)_ |
