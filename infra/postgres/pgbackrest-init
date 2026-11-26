@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# pgbackrest-init: the command of the one-shot Compose service pgbackrest-init (specs/08-operativita.md, §pgBackRest,
+# «Primo avvio», and the plan notes of OPS-T01a, «Script nell'immagine»; 01 §Servizi). Installed in the PostgreSQL
+# image as /usr/local/bin/pgbackrest-init; it runs as postgres after postgres is healthy, and app and worker wait for
+# it to end successfully.
+#
+#   pgbackrest-init [<indicator file>]      (default /var/lib/postgresql/.pgbackrest-stanza-ok, on the volume pgdata)
+#
+# - With the indicator file it ends at once with status 0, without any call to the bucket: so an outage of the backup
+#   provider never blocks `up -d`, a release or a rollback.
+# - Otherwise it reads the state of the stanza with pgbackrest-summary; with the stanza missing (code 1) it runs
+#   stanza-create; with codes 0 and 2 it goes on; with any other code it stops. Then `check` (with a wider archive
+#   timeout: after the failures from before the stanza, PostgreSQL's archiver retries at intervals). When both
+#   succeed it writes the indicator file, through a temporary file renamed onto it.
+# Every line it prints itself starts with «pgbackrest-init: », one per step: FON-T07b reads them in the logs to see
+# whether the bucket was called (01, FON-T07b, plan note of OPS-T01a). stanza-create and check print their own start
+# and end lines (--log-level-console=info), with <redacted> in place of keys, secret and repo1-cipher-pass.
+#
+# Exit status: 0 indicator present or written; 1 anything else.
+set -u -o pipefail
+
+indicator=${1:-/var/lib/postgresql/.pgbackrest-stanza-ok}
+
+if [ -f "$indicator" ]; then
+  echo 'pgbackrest-init: file indicatore presente: nessuna chiamata al bucket'
+  exit 0
+fi
+
+code=0
+summary=$(pgbackrest-summary) || code=$?
+if [ "$code" -ne 0 ]; then
+  echo "pgbackrest-init: errore: pgbackrest-summary terminato con codice $code" >&2
+  exit 1
+fi
+
+first=${summary%%$'\n'*}
+if ! [[ $first =~ ^stanza\ ([0-9]+)(\ \[[A-Za-z]+\])?$ ]]; then
+  echo 'pgbackrest-init: errore: risposta di pgbackrest-summary non riconosciuta' >&2
+  exit 1
+fi
+stanza_code=${BASH_REMATCH[1]}
+echo "pgbackrest-init: info: $first"
+
+case $stanza_code in
+  1)
+    echo 'pgbackrest-init: stanza-create'
+    code=0
+    pgbackrest --stanza=main --log-level-console=info stanza-create || code=$?
+    if [ "$code" -ne 0 ]; then
+      echo "pgbackrest-init: errore: stanza-create terminato con codice $code" >&2
+      exit 1
+    fi
+    ;;
+  0 | 2) ;;
+  *)
+    echo "pgbackrest-init: errore: $first" >&2
+    exit 1
+    ;;
+esac
+
+echo 'pgbackrest-init: check'
+code=0
+pgbackrest --stanza=main --log-level-console=info --archive-timeout=300 check || code=$?
+if [ "$code" -ne 0 ]; then
+  echo "pgbackrest-init: errore: check terminato con codice $code" >&2
+  exit 1
+fi
+
+# The indicator through a temporary file in the same folder, renamed onto it: never a half-written indicator.
+folder=$(dirname -- "$indicator")
+if ! temporary=$(mktemp -- "$folder/.pgbackrest-stanza-ok.XXXXXX"); then
+  echo "pgbackrest-init: errore: file temporaneo non creato in $folder" >&2
+  exit 1
+fi
+if ! printf 'stanza main creata e controllata da pgbackrest-init il %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+  >"$temporary" || ! mv -f -- "$temporary" "$indicator"; then
+  rm -f -- "$temporary"
+  echo "pgbackrest-init: errore: file indicatore non scritto ($indicator)" >&2
+  exit 1
+fi
+echo 'pgbackrest-init: file indicatore scritto'

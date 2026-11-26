@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# pgbackrest-summary: a short summary of `pgbackrest info` for the scripts of the project (specs/08-operativita.md,
+# §pgBackRest and the plan notes of OPS-T01a, «Script nell'immagine»). Installed in the PostgreSQL image as
+# /usr/local/bin/pgbackrest-summary; used by pgbackrest-init, by infra/scripts/backup.sh and by
+# infra/scripts/check-pgbackrest-repo.sh. No arguments.
+#
+# 1. It checks the six variables of postgres.env that pgBackRest reads from the environment (01 §Variabili
+#    d'ambiente): each must be set and not empty, none may still contain the placeholder CAMBIA, and the endpoint is
+#    only the host (no "://": with "http://" pgBackRest would silently drop TLS). One line per problem on stderr,
+#    with the name and never the value; then exit status 2, without calling pgBackRest.
+# 2. It runs `pgbackrest --stanza=main info --output=json`. pgBackRest prints warnings about PGBACKREST_* variables on
+#    stdout before the JSON, so only the last non-empty line is read; its own warnings go to stderr.
+# 3. On stdout, and only when the whole answer is understood: «stanza <code>» (for code 99 also the bracketed error
+#    type that starts the message of the repository, such as «[ProtocolError]», never the rest of that message, which
+#    can carry host and bucket names), then one line per backup, oldest first: «backup <label> <type> <bytes of this
+#    backup in the repository>».
+#
+# Exit status: 0 summary printed (whatever the stanza code: the caller decides), 1 pgBackRest failed or its answer was
+# not understood, 2 configuration not valid.
+set -u -o pipefail
+
+names=(
+  PGBACKREST_REPO1_S3_ENDPOINT
+  PGBACKREST_REPO1_S3_BUCKET
+  PGBACKREST_REPO1_S3_REGION
+  PGBACKREST_REPO1_S3_KEY
+  PGBACKREST_REPO1_S3_KEY_SECRET
+  PGBACKREST_REPO1_CIPHER_PASS
+)
+invalid=0
+for name in "${names[@]}"; do
+  value=${!name-}
+  if [ -z "$value" ]; then
+    printf 'pgbackrest-summary: %s: manca o è vuota\n' "$name" >&2
+    invalid=1
+    continue
+  fi
+  if [[ $value == *CAMBIA* ]]; then
+    printf 'pgbackrest-summary: %s: contiene CAMBIA\n' "$name" >&2
+    invalid=1
+  fi
+  if [ "$name" = PGBACKREST_REPO1_S3_ENDPOINT ] && [[ $value == *://* ]]; then
+    printf 'pgbackrest-summary: %s: contiene ://\n' "$name" >&2
+    invalid=1
+  fi
+done
+unset value
+if [ "$invalid" -ne 0 ]; then
+  echo 'pgbackrest-summary: configurazione di pgBackRest non valida: nessuna chiamata al bucket' >&2
+  exit 2
+fi
+
+code=0
+out=$(pgbackrest --stanza=main --log-level-console=off --log-level-stderr=warn --output=json info) || code=$?
+if [ "$code" -ne 0 ]; then
+  echo "pgbackrest-summary: pgbackrest info terminato con codice $code" >&2
+  exit 1
+fi
+
+# The JSON is the last non-empty line; jq fails (and nothing is printed) when any part of the answer is missing.
+filter='
+  def need(test): if test then . else error("risposta incompleta") end;
+  need(type == "array" and length > 0)
+  | .[0]
+  | need(type == "object")
+  | (.status.code | need(type == "number")) as $code
+  | (if $code == 99
+      then ((.repo[0].status.message? // "") | if type == "string" then (capture("^(?<t>\\[[A-Za-z]+\\])")? // {t: ""}).t else "" end)
+      else ""
+      end) as $type
+  | "stanza \($code)\(if $type == "" then "" else " " + $type end)",
+    ((.backup // []) | need(type == "array") | .[]
+      | need(type == "object")
+      | (.label | need(type == "string" and length > 0)) as $label
+      | (.type | need(type == "string" and length > 0)) as $kind
+      | (.info.repository.delta | need(type == "number")) as $delta
+      | "backup \($label) \($kind) \($delta)")
+'
+last=$(printf '%s\n' "$out" | awk 'NF { last = $0 } END { print last }')
+if ! lines=$(printf '%s\n' "$last" | jq -r "$filter" 2>/dev/null) || [ -z "$lines" ]; then
+  echo 'pgbackrest-summary: risposta di pgbackrest info non riconosciuta' >&2
+  exit 1
+fi
+printf '%s\n' "$lines"

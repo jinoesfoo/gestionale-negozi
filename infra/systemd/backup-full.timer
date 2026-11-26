@@ -1,0 +1,14 @@
+# Backup completo di PostgreSQL ogni domenica alle 3:30, ora di Roma (08, OPS-002; OPS-T01a): un'ora che esiste una
+# volta sola ogni notte, anche con il cambio dell'ora legale (02:00–02:59). Timer dell'utente deploy, installato con
+# backup@.service (infra/README.md, «PostgreSQL e backup», OPS-T01a). Persistent=false: un backup saltato perché il
+# server era spento non si recupera all'accensione, lo segnala /api/health/deep (OPS-010).
+[Unit]
+Description=Backup completo di PostgreSQL, la domenica alle 3:30 (Europe/Rome)
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00 Europe/Rome
+Unit=backup@full.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target
