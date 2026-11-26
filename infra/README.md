@@ -2030,11 +2030,11 @@ Le sei password nuove sono di 64 caratteri, solo cifre e lettere da `a` a `f` (`
 
 Su ciascun server, prima il test e poi la produzione:
 
-1. Valori nuovi, nel tuo terminale di yoo, non sul server. Sei volte, un comando alla volta:
+1. Valori nuovi, nel tuo terminale di yoo, non sul server. Un `openssl rand -hex 32` stampa un solo valore, e ne servono sei, uno per campo; questo comando li stampa tutti e sei, ciascuno con il nome del suo campo:
    ```bash
-   openssl rand -hex 32
+   for n in POSTGRES_PASSWORD APP_OWNER_PASSWORD APP_USER_PASSWORD APP_WORKER_PASSWORD APP_JOBS_PASSWORD PGBACKREST_REPO1_CIPHER_PASS; do printf '%s: %s\n' "$n" "$(openssl rand -hex 32)"; done
    ```
-   Ogni volta copia la riga stampata in un campo di una voce nuova del gestore di password, per esempio `postgres.env · test` (in produzione `postgres.env · prod`). I campi sono sei, uno per valore: `POSTGRES_PASSWORD`, `APP_OWNER_PASSWORD`, `APP_USER_PASSWORD`, `APP_WORKER_PASSWORD`, `APP_JOBS_PASSWORD`, `PGBACKREST_REPO1_CIPHER_PASS`. Salva la voce, poi aggiorna la copia sigillata con la stessa voce. Questi valori non vanno mai in chat né in una schermata.
+   Seleziona e copia le sei righe tutte insieme, e incollale nel testo di una voce nuova del gestore di password di tipo **nota** («Secure note», «Nota sicura» o «Note»), con il titolo `postgres.env · test` (in produzione `postgres.env · prod`). Salva la voce, poi aggiorna la copia sigillata con le stesse sei righe, e pulisci lo schermo con `clear`. Questi valori non vanno mai in chat né in una schermata.
 2. `ssh -t test-admin sudo -iu deploy` (in produzione `prod-admin`), poi, **un comando alla volta**:
    ```bash
    hostname                      # srv2155002 per il test, srv1874119 per la produzione
@@ -2042,7 +2042,7 @@ Su ciascun server, prima il test e poi la produzione:
    umask 077
    printf 'POSTGRES_DB=app\nPOSTGRES_USER=postgres\n' > /srv/app/env/postgres.env.nuovo
    ```
-   Poi le cinque password, una riga alla volta. Dopo ogni `read -rs V` il terminale aspetta: incolla il valore del campo con lo stesso nome nella voce `postgres.env · test` (in produzione `postgres.env · prod`) e premi Invio. Il valore non si vede. Non incollare più righe insieme: il `read` prenderebbe come valore la riga seguente.
+   Poi le cinque password, una riga alla volta. Dopo ogni `read -rs V` il terminale aspetta: nella nota `postgres.env · test` (in produzione `postgres.env · prod`), sulla riga con lo stesso nome, un doppio clic sul valore (i 64 caratteri dopo `: `) lo seleziona tutto; lo si copia, lo si incolla nel terminale e si preme Invio. Il valore non si vede. Non incollare più righe insieme: il `read` prenderebbe come valore la riga seguente.
    ```bash
    read -rs V && printf 'POSTGRES_PASSWORD=%s\n' "$V" >> /srv/app/env/postgres.env.nuovo && unset V
    read -rs V && printf 'APP_OWNER_PASSWORD=%s\n' "$V" >> /srv/app/env/postgres.env.nuovo && unset V
@@ -2057,7 +2057,7 @@ Su ciascun server, prima il test e poi la produzione:
    Poi la chiave del bucket e la password di cifratura, come sopra:
    - Access key della voce `Hetzner S3 · backup-test · pgbackrest-test` (in produzione `… backup-prod · pgbackrest-prod`);
    - Secret key della stessa voce;
-   - `PGBACKREST_REPO1_CIPHER_PASS` della voce `postgres.env · test` (in produzione `postgres.env · prod`).
+   - `PGBACKREST_REPO1_CIPHER_PASS` della nota `postgres.env · test` (in produzione `postgres.env · prod`), con il doppio clic come sopra.
    ```bash
    read -rs V && printf 'PGBACKREST_REPO1_S3_KEY=%s\n' "$V" >> /srv/app/env/postgres.env.nuovo && unset V
    read -rs V && printf 'PGBACKREST_REPO1_S3_KEY_SECRET=%s\n' "$V" >> /srv/app/env/postgres.env.nuovo && unset V

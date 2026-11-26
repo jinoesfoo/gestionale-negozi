@@ -18,7 +18,7 @@ Ritorno ai test del 26/11/2026, dalla fase codice. Prima della prova in locale C
 |---|---|
 | B1 | _Da rifare sul commit finale, dopo il ritorno ai test._ Il 26/11/2026, sul commit di B2: `pnpm lint` e `pnpm typecheck` verdi, `pnpm test` 1242 su 1242. |
 | B2 | Commit `b445a514af361a91a809600ba25652c8815cf132` («OPS-T01a: immagine PostgreSQL con pgBackRest, pgbackrest-init, backup.sh e timer»), 26/11/2026. Dopo, solo `infra/scripts/backup.sh` (`timeout 330m`, ritorno ai test qui sopra), il test e le note: `infra/postgres/` e `infra/compose.yml` non cambiano, quindi C1–C5 e B4 valgono per il commit successivo. |
-| B3 | _Da fare (l'utente), sul commit finale._ |
+| B3 | Riuscito (26/11/2026, lanciato dall'utente nel suo terminale): `Clone del commit 3d44d0c3aaf86b912e4b3d5b49f20cd6ba4846bf`, installazione, `docker compose -f infra/compose.dev.yml up -d` con l'immagine PostgreSQL costruita dal Dockerfile nuovo, `Migrazioni applicate.`, poi `OK: GET http://localhost:3000/api/health ha risposto 200 dopo 1 secondi.` |
 | B4 | Riuscito (26/11/2026, lanciato dall'utente nel suo terminale, `infra/compose.yml` del commit di B2): `OK: configurazione Compose (test) senza problemi.`, `OK: pgbackrest-init (test) senza problemi.`, lo stesso per `prod`, e la riga finale `OK: solo caddy pubblica porte, log a rotazione, DATABASE_OWNER_URL solo in migrate, pgbackrest-init e variabili PGBACKREST_* come in 08 §pgBackRest (test e prod).` |
 | B5 | Riuscito (26/11/2026). `docker compose -f infra/compose.dev.yml up -d --build postgres` ricostruisce l'immagine di sviluppo dal Dockerfile del commit di B2. Il volume di sviluppo su yoo non c'era: database nuovo. Poi `up -d --wait`: postgres, s3 e s3-init in salute. `show archive_mode` → `off`. I file di ambiente locali di yoo li ha creati l'utente il 26/11/2026, copiando i cinque esempi (`AVVIO.md`, «Fuori da GitHub»: mancavano). `bash .claude/hooks/gabbia.sh db:migrate` → «Migrazioni applicate.»; `bash .claude/hooks/gabbia.sh test:int` → 18 file, 142 test su 142. |
 
@@ -32,3 +32,27 @@ Ritorno ai test del 26/11/2026, dalla fase codice. Prima della prova in locale C
 | C4 | Riuscito (26/11/2026). Comando: `docker run --rm -u postgres` con le sei variabili `PGBACKREST_*`: endpoint `fsn1.your-objectstorage.com`, bucket `foondaco-backup-test`, regione `fsn1`, chiave, segreto e `repo1-cipher-pass` finti. Poi `pgbackrest --stanza=main info`. Risposta: `status: error (other)`, `[ProtocolError] HTTP request failed with 403 (Forbidden)`, con `host: foondaco-backup-test.fsn1.your-objectstorage.com` e il contenuto `<Code>InvalidAccessKeyId</Code>`. La connessione TLS è verificata: è il bucket a rifiutare la chiave finta. Lo stile con il bucket nel nome dell'host funziona. |
 | C5 | Riuscito (26/11/2026, lanciato dall'utente durante il ritorno ai test): `PROVA_IMMAGINE=ghcr.io/jinoesfoo/gestionale-negozi-postgres:18.7-1 bash tests/infra/pgbackrest/run.sh` → `Prove: 14, come attese: 14, diverse: 0`. Immagine `ops-t01a-prova-postgres:locale` da quella di C1 (`sha256:b35aa452…c7c908`). La prova ha usato `infra/scripts/backup.sh` della cartella di lavoro, con `timeout 330m`, poi messo nel commit successivo così com'era. |
 | C6 | Riuscito (26/11/2026). Prima della pubblicazione `docker manifest inspect ghcr.io/jinoesfoo/gestionale-negozi-postgres:18.7-1` → `manifest unknown`, uscita 1: il tag non esisteva. `docker push` riuscito: `18.7-1: digest: sha256:b35aa4526edd3a11082b814be8be31a129534d8687c8688d0f423fcd4cf7c908`, l'indice costruito in C1. Versioni: `pgbackrest 2.60.1-1.pgdg13+1`, `jq 1.7.1-6+deb13u4`, `ca-certificates 20250419+deb13u1`. |
+
+## D. Pacchetto su GitHub
+
+| # | Esito |
+|---|---|
+| D1 | Riuscito (26/11/2026, schermata dell'utente della pagina dei pacchetti di `jinoesfoo`): `gestionale-negozi-postgres` è **Private**. |
+| D2 | Riuscito (26/11/2026, schermata di «Package settings»): in «Repository source» c'è `jinoesfoo/gestionale-negozi`, con la riga `org.opencontainers.image.source = "https://github.com/jinoesfoo/gestionale-negozi"`. |
+| D3 | Riuscito al secondo controllo (26/11/2026). Al primo, «Permissions added for selected repositories», ma `gestionale-negozi` aveva «Role: Read»: il ruolo predefinito di «Add Repository». L'utente l'ha cambiato in **Write**, e la schermata dopo il cambio mostra «Role: Write» con il segno di conferma. |
+
+## E. Server
+
+| # | Server di test | Produzione |
+|---|---|---|
+| E1 | Riuscito (26/11/2026): `rsync -rlpt --delete infra/ test:/srv/app/infra/` dal commit `3d44d0c`; il controllo `rsync -rlpcn --delete --itemize-changes` non stampa nulla. | _Da fare._ |
+| E2 | Riuscito (26/11/2026): `ssh test sha256sum /srv/app/.env` → `8a2d6107735a3ace05a65c19438bffb9185ece5c0cd93050562a853237c38889`, l'impronta di `CADDY_TAG=2.11.9-1`, `APP_TAG=bootstrap`, `POSTGRES_TAG=18.7-1`; `deploy 664 regular file`. | _Da fare._ |
+| E3 | Riuscito (26/11/2026): `docker pull` → `Digest: sha256:b35aa4526edd3a11082b814be8be31a129534d8687c8688d0f423fcd4cf7c908`, quello di C6. | _Da fare._ |
+| E4 | Riuscito (26/11/2026, scritto dall'utente con la procedura del README, uscite incollate a Claude). I sei valori nuovi sono in una nota del gestore di password, `postgres.env · test`, generati con `openssl rand -hex 32` nel terminale di yoo. Controlli sul file nuovo, nell'ordine: `deploy 600`, `13`, `0`, `0`, `1`, `1`, `1`, `1`, `1`, `5`, `1`, `1`, `1`, `0`. Dopo il `mv`: `deploy 600 805 /srv/app/env/postgres.env`. Durante la procedura il README è cambiato: un comando solo stampa i sei valori con i loro nomi, e i valori vanno in una nota, non in campi separati, che l'utente non riusciva a creare. | _Da fare._ |
+| E5 | _Da confermare (l'utente): la copia sigillata aggiornata con la nota._ | _Da fare._ |
+| E6 | Riuscito (26/11/2026): `ssh test bash /srv/app/infra/scripts/check-pgbackrest-repo.sh` → `riuscito: bucket raggiungibile, stanza assente (codice 1)`. | _Da fare._ |
+| E7 | Riuscito (26/11/2026): `docker ps -a` mostra solo `app-caddy-1` (`gestionale-negozi-caddy:2.11.9-1`); `docker volume ls` → `app_caddy_config`, `app_caddy_data`, `app_pgdata`, `app_pgsocket`. | _Da fare._ |
+| E8 | Riuscito (26/11/2026). Installazione con `install -d -m 755 .config/systemd/user`, `install -m 644` dei tre file, `systemctl --user daemon-reload`, `enable --now` dei due timer. I tre `cmp` con i file di `/srv/app/infra/systemd/` non stampano nulla. `is-enabled` → `enabled`, `enabled`. `list-timers`: `backup-diff.timer` prossimo `Fri 2026-11-27 02:30:00 UTC`, `backup-full.timer` prossimo `Sun 2026-11-29 02:30:00 UTC`, cioè le 3:30 di Roma con l'ora solare. | _Da fare._ |
+| E9 | Riuscito (26/11/2026): `Linger=yes`. | _Da fare._ |
+| E10 | Riuscito (26/11/2026, 12:24 UTC). `systemctl --user start backup@diff.service` termina con 0. Nel journal: `Starting backup@diff.service`, poi `backup[52302]: backup.sh: il servizio postgres non è in esecuzione: backup saltato`, poi `Finished backup@diff.service`. `docker ps -a` mostra ancora solo `app-caddy-1`. | _Da fare._ |
+| E11 | Riuscito (26/11/2026): PostgreSQL fermo, solo Caddy in esecuzione; l'immagine `18.7-1` scaricata (E3); i due timer attivi (E8). | _Da fare._ |
