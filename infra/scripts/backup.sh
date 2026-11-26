@@ -12,8 +12,9 @@
 #   repository (first install, stanza created again, restore on a new volume) it makes a full backup instead. With
 #   any other code, or a failed summary, it records a failed diff and makes no backup: a passing error of the bucket
 #   must not turn a differential into a full one.
-# - The backup runs inside the postgres container under `timeout 5h30m`: the limit of the systemd unit stops the
-#   Compose client but not a process started with exec, which would stay alive holding the lock of the stanza.
+# - The backup runs inside the postgres container under `timeout 330m` (5 hours 30 minutes; GNU timeout takes one
+#   number with one unit, not "5h30m"): the limit of the systemd unit stops the Compose client but not a process
+#   started with exec, which would stay alive holding the lock of the stanza.
 # - After a successful backup, kind and size come from the last backup line of the summary (pgBackRest itself can turn
 #   a diff into a full, for example after a stanza-upgrade).
 # - Every outcome is recorded in ops_backup_runs with `node dist/cli.js ops:record-backup` (OPS-003). Until OPS-T01b
@@ -94,7 +95,7 @@ if [ "$requested" = diff ]; then
 fi
 
 code=0
-"$DC" exec -T -u postgres postgres timeout 5h30m pgbackrest --stanza=main --type="$kind" --log-level-console=info \
+"$DC" exec -T -u postgres postgres timeout 330m pgbackrest --stanza=main --type="$kind" --log-level-console=info \
   backup </dev/null || code=$?
 if [ "$code" -eq 124 ]; then
   fail "$kind" 'pgbackrest backup interrotto dopo 5h30m (codice 124)'

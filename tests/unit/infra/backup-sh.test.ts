@@ -9,7 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // systemd»; 08 OPS-T01a, note del piano, «`backup.sh`»; OPS-002, OPS-003). Parla con Compose solo attraverso "$DC"
 // (predefinito /srv/app/dc) e solo con quattro chiamate: `ps` per sapere se postgres è in esecuzione,
 // `exec … pgbackrest-summary` per il riassunto del repository (con diff prima del backup, per il ripiego su full, e
-// dopo ogni backup riuscito, per tipo e dimensione), `exec … timeout 5h30m pgbackrest … backup` e
+// dopo ogni backup riuscito, per tipo e dimensione), `exec … timeout 330m pgbackrest … backup` (5 ore e 30 minuti: il
+// timeout di GNU coreutils dell'immagine rifiuta «5h30m», correzione della fase codice del 26/11/2026) e
 // `run --rm -T migrate node dist/cli.js ops:record-backup` per la registrazione, saltata con un avviso solo con il
 // codice 64, riservato ai comandi del CLI non ancora scritti (01 FON-T06, nota 9). Qui gira con `bash` e un dc finto
 // in una cartella temporanea: il dc finto scrive ogni chiamata e risponde come vuole il caso. Niente Docker, niente
@@ -20,7 +21,7 @@ const BACKUP_SH = fileURLToPath(new URL('../../../infra/scripts/backup.sh', impo
 // Le quattro chiamate ammesse: ps e il riassunto esatti, il backup e la registrazione con le parti variabili.
 const PS_ARGS = ['ps', '--status', 'running', '--services'];
 const SUMMARY_ARGS = ['exec', '-T', '-u', 'postgres', 'postgres', 'pgbackrest-summary'];
-const BACKUP_ARGS_START = ['exec', '-T', '-u', 'postgres', 'postgres', 'timeout', '5h30m', 'pgbackrest'];
+const BACKUP_ARGS_START = ['exec', '-T', '-u', 'postgres', 'postgres', 'timeout', '330m', 'pgbackrest'];
 const RECORD_ARGS_START = ['run', '--rm', '-T', 'migrate', 'node', 'dist/cli.js', 'ops:record-backup'];
 
 // Le righe di backup.sh.
@@ -351,7 +352,7 @@ describe('backup.sh: il servizio postgres e /srv/app/dc', () => {
 });
 
 describe('backup.sh full', () => {
-  it('OPS-002, OPS-003: ps, backup --type=full con timeout 5h30m nel container, riassunto, registrazione --ok con tipo e byte dell’ultima riga backup; termina con 0', () => {
+  it('OPS-002, OPS-003: ps, backup --type=full con timeout 330m nel container, riassunto, registrazione --ok con tipo e byte dell’ultima riga backup; termina con 0', () => {
     const result = runBackup(['full'], { summaries: [{ out: summaryOf('0', FULL_1, DIFF_1, FULL_2) }] });
     expect(result.status, result.stderr).toBe(0);
     expect(result.steps).toEqual([PS_STEP, backupStep('full'), SUMMARY_STEP, okRecord('full', '4123456')]);
