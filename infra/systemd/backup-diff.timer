@@ -1,0 +1,13 @@
+# Backup differenziale di PostgreSQL dal lunedì al sabato alle 3:30, ora di Roma (08, OPS-002; OPS-T01a); la domenica
+# c'è il completo (backup-full.timer). Se nel repository non c'è un completo, backup.sh fa un completo al suo posto.
+# Timer dell'utente deploy, installato con backup@.service (infra/README.md, «PostgreSQL e backup», OPS-T01a).
+[Unit]
+Description=Backup differenziale di PostgreSQL, dal lunedì al sabato alle 3:30 (Europe/Rome)
+
+[Timer]
+OnCalendar=Mon..Sat *-*-* 03:30:00 Europe/Rome
+Unit=backup@diff.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target

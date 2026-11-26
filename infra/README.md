@@ -1818,7 +1818,129 @@ Atteso (specifica 08, OPS-005, «Testimone del ciclo di vita», «Atteso»): una
 
 ### OPS-T01a
 
-_Da scrivere in OPS-T01a:_ prima pubblicazione dell'immagine PostgreSQL, `POSTGRES_TAG`, `pgbackrest-init`, `backup.sh`, timer notturni.
+L'immagine `ghcr.io/jinoesfoo/gestionale-negozi-postgres` si costruisce da `infra/postgres/` (08 §pgBackRest e note del piano di OPS-T01a). Sopra `postgres:18.7-trixie` ha:
+- i pacchetti `pgbackrest`, `jq` e `ca-certificates`, senza versioni fissate (note del piano, «Pacchetti»);
+- `/etc/pgbackrest/pgbackrest.conf`, con le sole opzioni uguali su tutti i server (`infra/postgres/pgbackrest.conf`);
+- gli script `pgbackrest-summary` e `pgbackrest-init` in `/usr/local/bin/`;
+- `postgresql.conf` con l'archiviazione dei WAL (`archive_mode = on`, `archive_timeout = 60`).
+
+Fuori dall'immagine stanno il servizio una tantum `pgbackrest-init` di `infra/compose.yml`, lo script `infra/scripts/backup.sh` e i timer di `infra/systemd/`. La lista di controllo è `docs/verifiche/ops-t01a.md`, gli esiti sono in `docs/verifiche/ops-t01a-esito.md`.
+
+#### Revisioni e `infra/versions.env`
+
+Il tag è la versione di PostgreSQL del `FROM`, un trattino e il numero di revisione, come per Caddy:
+- la revisione cresce a ogni modifica di un file di `infra/postgres/`, anche solo di un commento, e riparte da 1 con una nuova versione di PostgreSQL;
+- un tag pubblicato non si ripubblica mai: prima di ogni pubblicazione si controlla che non esista (passo 6 qui sotto);
+- `POSTGRES_TAG` di `infra/versions.env` è la revisione da usare.
+
+| Tag | Commit | Digest | pgBackRest, jq, ca-certificates | Pubblicata | Dove gira |
+|---|---|---|---|---|---|
+| `18.7-1` | `b445a51` | `sha256:b35aa4526edd3a11082b814be8be31a129534d8687c8688d0f423fcd4cf7c908` | `2.60.1-1.pgdg13+1`, `1.7.1-6+deb13u4`, `20250419+deb13u1` | 26/11/2026 | scaricata sul server di test e in produzione; PostgreSQL lo avvia FON-T07b |
+
+Le versioni dei pacchetti non sono fissate nel Dockerfile: ogni costruzione prende quelle del giorno, e i server usano l'immagine pubblicata, fissata dal digest. Per questo, a ogni revisione nuova, le versioni si annotano nella tabella. Se pgBackRest è cambiato rispetto alla riga precedente:
+- si leggono le note di rilascio fra le due versioni (`https://pgbackrest.org/release.html`);
+- si annota nell'esito cosa cambia per il progetto;
+- si rifà la prova con Docker prima di pubblicare.
+
+#### Configurazione di pgBackRest
+
+- **Opzioni comuni**, nell'immagine (`/etc/pgbackrest/pgbackrest.conf`):
+  - in `[global]`: `repo1-type=s3`, `repo1-path=/pgbackrest`, `repo1-cipher-type=aes-256-cbc`, `repo1-retention-full-type=time`, `repo1-retention-full=30`, `start-fast=y`, `log-level-file=off`;
+  - in `[main]`: `pg1-path=/var/lib/postgresql/18/docker`.
+- **Valori di ciascun server**, in `postgres.env` (sottosezione OPS-T01a di «File di ambiente dei server»): endpoint, bucket, regione, chiave, segreto e `PGBACKREST_REPO1_CIPHER_PASS`. pgBackRest li legge da sé dall'ambiente del container, e l'ambiente vince sul file. L'immagine non ha variabili `PGBACKREST_*`.
+- **Stile degli indirizzi**: quello predefinito di pgBackRest, con il bucket nel nome dell'host (`foondaco-backup-test.fsn1.your-objectstorage.com`), che con Hetzner funziona (prova con chiavi finte, esito C4). Se un giorno servisse lo stile `path`, basta la riga `PGBACKREST_REPO1_S3_URI_STYLE=path` in `postgres.env`, senza un'immagine nuova.
+- **Log**: nel container pgBackRest non scrive file di log, che non ruoterebbero mai (FON-010). I suoi messaggi stanno nei log di Docker (`/srv/app/dc logs --no-color postgres` e `pgbackrest-init`) e, per i backup, nel journal del timer.
+- **Ripristini con un file scritto a mano** (OPS-004, OPS-046):
+  - il container del ripristino non ha `postgres.env` né altre variabili `PGBACKREST_*`, perché l'ambiente vincerebbe anche sul `--config`;
+  - il file ripete `repo1-type=s3`, `repo1-path=/pgbackrest`, `repo1-cipher-type=aes-256-cbc`, endpoint, bucket e regione, e mette `pg1-path` nella sezione `[main]`.
+- **Checksum delle pagine**, che PostgreSQL 18 attiva da sé:
+  - dalla 2.60 `restore` si ferma su una pagina con checksum non valido (`--checksum-page-error=n` ne fa un avviso);
+  - un `expire` lanciato a mano non toglie i backup se il più vecchio da conservare ha pagine non valide.
+
+  Se in un'uscita o nel journal compare `ChecksumError`, ci si ferma e si decide con l'utente: vuol dire un disco o una copia danneggiati.
+
+#### Costruzione e pubblicazione a mano (Claude, su yoo)
+
+Dalla cartella del progetto, con `infra/postgres/` uguale al commit da annotare (`git status --short infra/postgres` non stampa nulla). `IMG` sta per `ghcr.io/jinoesfoo/gestionale-negozi-postgres:<tag>`, scritto per intero nei comandi.
+
+Docker gira fuori dalla sandbox solo con un comando semplice per riga. Un `docker run` con `sh -c '…'`, con un volume `-v ./…` o con più comandi insieme, Claude Code lo fa girare nella sandbox, dove Docker non si raggiunge: risponde `permission denied while trying to connect to the docker API` (prove del 26/11/2026). Per questo i controlli qui sotto sono comandi separati, e la prova con Docker la lancia l'utente.
+
+1. Costruzione: `docker build -t IMG infra/postgres`.
+2. Versioni:
+   - `docker run --rm IMG pgbackrest version`: `pgBackRest 2.60.1`, oppure una versione nuova (vedi sopra);
+   - `docker run --rm IMG dpkg-query -W pgbackrest jq ca-certificates`: le tre versioni vanno nella tabella.
+3. File nell'immagine:
+   - `docker run --rm IMG sha256sum /etc/pgbackrest/pgbackrest.conf /usr/local/bin/pgbackrest-summary /usr/local/bin/pgbackrest-init`: le impronte sono uguali a quelle di `sha256sum infra/postgres/pgbackrest.conf infra/postgres/pgbackrest-summary infra/postgres/pgbackrest-init`;
+   - `docker run --rm IMG ls -l /etc/pgbackrest /usr/local/bin/pgbackrest-summary /usr/local/bin/pgbackrest-init /etc/ssl/certs/ca-certificates.crt /etc/pgbackrest.conf`: i due script `-rwxr-xr-x`, il file dei certificati non vuoto, e per `/etc/pgbackrest.conf` «No such file or directory»;
+   - `docker image inspect --format '{{json .Config.Env}}' IMG`: nessuna variabile `PGBACKREST_*`.
+4. Certificato del bucket vero, con chiavi finte: `docker run --rm -u postgres -e PGBACKREST_REPO1_S3_ENDPOINT=fsn1.your-objectstorage.com -e PGBACKREST_REPO1_S3_BUCKET=foondaco-backup-test -e PGBACKREST_REPO1_S3_REGION=fsn1 -e PGBACKREST_REPO1_S3_KEY=CHIAVEFINTA -e PGBACKREST_REPO1_S3_KEY_SECRET=SEGRETOFINTO -e PGBACKREST_REPO1_CIPHER_PASS=PASSFINTA IMG pgbackrest --stanza=main info`.
+   - Atteso: `[ProtocolError] HTTP request failed with 403 (Forbidden)`, con `InvalidAccessKeyId` nella risposta. La connessione TLS è verificata, ed è il bucket a rifiutare la chiave finta.
+   - Un errore del certificato (`unable to verify certificate`) o della connessione vuol dire che l'immagine non raggiunge il bucket in modo sicuro: non si pubblica.
+5. Prova con Docker, che l'utente lancia nel suo terminale: `PROVA_IMMAGINE=IMG bash tests/infra/pgbackrest/run.sh` finisce con `Prove: 14, come attese: 14, diverse: 0`.
+6. Il tag non esiste ancora: `docker manifest inspect IMG` deve fallire con `manifest unknown`. Se un manifest c'è, non si pubblica: si usa una revisione nuova.
+7. Pubblicazione: `docker push IMG`. Il digest dell'ultima riga va nella tabella. Se GHCR rifiuta per l'accesso («unauthorized», «denied»), l'utente rifà su yoo `docker login ghcr.io -u jinoesfoo` con il suo token `write:packages`.
+8. Dopo la prima pubblicazione del pacchetto, l'utente fa i tre passi di «Collegamento dei pacchetti al repository» (sezione «Accesso a GHCR dai server»), con una schermata per passo.
+
+#### Preparazione di un server (Claude, come `deploy`)
+
+Prima il server di test, poi la produzione: lì si scrive `prod` al posto di `test`, e ogni comando verso `prod` lo conferma l'utente. PostgreSQL non si avvia: lo avvia FON-T07b.
+
+1. Copia di `infra/` del commit corrente, con `git status --short --ignored infra` vuoto:
+   - copia: `rsync -rlpt --delete infra/ test:/srv/app/infra/`;
+   - controllo: `rsync -rlpcn --delete --itemize-changes infra/ test:/srv/app/infra/` non stampa nulla.
+
+   Il commit si annota nell'esito.
+2. `/srv/app/.env`: `ssh test 'printf "CADDY_TAG=2.11.9-1\nAPP_TAG=bootstrap\nPOSTGRES_TAG=18.7-1\n" > /srv/app/.env'`.
+   - Controllo per impronta: `ssh test sha256sum /srv/app/.env` dà `8a2d6107735a3ace05a65c19438bffb9185ece5c0cd93050562a853237c38889`, la stessa di `printf "CADDY_TAG=2.11.9-1\nAPP_TAG=bootstrap\nPOSTGRES_TAG=18.7-1\n" | sha256sum` su yoo.
+   - Proprietario: `ssh test 'stat -c "%U %a %F" /srv/app/.env'` risponde `deploy 664 regular file`.
+   - Caddy resta sulla revisione di avvio e l'app su `bootstrap` fino a FON-T07b, che cambia quei due valori.
+3. `ssh test docker pull ghcr.io/jinoesfoo/gestionale-negozi-postgres:18.7-1`: il digest è quello della tabella.
+4. L'utente scrive `postgres.env`: «File di ambiente dei server», sottosezione OPS-T01a.
+5. Prova del bucket: `ssh test bash /srv/app/infra/scripts/check-pgbackrest-repo.sh`.
+   - Lo script stampa una sola riga; per la configurazione, prima, anche i nomi delle variabili sbagliate. Mai valori: i messaggi di Compose e di pgBackRest, che ne potrebbero contenere, non li stampa.
+   - Atteso prima di FON-T07b: `riuscito: bucket raggiungibile, stanza assente (codice 1)`. Vuol dire che variabili, certificato, chiave, regione e bucket vanno bene insieme.
+   - `fallito: configurazione di pgBackRest non valida in postgres.env`, con le righe dei nomi: l'utente corregge quelle variabili.
+   - `fallito: stanza con codice 99 [ProtocolError]`: il bucket ha rifiutato la richiesta; di solito chiave, segreto, bucket o regione sbagliati. L'utente ricontrolla il file con la voce del gestore di password.
+   - Un altro tipo d'errore dopo il codice 99 (per esempio `[HostConnectError]`): rete o endpoint.
+   - `fallito: pgbackrest-summary o docker compose terminato con codice <n>`: Compose non è riuscito a caricare il progetto, per esempio per una riga sbagliata in un file di ambiente. L'utente ricontrolla il file con i controlli della sua sottosezione.
+
+   Lo script lancia `pgbackrest-init` con `run --rm --no-deps`: Compose crea già i volumi `app_pgdata` e `app_pgsocket`, e Docker li riempie subito dall'immagine (in `app_pgdata` solo la cartella vuota `18/docker`). La cartella dei dati resta vuota, quindi il primo avvio di FON-T07b inizializza il database come su un volume nuovo. Dopo la prova:
+   - `ssh test docker ps -a`: nessun container di `postgres` né di `pgbackrest-init`;
+   - `ssh test docker volume ls`: ci sono `app_pgdata` e `app_pgsocket`.
+6. Timer, solo dopo il passo 5. Da lì Compose carica il progetto senza errori, quindi il journal non può contenere righe di un file di ambiente. Installazione per copia, nella cartella di `deploy` (i comandi via SSH partono dalla sua cartella home):
+   ```bash
+   ssh test install -d -m 755 .config/systemd/user
+   ssh test install -m 644 /srv/app/infra/systemd/backup@.service /srv/app/infra/systemd/backup-full.timer /srv/app/infra/systemd/backup-diff.timer .config/systemd/user/
+   ssh test systemctl --user daemon-reload
+   ssh test systemctl --user enable --now backup-full.timer backup-diff.timer
+   ```
+   Controlli:
+   - `ssh test cmp /srv/app/infra/systemd/backup@.service .config/systemd/user/backup@.service`, e lo stesso per i due timer: nessuna uscita;
+   - `ssh test systemctl --user is-enabled backup-full.timer backup-diff.timer`: `enabled` due volte;
+   - `ssh test systemctl --user list-timers backup-full.timer backup-diff.timer`: il prossimo completo è la prossima domenica alle 3:30 di Roma (2:30 UTC con l'ora solare, 1:30 UTC con l'ora legale), il prossimo differenziale la prossima notte dal lunedì al sabato, alla stessa ora;
+   - `ssh test loginctl show-user deploy --property=Linger`: `Linger=yes` (FON-T07a), così i timer girano anche senza nessuno collegato.
+
+   Un compito che cambia i file di `infra/systemd/` li reinstalla con gli stessi comandi: `deploy.sh` copia `infra/`, ma non tocca i timer.
+7. Prova del servizio con PostgreSQL fermo:
+   - `ssh test systemctl --user start backup@diff.service` termina con 0. Il servizio è `oneshot`: il comando aspetta la fine di `backup.sh`;
+   - `ssh test journalctl --user -u backup@diff.service -n 5 --no-pager` ha la riga `backup.sh: il servizio postgres non è in esecuzione: backup saltato`;
+   - `ssh test docker ps -a`: nessun container nuovo.
+
+#### Se pgbackrest-init fallisce (FON-T07b e dopo)
+
+`pgbackrest-init` scrive una riga per passo, che comincia con `pgbackrest-init: `. Le righe di pgBackRest stanno in mezzo, con `<redacted>` al posto di chiave, segreto e `repo1-cipher-pass`. Si leggono con `/srv/app/dc logs --no-color pgbackrest-init`. Finché `pgbackrest-init` non riesce, `app` e `worker` non partono.
+- `pgbackrest-init: errore: stanza 99 [<Tipo>]`: come al passo 5 della preparazione.
+- `stanza-create` o `check` dicono che nel bucket c'è la stanza di un altro database (per esempio `backup and archive info files exist but do not match the database`). Succede se il volume `pgdata` è stato ricreato da zero dopo che la stanza esisteva.
+  - **In produzione** ci si ferma e si decide con l'utente: la stanza contiene i backup, e non si cancella mai per far partire l'app.
+  - **Sul server di test** l'utente decide se i backup di test servono ancora. Se non servono, Claude legge la documentazione di `stanza-delete` della versione installata e scrive i comandi nell'esito prima di lanciarli.
+- `check` con un tempo scaduto (`was not archived before the 300000ms timeout`): l'archiviazione non funziona. Nei log di `postgres` le righe `archive command failed` dicono perché.
+
+#### Punti lasciati ai compiti successivi
+
+- **FON-T07b**: il primo avvio della configurazione completa, con `pgbackrest-init`; il primo backup completo (`bash /srv/app/infra/scripts/backup.sh full`); la prova OPS-001 sul server di test; la prova del file indicatore con le righe di `pgbackrest-init` (01, FON-T07b, nota del piano di OPS-T01a).
+- **OPS-T01b**: il comando vero `ops:record-backup`. Fino ad allora `backup.sh` salta la registrazione con l'avviso del codice 64. Poi la prova di ripristino mensile, con il file scritto a mano e le avvertenze di «Configurazione di pgBackRest».
+- **OPS-T04**: la notte del passaggio all'ora solare, fra il differenziale del sabato e il completo della domenica passano 25 ore, più la differenza di durata dei due backup: vicino alla soglia di 26 ore di OPS-010.
+- **FON-T08**: `deploy.sh` copia `infra/` ma non reinstalla i timer. Un compito che cambia `infra/systemd/` li reinstalla (passo 6 della preparazione).
 
 ### OPS-T01b
 
@@ -1890,7 +2012,86 @@ Copia fuori linea di `caddy.env`, nella voce del token nel gestore di password e
 
 ### OPS-T01a
 
-_Da scrivere in OPS-T01a:_ `postgres.env`.
+`postgres.env`, al posto del file vuoto di DOM-T02. L'utente lo scrive su ciascun server prima della prova del bucket (passo 5 della preparazione, «PostgreSQL e backup», OPS-T01a). Lo leggono `postgres` e `pgbackrest-init`. Ha tredici righe, nell'ordine dell'esempio `infra/env.example/postgres.env`:
+- `POSTGRES_DB=app` e `POSTGRES_USER=postgres`, valori fissi;
+- cinque password nuove:
+  - `POSTGRES_PASSWORD`, il superutente;
+  - le quattro `APP_*_PASSWORD`, dei ruoli dell'app (`01-roles.sh`).
+
+  Servono solo alla creazione del volume, in FON-T07b, che riscrive le `APP_*_PASSWORD` negli indirizzi del database di `app.env`, `worker.env` e `migrate.env`.
+- l'archivio dei backup:
+  - `PGBACKREST_REPO1_S3_ENDPOINT=fsn1.your-objectstorage.com`, solo l'host, senza `https://`;
+  - `PGBACKREST_REPO1_S3_BUCKET`: `foondaco-backup-test` sul server di test, `foondaco-backup` in produzione;
+  - `PGBACKREST_REPO1_S3_REGION=fsn1`;
+  - `PGBACKREST_REPO1_S3_KEY` e `PGBACKREST_REPO1_S3_KEY_SECRET`, cioè Access key e Secret key della voce `Hetzner S3 · backup-test · pgbackrest-test` sul server di test, `Hetzner S3 · backup-prod · pgbackrest-prod` in produzione;
+- `PGBACKREST_REPO1_CIPHER_PASS`, la password di cifratura dei backup: nuova, una per server. **Senza questa password i backup di quel server non si leggono più**: prima di scriverla sul server deve stare nel gestore di password e nella copia sigillata (OPS-009).
+
+Le sei password nuove sono di 64 caratteri, solo cifre e lettere da `a` a `f` (`openssl rand -hex 32`): non hanno simboli, quindi FON-T07b le può scrivere negli indirizzi del database così come sono, e i controlli del passo 3 ne riconoscono la forma senza stamparle.
+
+Su ciascun server, prima il test e poi la produzione:
+
+1. Valori nuovi, nel tuo terminale di yoo, non sul server. Un `openssl rand -hex 32` stampa un solo valore, e ne servono sei, uno per campo; questo comando li stampa tutti e sei, ciascuno con il nome del suo campo:
+   ```bash
+   for n in POSTGRES_PASSWORD APP_OWNER_PASSWORD APP_USER_PASSWORD APP_WORKER_PASSWORD APP_JOBS_PASSWORD PGBACKREST_REPO1_CIPHER_PASS; do printf '%s: %s\n' "$n" "$(openssl rand -hex 32)"; done
+   ```
+   Seleziona e copia le sei righe tutte insieme, e incollale nel testo di una voce nuova del gestore di password di tipo **nota** («Secure note», «Nota sicura» o «Note»), con il titolo `postgres.env · test` (in produzione `postgres.env · prod`). Salva la voce, poi aggiorna la copia sigillata con le stesse sei righe, e pulisci lo schermo con `clear`. Questi valori non vanno mai in chat né in una schermata.
+2. `ssh -t test-admin sudo -iu deploy` (in produzione `prod-admin`), poi, **un comando alla volta**:
+   ```bash
+   hostname                      # srv2155002 per il test, srv1874119 per la produzione
+   whoami                        # deploy
+   umask 077
+   printf 'POSTGRES_DB=app\nPOSTGRES_USER=postgres\n' > /srv/app/env/postgres.env.nuovo
+   ```
+   Poi le cinque password, una riga alla volta. Dopo ogni `read -rs V` il terminale aspetta: nella nota `postgres.env · test` (in produzione `postgres.env · prod`), sulla riga con lo stesso nome, un doppio clic sul valore (i 64 caratteri dopo `: `) lo seleziona tutto; lo si copia, lo si incolla nel terminale e si preme Invio. Il valore non si vede. Non incollare più righe insieme: il `read` prenderebbe come valore la riga seguente.
+   ```bash
+   read -rs V && printf 'POSTGRES_PASSWORD=%s\n' "$V" >> /srv/app/env/postgres.env.nuovo && unset V
+   read -rs V && printf 'APP_OWNER_PASSWORD=%s\n' "$V" >> /srv/app/env/postgres.env.nuovo && unset V
+   read -rs V && printf 'APP_USER_PASSWORD=%s\n' "$V" >> /srv/app/env/postgres.env.nuovo && unset V
+   read -rs V && printf 'APP_WORKER_PASSWORD=%s\n' "$V" >> /srv/app/env/postgres.env.nuovo && unset V
+   read -rs V && printf 'APP_JOBS_PASSWORD=%s\n' "$V" >> /srv/app/env/postgres.env.nuovo && unset V
+   ```
+   Poi l'archivio dei backup. Nella prima riga, in produzione, `foondaco-backup` al posto di `foondaco-backup-test`:
+   ```bash
+   printf 'PGBACKREST_REPO1_S3_ENDPOINT=fsn1.your-objectstorage.com\nPGBACKREST_REPO1_S3_BUCKET=foondaco-backup-test\nPGBACKREST_REPO1_S3_REGION=fsn1\n' >> /srv/app/env/postgres.env.nuovo
+   ```
+   Poi la chiave del bucket e la password di cifratura, come sopra:
+   - Access key della voce `Hetzner S3 · backup-test · pgbackrest-test` (in produzione `… backup-prod · pgbackrest-prod`);
+   - Secret key della stessa voce;
+   - `PGBACKREST_REPO1_CIPHER_PASS` della nota `postgres.env · test` (in produzione `postgres.env · prod`), con il doppio clic come sopra.
+   ```bash
+   read -rs V && printf 'PGBACKREST_REPO1_S3_KEY=%s\n' "$V" >> /srv/app/env/postgres.env.nuovo && unset V
+   read -rs V && printf 'PGBACKREST_REPO1_S3_KEY_SECRET=%s\n' "$V" >> /srv/app/env/postgres.env.nuovo && unset V
+   read -rs V && printf 'PGBACKREST_REPO1_CIPHER_PASS=%s\n' "$V" >> /srv/app/env/postgres.env.nuovo && unset V
+   ```
+3. Controlli sul file nuovo. Rispondono con numeri o con proprietario e permessi, e non stampano i valori. L'utente detta a Claude ogni risposta, una per comando:
+   ```bash
+   stat -c '%U %a %n' /srv/app/env/postgres.env.nuovo                                          # deploy 600
+   grep -cvE '^[[:space:]]*(#|$)' /srv/app/env/postgres.env.nuovo                              # 13: righe con un valore
+   grep -c CAMBIA /srv/app/env/postgres.env.nuovo                                              # 0
+   grep -c '://' /srv/app/env/postgres.env.nuovo                                               # 0
+   grep -cx 'POSTGRES_DB=app' /srv/app/env/postgres.env.nuovo                                  # 1
+   grep -cx 'POSTGRES_USER=postgres' /srv/app/env/postgres.env.nuovo                           # 1
+   grep -cx 'PGBACKREST_REPO1_S3_ENDPOINT=fsn1.your-objectstorage.com' /srv/app/env/postgres.env.nuovo   # 1
+   grep -cx 'PGBACKREST_REPO1_S3_BUCKET=foondaco-backup-test' /srv/app/env/postgres.env.nuovo  # 1 (in produzione foondaco-backup)
+   grep -cx 'PGBACKREST_REPO1_S3_REGION=fsn1' /srv/app/env/postgres.env.nuovo                  # 1
+   grep -cE '^(POSTGRES|APP_OWNER|APP_USER|APP_WORKER|APP_JOBS)_PASSWORD=[0-9a-f]{64}$' /srv/app/env/postgres.env.nuovo   # 5
+   grep -cE '^PGBACKREST_REPO1_CIPHER_PASS=[0-9a-f]{64}$' /srv/app/env/postgres.env.nuovo     # 1
+   grep -cE '^PGBACKREST_REPO1_S3_KEY=[A-Z0-9]{16,}$' /srv/app/env/postgres.env.nuovo         # 1: la forma di una Access key
+   grep -cE '^PGBACKREST_REPO1_S3_KEY_SECRET=[^[:space:]]{30,}$' /srv/app/env/postgres.env.nuovo   # 1
+   cut -d= -f2- /srv/app/env/postgres.env.nuovo | sort | uniq -d | wc -l                         # 0: nessun valore ripetuto
+   ```
+   Se un numero è diverso, si riscrive il file dal `printf` con `>` del punto 2, che lo ricomincia da capo.
+4. Il file vero, al posto di quello vuoto, poi il controllo:
+   ```bash
+   mv /srv/app/env/postgres.env.nuovo /srv/app/env/postgres.env
+   stat -c '%U %a %s %n' /srv/app/env/postgres.env                # deploy 600, e una dimensione diversa da 0
+   exit
+   ```
+5. Copia fuori linea (OPS-009): nel gestore di password e nella copia sigillata ci sono i sei valori nuovi, e in tutti e due un appunto su quale chiave S3 usa quel server. L'utente risponde «fatto», e Claude annota qui la data.
+
+Copia fuori linea di `postgres.env`, nelle note `postgres.env · test` e `postgres.env · prod` del gestore di password e nella copia sigillata:
+- server di test: 26/11/2026;
+- produzione: 26/11/2026.
 
 ### FON-T07b
 

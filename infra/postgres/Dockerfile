@@ -1,10 +1,31 @@
-# Immagine PostgreSQL del progetto (01 §Servizi e §Inizializzazione del database, FON-T03). La costruisce la CI per
-# test e produzione (ghcr.io/<utente>/<repo>-postgres, tag per versione); in sviluppo la costruisce compose.dev.yml.
-# pgBackRest e l'archiviazione dei WAL arrivano con OPS-T01a.
+# Immagine PostgreSQL del progetto (01 §Servizi e §Inizializzazione del database, FON-T03), con pgBackRest per
+# l'archiviazione dei WAL e i backup (08 §pgBackRest, OPS-T01a). La costruisce la CI per test e produzione
+# (ghcr.io/<utente>/<repo>-postgres, tag per versione: infra/versions.env, POSTGRES_TAG); in sviluppo la costruisce
+# compose.dev.yml, che spegne l'archiviazione.
 FROM postgres:18.7-trixie
 
 # GitHub collega il pacchetto al repository solo se la label c'è alla prima pubblicazione (01 §Servizi).
 LABEL org.opencontainers.image.source="https://github.com/jinoesfoo/gestionale-negozi"
+
+# pgBackRest; jq, che legge l'uscita JSON di `pgbackrest info` (pgbackrest-summary); i certificati delle autorità, che
+# l'immagine ufficiale non ha: senza, pgBackRest non verifica il certificato del bucket. Nessuna versione fissata (08,
+# note del piano di OPS-T01a, «Pacchetti»): una revisione fissata sparirebbe dall'indice di Debian al primo
+# aggiornamento e romperebbe la costruzione da zero; i server usano l'immagine pubblicata, fissata dal digest, e le
+# versioni installate si annotano a ogni pubblicazione (infra/README.md, «PostgreSQL e backup»). Il pacchetto installa
+# anche un file d'esempio, /etc/pgbackrest.conf, che pgBackRest leggerebbe se mancasse quello vero: si toglie.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends pgbackrest jq ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && rm -f /etc/pgbackrest.conf
+
+# Configurazione di pgBackRest con le sole opzioni uguali su tutti i server: endpoint, bucket, regione, chiavi e
+# repo1-cipher-pass pgBackRest li legge dalle variabili PGBACKREST_* di postgres.env, che vincono sul file (08, note
+# del piano di OPS-T01a, «Configurazione»). Nessun ENV PGBACKREST_* nell'immagine: vincerebbe anche sul --config dei
+# ripristini con un file scritto a mano.
+COPY pgbackrest.conf /etc/pgbackrest/pgbackrest.conf
+# Il riassunto di `pgbackrest info` (usato da pgbackrest-init, da infra/scripts/backup.sh e dalla prova del bucket sui
+# server) e il comando del servizio Compose una tantum pgbackrest-init (08, note del piano, «Script nell'immagine»).
+COPY --chmod=755 pgbackrest-summary pgbackrest-init /usr/local/bin/
 
 # Configurazione copiata nell'immagine, non montata: una modifica produce una nuova versione dell'immagine.
 COPY postgresql.conf /etc/postgresql/postgresql.conf

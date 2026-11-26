@@ -1,0 +1,14 @@
+# Backup notturno di PostgreSQL con pgBackRest (08 §pgBackRest, OPS-002 e OPS-003; OPS-T01a): servizio dell'utente
+# deploy, avviato da backup-full.timer (backup@full.service) e da backup-diff.timer (backup@diff.service). Si installa
+# per copia in ~/.config/systemd/user/ di deploy, con i due timer (infra/README.md, «PostgreSQL e backup», OPS-T01a);
+# un compito che cambia questi file li reinstalla.
+[Unit]
+Description=Backup %i di PostgreSQL con pgBackRest (backup.sh %i)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash /srv/app/infra/scripts/backup.sh %i
+# Ultimo limite: backup.sh ferma da sé pgBackRest dopo 5h30m (timeout dentro il container) e registra il backup
+# interrotto; questo ferma backup.sh, se dopo resta bloccato.
+TimeoutStartSec=6h
+SyslogIdentifier=backup

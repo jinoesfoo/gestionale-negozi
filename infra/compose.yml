@@ -23,6 +23,12 @@ x-logging: &logging
     max-size: '10m'
     max-file: '5'
 
+# L'immagine di postgres, che pgbackrest-init usa uguale (01 §Servizi): una riga sola, presa dai due servizi con
+# `<<: *postgres-image`, perché il test di FON-002 (tests/unit/infra/compose-file.test.ts) conta cinque righe image:
+# (08, note del piano di OPS-T01a, «infra/compose.yml»). Chi aggiunge un'altra riga image: aggiorna quel test con joo.
+x-postgres-image: &postgres-image
+  image: ghcr.io/jinoesfoo/gestionale-negozi-postgres:${POSTGRES_TAG:?manca POSTGRES_TAG in /srv/app/.env}
+
 services:
   caddy:
     image: ghcr.io/jinoesfoo/gestionale-negozi-caddy:${CADDY_TAG:?manca CADDY_TAG in /srv/app/.env}
@@ -43,10 +49,12 @@ services:
     command: ['node', 'server.js']
     env_file: ${ENV_DIR:-/srv/app/env}/app.env
     networks: [internal]
-    # Fino a OPS-T01a, che aggiunge l'attesa di pgbackrest-init.
+    # pgbackrest-init: con il file indicatore l'attesa dura pochi secondi e non dipende dal bucket (01 §Servizi).
     depends_on:
       postgres:
         condition: service_healthy
+      pgbackrest-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     logging: *logging
 
@@ -58,6 +66,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      pgbackrest-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     logging: *logging
 
@@ -75,14 +85,39 @@ services:
     restart: 'no'
     logging: *logging
 
+  # Archivia i WAL con pgBackRest (08 §pgBackRest): le variabili PGBACKREST_* di postgres.env le legge pgBackRest.
+  # Il socket sta nel volume pgsocket, che pgbackrest-init condivide.
   postgres:
-    image: ghcr.io/jinoesfoo/gestionale-negozi-postgres:${POSTGRES_TAG:?manca POSTGRES_TAG in /srv/app/.env}
+    <<: *postgres-image
     env_file: ${ENV_DIR:-/srv/app/env}/postgres.env
     networks: [internal]
     volumes:
       - pgdata:/var/lib/postgresql
+      - pgsocket:/var/run/postgresql
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
     restart: unless-stopped
+    logging: *logging
+
+  # Una tantum, dopo postgres in salute (01 §Servizi; 08 §pgBackRest, «Primo avvio»): con il file indicatore
+  # /var/lib/postgresql/.pgbackrest-stanza-ok sul volume pgdata termina subito, senza chiamare il bucket; altrimenti crea
+  # la stanza se manca, esegue `pgbackrest check` e scrive il file. app e worker la aspettano; migrate no. Senza host
+  # remoto pgBackRest ha bisogno dei file dei dati e del socket di PostgreSQL: gli stessi volumi pgdata e pgsocket di
+  # postgres, allo stesso percorso. Il controllo di salute dell'immagine è quello di PostgreSQL, che qui non gira.
+  pgbackrest-init:
+    <<: *postgres-image
+    command: ['pgbackrest-init']
+    user: postgres
+    env_file: ${ENV_DIR:-/srv/app/env}/postgres.env
+    networks: [internal]
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - pgsocket:/var/run/postgresql
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+    healthcheck:
+      disable: true
     logging: *logging
 
 networks:
@@ -96,5 +131,6 @@ networks:
 
 volumes:
   pgdata:
+  pgsocket:
   caddy_data:
   caddy_config:

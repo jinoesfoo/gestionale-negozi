@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# The local stand-in for /srv/app/dc in the Docker test of OPS-T01a (run.sh of this folder; specs/08-operativita.md,
+# OPS-T01a, plan notes, «Prove»): docker compose on the separate project ops-t01a-prova, with the repository root as
+# project directory and the compose.yml of this folder, always with the same arguments. run.sh uses it directly and
+# runs infra/scripts/backup.sh with DC=<this folder>/dc, so both talk to the same project, as backup.sh and the timers
+# do through /srv/app/dc on the servers. Paths come from the script's own location: it works from any folder.
+#
+#   bash tests/infra/pgbackrest/dc ps
+#   DC=tests/infra/pgbackrest/dc bash infra/scripts/backup.sh diff
+#
+# It must stay executable (backup.sh runs "$DC" as a program). The exit status is docker compose's.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "$here/../../.." && pwd)"
+
+exec docker compose -p ops-t01a-prova --project-directory "$root" -f "$here/compose.yml" "$@"

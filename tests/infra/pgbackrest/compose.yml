@@ -1,0 +1,130 @@
+# Progetto Compose della prova con Docker di OPS-T01a (08, OPS-T01a, note del piano, «Prove»; 01 §Servizi, esito del
+# [VERIFICA] sull'ingresso TLS): l'immagine PostgreSQL di infra/postgres/ con postgres e pgbackrest-init, l'emulatore
+# S3 con il bucket della prova, un proxy TLS davanti all'emulatore, con il registro degli accessi, e un migrate finto.
+# Lo usano run.sh e dc di questa cartella, sempre come progetto ops-t01a-prova e con la radice del repository come
+# cartella del progetto, da cui partono i percorsi relativi:
+#
+#   docker compose -p ops-t01a-prova --project-directory <radice> -f tests/infra/pgbackrest/compose.yml <comando>
+#
+# Nessuna porta pubblicata; solo volumi con nome (e tmpfs al posto dei volumi anonimi che le immagini dichiarano) e file
+# del progetto montati in sola lettura; le variabili solo in environment:, mai in file di ambiente. Sono tutti valori di
+# prova: chiave e segreto S3, repo1-cipher-pass e password cominciano con VALORE-PROVA-SEGRETO, il testo che run.sh
+# cerca nelle uscite e nei log (00 §4.2). Nessun valore contiene CAMBIA e l'endpoint non ha «://», come vuole
+# pgbackrest-summary.
+name: ops-t01a-prova
+
+# L'ambiente di postgres.env dei server (01 §Variabili d'ambiente), con i valori della prova: pgBackRest legge le
+# variabili PGBACKREST_*, che vincono su /etc/pgbackrest/pgbackrest.conf. Le ultime tre ci sono solo qui: il proxy ha un
+# certificato interno di Caddy, l'emulatore vuole lo stile path e il proxy ascolta sulla 8443.
+x-postgres-environment: &postgres-environment
+  POSTGRES_DB: app
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: VALORE-PROVA-SEGRETO-password-postgres
+  PGBACKREST_REPO1_S3_ENDPOINT: s3-tls
+  PGBACKREST_REPO1_S3_BUCKET: pgbackrest-prova
+  PGBACKREST_REPO1_S3_REGION: us-east-1
+  PGBACKREST_REPO1_S3_KEY: VALORE-PROVA-SEGRETO-chiave-s3
+  PGBACKREST_REPO1_S3_KEY_SECRET: VALORE-PROVA-SEGRETO-segreto-s3
+  PGBACKREST_REPO1_CIPHER_PASS: VALORE-PROVA-SEGRETO-cipher-pass
+  PGBACKREST_REPO1_S3_URI_STYLE: path
+  PGBACKREST_REPO1_STORAGE_VERIFY_TLS: 'n'
+  PGBACKREST_REPO1_STORAGE_PORT: '8443'
+
+services:
+  # Emulatore S3, come in infra/compose.dev.yml, con la chiave e il segreto della prova.
+  s3:
+    image: chrislusf/seaweedfs:4.53
+    command: ['mini', '-dir=/data', '-ip=s3', '-master.port=9333', '-filer.port=8888', '-s3.port=8333', '-webdav=false']
+    environment:
+      AWS_ACCESS_KEY_ID: VALORE-PROVA-SEGRETO-chiave-s3
+      AWS_SECRET_ACCESS_KEY: VALORE-PROVA-SEGRETO-segreto-s3
+    volumes:
+      - s3data:/data
+
+  # Il bucket della prova, con lo script di compose.dev.yml (infra/s3/init-bucket.sh). Lo script ne attiva anche il
+  # versioning, che il bucket dei backup dei server non ha (OPS-005): pgBackRest legge e scrive allo stesso modo.
+  s3-init:
+    image: chrislusf/seaweedfs:4.53
+    entrypoint: ['/bin/sh', '/opt/s3/init-bucket.sh']
+    environment:
+      S3_BUCKET: pgbackrest-prova
+      WEED_MASTER: s3:9333
+      WEED_FILER: s3:8888
+    volumes:
+      - ./infra/s3:/opt/s3:ro
+    tmpfs:
+      - /data
+    depends_on:
+      - s3
+    restart: 'no'
+
+  # Proxy TLS davanti all'emulatore (Caddyfile di questa cartella), con due nomi: s3-tls per postgres (archiviazione
+  # dei WAL e backup) e s3-tls-init per pgbackrest-init, così run.sh conta a parte, nel registro degli accessi, le
+  # richieste di pgbackrest-init.
+  proxy:
+    image: caddy:2.11.9
+    volumes:
+      - ./tests/infra/pgbackrest/Caddyfile:/etc/caddy/Caddyfile:ro
+    tmpfs:
+      - /data
+      - /config
+    networks:
+      default:
+        aliases:
+          - s3-tls
+          - s3-tls-init
+    depends_on:
+      - s3
+
+  # L'immagine costruita da infra/postgres/ (oppure quella di PROVA_IMMAGINE, che run.sh chiama con questo nome),
+  # come sui server: archiviazione dei WAL dal postgresql.conf dell'immagine e socket nel volume pgsocket, che
+  # pgbackrest-init condivide. Senza gli script di infra/postgres/init: i ruoli dell'app non servono alla prova.
+  postgres:
+    build:
+      context: ./infra/postgres
+    image: ops-t01a-prova-postgres:locale
+    environment: *postgres-environment
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - pgsocket:/var/run/postgresql
+
+  # Come in infra/compose.yml (08, note del piano di OPS-T01a, «infra/compose.yml»), con l'endpoint s3-tls-init.
+  pgbackrest-init:
+    image: ops-t01a-prova-postgres:locale
+    pull_policy: never
+    command: ['pgbackrest-init']
+    user: postgres
+    environment:
+      <<: *postgres-environment
+      PGBACKREST_REPO1_S3_ENDPOINT: s3-tls-init
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - pgsocket:/var/run/postgresql
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+    healthcheck:
+      disable: true
+
+  # migrate finto: al posto di `node dist/cli.js ops:record-backup …` stampa «migrate finto:» seguito dai suoi
+  # argomenti ed esce con MIGRATE_FINTO_EXIT, presa dall'ambiente di chi lancia Compose (64 se manca: il codice del
+  # comando non ancora disponibile, 01 FON-T06). In un file Compose «$$» è un «$» letterale.
+  migrate:
+    image: ops-t01a-prova-postgres:locale
+    pull_policy: never
+    entrypoint:
+      - sh
+      - '-c'
+      - 'printf "migrate finto:"; printf " %s" "$$@"; printf "\n"; exit "$${MIGRATE_FINTO_EXIT:-64}"'
+      - migrate-finto
+    environment:
+      MIGRATE_FINTO_EXIT: ${MIGRATE_FINTO_EXIT:-64}
+    tmpfs:
+      - /var/lib/postgresql
+    restart: 'no'
+
+volumes:
+  s3data:
+  pgdata:
+  pgsocket:
