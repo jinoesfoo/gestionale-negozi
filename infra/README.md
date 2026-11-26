@@ -2089,9 +2089,9 @@ Su ciascun server, prima il test e poi la produzione:
    ```
 5. Copia fuori linea (OPS-009): nel gestore di password e nella copia sigillata ci sono i sei valori nuovi, e in tutti e due un appunto su quale chiave S3 usa quel server. L'utente risponde «fatto», e Claude annota qui la data.
 
-Copia fuori linea di `postgres.env`:
-- server di test: _da annotare_;
-- produzione: _da annotare_.
+Copia fuori linea di `postgres.env`, nelle note `postgres.env · test` e `postgres.env · prod` del gestore di password e nella copia sigillata:
+- server di test: 26/11/2026;
+- produzione: 26/11/2026.
 
 ### FON-T07b
 
