@@ -16,7 +16,7 @@ Ritorno ai test del 26/11/2026, dalla fase codice. Prima della prova in locale C
 
 | # | Esito |
 |---|---|
-| B1 | _Da rifare sul commit finale, dopo il ritorno ai test._ Il 26/11/2026, sul commit di B2: `pnpm lint` e `pnpm typecheck` verdi, `pnpm test` 1242 su 1242. |
+| B1 | Riuscito (26/11/2026). Sul commit di B2: `pnpm lint` e `pnpm typecheck` verdi, `pnpm test` 1242 su 1242. Dopo il ritorno ai test, sul commit `cc62fe7`, allineato a `main` (`origin/main` fermo a `242709e`): `pnpm lint` e `pnpm typecheck` verdi, `pnpm test` 44 file, 1242 su 1242. |
 | B2 | Commit `b445a514af361a91a809600ba25652c8815cf132` («OPS-T01a: immagine PostgreSQL con pgBackRest, pgbackrest-init, backup.sh e timer»), 26/11/2026. Dopo, solo `infra/scripts/backup.sh` (`timeout 330m`, ritorno ai test qui sopra), il test e le note: `infra/postgres/` e `infra/compose.yml` non cambiano, quindi C1–C5 e B4 valgono per il commit successivo. |
 | B3 | Riuscito (26/11/2026, lanciato dall'utente nel suo terminale): `Clone del commit 3d44d0c3aaf86b912e4b3d5b49f20cd6ba4846bf`, installazione, `docker compose -f infra/compose.dev.yml up -d` con l'immagine PostgreSQL costruita dal Dockerfile nuovo, `Migrazioni applicate.`, poi `OK: GET http://localhost:3000/api/health ha risposto 200 dopo 1 secondi.` |
 | B4 | Riuscito (26/11/2026, lanciato dall'utente nel suo terminale, `infra/compose.yml` del commit di B2): `OK: configurazione Compose (test) senza problemi.`, `OK: pgbackrest-init (test) senza problemi.`, lo stesso per `prod`, e la riga finale `OK: solo caddy pubblica porte, log a rotazione, DATABASE_OWNER_URL solo in migrate, pgbackrest-init e variabili PGBACKREST_* come in 08 §pgBackRest (test e prod).` |
