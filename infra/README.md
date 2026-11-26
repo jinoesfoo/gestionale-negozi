@@ -1904,7 +1904,7 @@ Prima il server di test, poi la produzione: lì si scrive `prod` al posto di `te
    - Un altro tipo d'errore dopo il codice 99 (per esempio `[HostConnectError]`): rete o endpoint.
    - `fallito: pgbackrest-summary o docker compose terminato con codice <n>`: Compose non è riuscito a caricare il progetto, per esempio per una riga sbagliata in un file di ambiente. L'utente ricontrolla il file con i controlli della sua sottosezione.
 
-   Lo script lancia `pgbackrest-init` con `run --rm --no-deps`: Compose crea già i volumi `app_pgdata` e `app_pgsocket`, vuoti. Al primo avvio di FON-T07b Docker li riempie dall'immagine, come volumi nuovi. Dopo la prova:
+   Lo script lancia `pgbackrest-init` con `run --rm --no-deps`: Compose crea già i volumi `app_pgdata` e `app_pgsocket`, e Docker li riempie subito dall'immagine (in `app_pgdata` solo la cartella vuota `18/docker`). La cartella dei dati resta vuota, quindi il primo avvio di FON-T07b inizializza il database come su un volume nuovo. Dopo la prova:
    - `ssh test docker ps -a`: nessun container di `postgres` né di `pgbackrest-init`;
    - `ssh test docker volume ls`: ci sono `app_pgdata` e `app_pgsocket`.
 6. Timer, solo dopo il passo 5. Da lì Compose carica il progetto senza errori, quindi il journal non può contenere righe di un file di ambiente. Installazione per copia, nella cartella di `deploy` (i comandi via SSH partono dalla sua cartella home):
